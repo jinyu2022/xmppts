@@ -28,7 +28,7 @@ export class MucSelfPing {
         if (type === "error") {
             return new XMPPError(iqEl, "薛定谔");
         }
-        throw new XMPPError(iqEl, "未知的 self-ping 响应类型");
+        throw new Error(`未知的 self-ping 响应类型: ${iqEl.toXMLString()}`);
     }
 
     /**

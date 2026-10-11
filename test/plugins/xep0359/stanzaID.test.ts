@@ -1,85 +1,64 @@
 import { describe, it, expect } from "vitest";
 import { StanzaID } from "../../../lib/plugins/xep0359/stanzaID";
-import { XMPPElement } from "../../../lib/ltx/Element";
+import { Parser } from "../../../lib/ltx/Parser";
 
 /**
  * XEP-0359: Unique and Stable Stanza IDs
  * @see https://xmpp.org/extensions/xep-0359.html
- * @version 0.8.0 (2025-02-24)
+ * @version 0.7.0 (2023-02-20)
  *
- * 根据 XEP-0359 规范，有三种元素:
- * - <stanza-id/>: 服务器分配给消息的唯一稳定 ID
- * - <origin-id/>: 发送方分配给消息的唯一 ID
- * - <referenced-stanza/>: 引用的 Stanza 的 ID
+ * 用例取自 §2/§4 规范示例：Example 1/2/4 测解析，createOriginId 对齐 Example 2；
+ * 无示例分支按 §9 XML Schema 补充。
  */
 describe("StanzaID", () => {
-  describe("NS", () => {
-    it("should have correct namespace", () => {
-      expect(StanzaID.NS).toBe("urn:xmpp:sid:0");
-    });
-  });
-
   describe("parseStanzaId", () => {
-    it("should parse a stanza-id element", () => {
-      const el = XMPPElement.createElementNS(StanzaID.NS, "stanza-id");
-      el.setAttribute("id", "stanza-123");
-      el.setAttribute("by", "example.org");
-      const result = StanzaID.parseStanzaId(el);
-      expect(result.stanzaID.id).toBe("stanza-123");
-      expect(result.stanzaID.by).toBe("example.org");
-    });
-
-    it("should parse an origin-id element", () => {
-      const el = XMPPElement.createElementNS(StanzaID.NS, "origin-id");
-      el.setAttribute("id", "origin-456");
-      const result = StanzaID.parseStanzaId(el);
-      expect(result.originID.id).toBe("origin-456");
-      expect(result.originID.by).toBeUndefined();
-    });
-
-    it("should parse a referenced-stanza element", () => {
-      const el = XMPPElement.createElementNS(StanzaID.NS, "referenced-stanza");
-      el.setAttribute("id", "ref-789");
-      el.setAttribute("by", "juliet@example.net");
-      const result = StanzaID.parseStanzaId(el);
-      expect(result.referencedStanza.id).toBe("ref-789");
-      expect(result.referencedStanza.by).toBe("juliet@example.net");
-    });
-
-    it("should throw when namespace is invalid", () => {
-      const el = XMPPElement.createElementNS("urn:invalid", "stanza-id");
-      el.setAttribute("id", "test-1");
-      expect(() => StanzaID.parseStanzaId(el)).toThrow(
-        "不是stanzaId命名空间"
+    it("Example 1：解析 stanza-id", () => {
+      const el = Parser.parse(
+        `<stanza-id xmlns="urn:xmpp:sid:0" id="de305d54-75b4-431b-adb2-eb6b9e546013" by="room@muc.example.com"/>`
       );
+      expect(StanzaID.parseStanzaId(el)).toEqual({
+        stanzaID: { id: "de305d54-75b4-431b-adb2-eb6b9e546013", by: "room@muc.example.com" },
+      });
     });
 
-    it("should handle by attribute as optional", () => {
-      const el = XMPPElement.createElementNS(StanzaID.NS, "origin-id");
-      el.setAttribute("id", "origin-no-by");
-      const result = StanzaID.parseStanzaId(el);
-      expect(result.originID.id).toBe("origin-no-by");
-      expect(result.originID.by).toBeUndefined();
+    it("Example 2：解析 origin-id（无 by）", () => {
+      const el = Parser.parse(
+        `<origin-id xmlns="urn:xmpp:sid:0" id="de305d54-75b4-431b-adb2-eb6b9e546013"/>`
+      );
+      expect(StanzaID.parseStanzaId(el)).toEqual({
+        originID: { id: "de305d54-75b4-431b-adb2-eb6b9e546013" },
+      });
+    });
+
+    it("Example 4：解析 referenced-stanza", () => {
+      const el = Parser.parse(
+        `<referenced-stanza xmlns="urn:xmpp:sid:0" id="xep359-stanza-id" by="muc.example.org"/>`
+      );
+      expect(StanzaID.parseStanzaId(el)).toEqual({
+        referencedStanza: { id: "xep359-stanza-id", by: "muc.example.org" },
+      });
+    });
+
+    it("命名空间非法时抛错", () => {
+      const el = Parser.parse(`<stanza-id xmlns="urn:invalid" id="test-1"/>`);
+      expect(() => StanzaID.parseStanzaId(el)).toThrow("不是stanzaId命名空间");
     });
   });
 
-  describe("XEP-0359 examples", () => {
-    it("should match Example 1: Server-assigned ID", () => {
-      // <stanza-id xmlns='urn:xmpp:sid:0' id='6b06e6b5-bb1e-4e34-b7b5-91cd1c24cd30' by='example.org'/>
-      const el = XMPPElement.createElementNS(StanzaID.NS, "stanza-id");
-      el.setAttribute("id", "6b06e6b5-bb1e-4e34-b7b5-91cd1c24cd30");
-      el.setAttribute("by", "example.org");
-      const result = StanzaID.parseStanzaId(el);
-      expect(result.stanzaID.id).toBe("6b06e6b5-bb1e-4e34-b7b5-91cd1c24cd30");
-      expect(result.stanzaID.by).toBe("example.org");
+  describe("createOriginId", () => {
+    it("Example 2：按指定 id 生成 origin-id 元素", () => {
+      const el = StanzaID.createOriginId("de305d54-75b4-431b-adb2-eb6b9e546013");
+      expect(el.namespaceURI).toBe(StanzaID.NS);
+      expect(el.tagName).toBe("origin-id");
+      expect(el.getAttribute("id")).toBe("de305d54-75b4-431b-adb2-eb6b9e546013");
+      expect(el.children).toHaveLength(0);
     });
 
-    it("should match Example 2: Origin ID", () => {
-      // <origin-id xmlns='urn:xmpp:sid:0' id='c96ee1ca-cea1-4aca-8bcb-4ebc7e72c93e'/>
-      const el = XMPPElement.createElementNS(StanzaID.NS, "origin-id");
-      el.setAttribute("id", "c96ee1ca-cea1-4aca-8bcb-4ebc7e72c93e");
-      const result = StanzaID.parseStanzaId(el);
-      expect(result.originID.id).toBe("c96ee1ca-cea1-4aca-8bcb-4ebc7e72c93e");
+    it("缺省时随机生成 id（§2.1 建议 UUID）", () => {
+      const a = StanzaID.createOriginId();
+      const b = StanzaID.createOriginId();
+      expect(a.getAttribute("id")).toMatch(/^[0-9a-f-]{36}$/);
+      expect(a.getAttribute("id")).not.toBe(b.getAttribute("id"));
     });
   });
 });

@@ -1,5 +1,6 @@
 import { XMPPElement } from "@/ltx/Element";
-import { Presence, Message, Iq } from "@/stanza";
+import { Presence, Message } from "@/stanza";
+import { JID } from "@/JID";
 import { PEP } from "../xep0163/pep";
 export class Nickname {
     static readonly NS = "http://jabber.org/protocol/nick" as const;
@@ -12,7 +13,7 @@ export class Nickname {
     }
 
     static createNickSubscribe(to: string, nick: string) {
-        const pres = Presence.createPresence(to);
+        const pres = Presence.createPresence(new JID(to).bare, "subscribe");
         const nickEl = XMPPElement.createElementNS(Nickname.NS, "nick");
         nickEl.textContent = nick;
         pres.appendChild(nickEl);
@@ -29,11 +30,14 @@ export class Nickname {
 
     /**
      * 创建发布昵称的iq
+     *
+     * 结构按 XEP-0060 §7.1.1：`<pubsub><publish node><item><nick/></item></publish></pubsub>`
      * @param nick 昵称
      */
     static createNickPublishIq(nick: string) {
-        const publish = Iq.createIq("set");
-        publish.setAttribute("node", Nickname.NS);
+        const publish = XMPPElement.createElement("publish", {
+            node: Nickname.NS,
+        });
         const item = XMPPElement.createElement("item");
         const nickEl = XMPPElement.createElementNS(Nickname.NS, "nick");
         nickEl.textContent = nick;

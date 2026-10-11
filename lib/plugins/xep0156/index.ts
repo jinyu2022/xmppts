@@ -1,10 +1,15 @@
-import { Connection } from "../../connection";
-import { Plugin } from "../types";
+import type { Connection } from "../../connection";
+import type { Plugin } from "../types";
 import { XMPPDiscoverer } from "./discoverAltXMPP";
 import logger from "@/log";
 const log = logger.getLogger("XEP0156");
+
+/**
+ * XEP-0156: Discovering Alternative XMPP Connection Methods
+ * @see https://xmpp.org/extensions/xep-0156.html
+ * @version 1.4.0 (2022-02-10)
+ */
 class XEP0156 extends XMPPDiscoverer implements Plugin {
-  readonly name = "XEP-0156: Discovering Alternative XMPP Connection Methods";
   readonly connection: Connection;
   constructor(connection: Connection) {
     super()
@@ -12,18 +17,14 @@ class XEP0156 extends XMPPDiscoverer implements Plugin {
   }
 
   init() {
-    // 如果已经有service，就不需要再初始化
-    if (this.connection.url) {
-      log.debug("已经有url，不需要再初始化");
-      return;
-    }else if (!this.connection.socket){
-      log.debug("未连接，不需要初始化");
-      return;
-    }else if (!this.connection.protocol){
-      log.debug("未指定协议，不需要再初始化");
-      return;
-    }else if (this.connection.protocol === "xmpp"){
-      log.debug("xmpp协议，不需要再初始化");
+    // 已有连接地址、未连接、或协议无需发现时都跳过 host-meta 查询
+    let skipReason: string | undefined;
+    if (this.connection.url) skipReason = "已经有url";
+    else if (!this.connection.transport) skipReason = "未连接";
+    else if (!this.connection.protocol) skipReason = "未指定协议";
+    else if (this.connection.protocol === "xmpp") skipReason = "xmpp协议";
+    if (skipReason) {
+      log.debug(`${skipReason}，不需要初始化`);
       return;
     }
     // 获取连接方法
@@ -41,8 +42,9 @@ class XEP0156 extends XMPPDiscoverer implements Plugin {
           throw new Error("未找到连接方法");
         }
         const url = new URL(urlStr);
-        this.connection.address = url.hostname;
-        this.connection.port = url.port;
+        this.connection.host = url.hostname;
+        // URL 无显式端口时 port 为空串,保持 undefined
+        this.connection.port = url.port ? Number(url.port) : undefined;
         this.connection.path = url.pathname;
         if (this.connection.tls) {
           // 如果是tls协议，就用wss/https

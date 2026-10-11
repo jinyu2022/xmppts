@@ -1,7 +1,7 @@
-import { v4 as uuidv4 } from "uuid";
 import { JID } from "../../JID";
 import { XMPPElement } from "../../ltx/Element";
 import { Form, DataForm } from "../xep0004/form";
+import { Disco } from "../xep0030/disco";
 import type { MUCItem, MUCUserPres } from "./typing";
 import logger from "@/log";
 
@@ -96,20 +96,22 @@ export class MUC {
   ) {
     if (typeof room === "string") room = new JID(room);
     const roomJID = `${room.bare}/${nick}`;
-    const pres = XMPPElement.createElement("presence");
-    pres.setAttribute("to", roomJID);
+    const pres = XMPPElement.createElement("presence", { to: roomJID });
     const x = XMPPElement.createElementNS(MUC.NS.BASE, "x");
 
     if (options) {
       const { maxchars, maxstanzas, seconds, since, password } = options;
-      const history = XMPPElement.createElement("history");
-      // 注意：maxchars 和 maxstanzas 允许值为0，表示不接受历史消息，所以需要单独判断是否为 null 或 undefined
-      if (maxchars != null) history.setAttribute("maxchars", maxchars.toString());
-      if (maxstanzas != null) history.setAttribute("maxstanzas", maxstanzas.toString());
-      if (seconds != null) history.setAttribute("seconds", seconds.toString());
-      if (since != null) history.setAttribute("since", since.toISOString());
-      // NOTE：有顺序要求
-      x.appendChild(history);
+      // 未指定任何历史条件时不附 <history/>（XEP-0045 §7.2.14，交由服务端默认行为）
+      if (maxchars != null || maxstanzas != null || seconds != null || since != null) {
+        const history = XMPPElement.createElement("history");
+        // 注意：maxchars 和 maxstanzas 允许值为0，表示不接受历史消息，所以需要单独判断是否为 null 或 undefined
+        if (maxchars != null) history.setAttribute("maxchars", maxchars.toString());
+        if (maxstanzas != null) history.setAttribute("maxstanzas", maxstanzas.toString());
+        if (seconds != null) history.setAttribute("seconds", seconds.toString());
+        if (since != null) history.setAttribute("since", since.toISOString());
+        // NOTE：有顺序要求
+        x.appendChild(history);
+      }
       if (password) {
         const passwordElement = XMPPElement.createElement("password");
         passwordElement.textContent = password;
@@ -131,9 +133,10 @@ export class MUC {
     if (!to.includes("/")) {
       throw new Error(`createLeavePres: to 必须为包含昵称的完整 occupant JID（如 room@conference.example/nick）`);
     }
-    const pres = XMPPElement.createElement("presence");
-    pres.setAttribute("to", to);
-    pres.setAttribute("type", "unavailable");
+    const pres = XMPPElement.createElement("presence", {
+      to,
+      type: "unavailable",
+    });
     if (reason) {
       const status = XMPPElement.createElement("status");
       status.textContent = reason;
@@ -145,19 +148,22 @@ export class MUC {
   static createSetNickPres(room: string | JID, nick: string) {
     if (typeof room === "string") room = new JID(room);
 
-    const newRoomJID = `${room.bare}/${nick}`;
-    const pres = XMPPElement.createElement("presence");
-    pres.setAttribute("to", newRoomJID);
-    pres.setAttribute("id", uuidv4());
+    const roomJID = `${room.bare}/${nick}`;
+    const pres = XMPPElement.createElement("presence", {
+      to: roomJID,
+      id: crypto.randomUUID(),
+    });
     return pres;
   }
 
-  static mediatedinvite(room: string | JID, recipient: string | JID, reason = "") {
-    const message = XMPPElement.createElement("message");
-    message.setAttribute("to", room.toString());
+  static createMediatedInvite(room: string | JID, recipient: string | JID, reason = "") {
+    const message = XMPPElement.createElement("message", {
+      to: room.toString(),
+    });
     const x = XMPPElement.createElementNS(MUC.NS.USER, "x");
-    const invite = XMPPElement.createElement("invite");
-    invite.setAttribute("to", recipient.toString());
+    const invite = XMPPElement.createElement("invite", {
+      to: recipient.toString(),
+    });
     const reasonElement = XMPPElement.createElement("reason");
     reasonElement.textContent = reason;
     invite.appendChild(reasonElement);
@@ -166,7 +172,20 @@ export class MUC {
     return message;
   }
 
-  static getReservedNick() {}
+  /**
+   * 查询房间中预留的昵称（XEP-0045 §7.12）
+   * @param room 房间 JID
+   * @returns disco#info 查询 IQ，node 为 x-roomuser-item
+   */
+  static createGetReservedNickIq(room: string | JID) {
+    if (typeof room !== "string") room = room.toString();
+    const iq = XMPPElement.createElement("iq", { to: room, type: "get" });
+    const query = XMPPElement.createElementNS(Disco.NS.DISCO_INFO, "query", {
+      node: "x-roomuser-item",
+    });
+    iq.appendChild(query);
+    return iq;
+  }
 
   static createRequestVoiceMsg(room: string | JID) {
     if (typeof room !== "string") room = room.toString();
@@ -187,17 +206,17 @@ export class MUC {
       ],
     });
 
-    const message = XMPPElement.createElement("message");
-    message.setAttribute("to", room);
+    const message = XMPPElement.createElement("message", { to: room });
     message.appendChild(form);
     return message;
   }
 
   static createSetSubjectMsg(room: string | JID, subject: string) {
     const to = typeof room === "string" ? new JID(room).bare : room.bare;
-    const message = XMPPElement.createElement("message");
-    message.setAttribute("to", to);
-    message.setAttribute("type", "groupchat");
+    const message = XMPPElement.createElement("message", {
+      to,
+      type: "groupchat",
+    });
     const subjectElement = XMPPElement.createElement("subject");
     subjectElement.textContent = subject;
     message.appendChild(subjectElement);
@@ -213,12 +232,13 @@ export class MUC {
     if (typeof room !== "string") room = room.toString();
     if (typeof jid !== "string") jid = jid.toString();
 
-    const iq = XMPPElement.createElement("iq");
-    iq.setAttribute("to", room);
-    iq.setAttribute("type", "set");
+    const iq = XMPPElement.createElement("iq", { to: room, type: "set" });
 
     const query = XMPPElement.createElementNS(MUC.NS.ADMIN, "query");
-    const item = XMPPElement.createElement("item");
+    const item = XMPPElement.createElement("item", {
+      jid,
+      affiliation,
+    });
 
     if (reason) {
       const reasonEl = XMPPElement.createElement("reason");
@@ -226,8 +246,6 @@ export class MUC {
       item.appendChild(reasonEl);
     }
 
-    item.setAttribute("jid", jid);
-    item.setAttribute("affiliation", affiliation);
     query.appendChild(item);
     iq.appendChild(query);
     return iq;
@@ -241,14 +259,10 @@ export class MUC {
   ) {
     if (typeof room !== "string") room = room.toString();
     if (typeof nick !== "string") nick = nick.toString();
-    const iq = XMPPElement.createElement("iq");
-    iq.setAttribute("to", room);
-    iq.setAttribute("type", "set");
+    const iq = XMPPElement.createElement("iq", { to: room, type: "set" });
 
     const query = XMPPElement.createElementNS(MUC.NS.ADMIN, "query");
-    const item = XMPPElement.createElement("item");
-    item.setAttribute("nick", nick);
-    item.setAttribute("role", role);
+    const item = XMPPElement.createElement("item", { nick, role });
     if (reason) {
       const reasonEl = XMPPElement.createElement("reason");
       reasonEl.textContent = reason;
@@ -261,9 +275,7 @@ export class MUC {
 
   static createGetRoomConfigIq(room: string | JID) {
     if (typeof room !== "string") room = room.toString();
-    const iq = XMPPElement.createElement("iq");
-    iq.setAttribute("to", room);
-    iq.setAttribute("type", "get");
+    const iq = XMPPElement.createElement("iq", { to: room, type: "get" });
 
     const query = XMPPElement.createElementNS(MUC.NS.OWNER, "query");
     iq.appendChild(query);
@@ -272,9 +284,7 @@ export class MUC {
 
   static createSetRoomConfigIq(room: string | JID, form: DataForm) {
     if (typeof room !== "string") room = room.toString();
-    const iq = XMPPElement.createElement("iq");
-    iq.setAttribute("to", room);
-    iq.setAttribute("type", "set");
+    const iq = XMPPElement.createElement("iq", { to: room, type: "set" });
 
     const query = XMPPElement.createElementNS(MUC.NS.OWNER, "query");
     const formEl = Form.createFormEl(form);
@@ -334,7 +344,7 @@ export class MUC {
 
     const itemElements = xEl.getElementsByTagName("item");
     if (itemElements.length > 1) {
-      log.warn("muc#user 包含多个 item，仅解析第一个", xEl.toXMLString());
+      log.warn("muc#user 包含多个 item，仅解析第一个", () => xEl.toXMLString());
     }
 
     const itemEl = itemElements[0];
@@ -344,26 +354,29 @@ export class MUC {
       const affiliation = MUC.AFFILIATION.find(
         (allowed) => allowed === affiliationValue
       );
+      if (affiliationValue && !affiliation) {
+        log.warn(`未知的 muc#user item affiliation: ${affiliationValue}`);
+      }
       const roleValue = itemEl.getAttribute("role");
       const role = MUC.ROLE.find((allowed) => allowed === roleValue);
-
-      if (affiliation && role) {
-        const actorEl = itemEl.getElementsByTagName("actor")[0];
-        const actorJid = actorEl?.getAttribute("jid") ?? undefined;
-        const actorNick = actorEl?.getAttribute("nick") ?? undefined;
-        item = {
-          affiliation,
-          role,
-          jid: itemEl.getAttribute("jid") ?? undefined,
-          nick: itemEl.getAttribute("nick") ?? undefined,
-          reason: itemEl.getElementsByTagName("reason")[0]?.textContent ?? undefined,
-          actor: actorJid || actorNick
-            ? { jid: actorJid, nick: actorNick }
-            : undefined,
-        };
-      } else {
-        log.warn("忽略缺少有效 affiliation 或 role 的 muc#user item", xEl.toXMLString());
+      if (roleValue && !role) {
+        log.warn(`未知的 muc#user item role: ${roleValue}`);
       }
+
+      const actorEl = itemEl.getElementsByTagName("actor")[0];
+      const actorJid = actorEl?.getAttribute("jid") ?? undefined;
+      const actorNick = actorEl?.getAttribute("nick") ?? undefined;
+      // affiliation / role 可能只出现其一（如 §8.5 授权发言只带 role、§9.5 只带 affiliation），二者都可缺省
+      item = {
+        affiliation,
+        role,
+        jid: itemEl.getAttribute("jid") ?? undefined,
+        nick: itemEl.getAttribute("nick") ?? undefined,
+        reason: itemEl.getElementsByTagName("reason")[0]?.textContent ?? undefined,
+        actor: actorJid || actorNick
+          ? { jid: actorJid, nick: actorNick }
+          : undefined,
+      };
     }
 
     const destroyEl = xEl.getElementsByTagName("destroy")[0];

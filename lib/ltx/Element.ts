@@ -1,11 +1,12 @@
 import { escapeXML, escapeXMLText } from "./escape.js";
+import QuerySelector from "./QuerySelector.js";
 /** DOM-inspired：文本节点用 string，元素节点用 XMPPElement */
-export type Node = XMPPElement | string;
+type XMPPNode = XMPPElement | string;
 
 /**
  * 只读元素集合，类似 HTMLCollection 的简化版（非 live）。
  */
-export class XMPPElementCollection implements Iterable<XMPPElement> {
+class XMPPElementCollection implements Iterable<XMPPElement> {
   private readonly elements: XMPPElement[];
 
   /**
@@ -38,7 +39,8 @@ export class XMPPElementCollection implements Iterable<XMPPElement> {
     return this.elements[Symbol.iterator]();
   }
 }
-
+class XMPPNodeList extends XMPPElementCollection {
+}
 /**
  * DOM-inspired XML 元素（XMPP/LTX）。
  * 命名与常用行为贴近 DOM，但不是完整 WHATWG 实现。
@@ -47,9 +49,9 @@ export class XMPPElement {
   public readonly tagName: string;
   private _parentNode: XMPPElement | null = null;
   /** 内部可写子节点列表 */
-  private _childNodes: Node[] = [];
+  private _childNodes: XMPPNode[] = [];
   /** 无原型属性表，允许安全使用 constructor、toString、__proto__ 等 XML 属性名。 */
-  private readonly attrs: Record<string, string> = Object.create(null) as Record<string, string>;
+  private readonly attrs = Object.create(null,) as Record<string, string>;
 
   /**
    * TIP: 请使用 createElement / createElementNS 创建实例
@@ -60,7 +62,7 @@ export class XMPPElement {
   private constructor(
     tagName?: string,
     namespaceURI: string | null = null,
-    qualifiedName?: string
+    qualifiedName?: string,
   ) {
     if (qualifiedName && !tagName) {
       this.tagName = qualifiedName;
@@ -76,7 +78,7 @@ export class XMPPElement {
   }
 
   /** 只读子节点列表（DOM 风格） */
-  public get childNodes(): readonly Node[] {
+  public get childNodes(): readonly XMPPNode[] {
     return this._childNodes;
   }
 
@@ -111,8 +113,8 @@ export class XMPPElement {
       }
     } else {
       /* 默认命名空间 */
-      if (this.attrs.xmlns) {
-        return this.attrs.xmlns;
+      if (this.attrs.xmlns !== undefined) {
+        return this.attrs.xmlns || null;
       } else if (this.parentElement) {
         return this.parentElement._findNS(null);
       }
@@ -123,17 +125,41 @@ export class XMPPElement {
   /**
    * 创建一个新的 XMPPElement 实例。
    * @param tagName 元素的标签名
+   * @param attrs 可选属性表，值为 null/undefined 时跳过
    * @returns 新创建的 XMPPElement 实例
    */
-  public static createElement(tagName: string): XMPPElement {
-    return new XMPPElement(tagName);
+  public static createElement(
+    tagName: string,
+    attrs?: Record<string, string | number>,
+  ): XMPPElement {
+    return XMPPElement._applyAttrs(new XMPPElement(tagName), attrs);
   }
 
   public static createElementNS(
     namespaceURI: string,
-    qualifiedName: string
+    qualifiedName: string,
+    attrs?: Record<string, string | number>,
   ): XMPPElement {
-    return new XMPPElement(undefined, namespaceURI, qualifiedName);
+    return XMPPElement._applyAttrs(
+      new XMPPElement(undefined, namespaceURI, qualifiedName),
+      attrs,
+    );
+  }
+
+  /** 将属性表写入元素（值为 null/undefined 时跳过） */
+  private static _applyAttrs(
+    el: XMPPElement,
+    attrs?: Record<string, string | number>,
+  ): XMPPElement {
+    if (attrs) {
+      for (const key in attrs) {
+        const value = attrs[key];
+        if (value != null) {
+          el.attrs[key] = String(value);
+        }
+      }
+    }
+    return el;
   }
 
   /**
@@ -148,36 +174,14 @@ export class XMPPElement {
    * 获取属性值。
    */
   public getAttribute(name: string): string | null {
-    return this.attrs[name] ?? null;
+    return this.attrs[String(name)] ?? null;
   }
 
   /**
-   * 设置属性值。
+   * 设置属性值（值强制转为字符串）。
    */
   public setAttribute(name: string, val: string): this {
-    this.attrs[name] = val;
-    return this;
-  }
-
-  /**
-   * DOM 风格：setAttributeNS(namespaceURI, qualifiedName, value)。
-   * 本实现以 qualifiedName 为属性键存储（XMPP 实用简化）。
-   * @param _namespaceURI 属性的命名空间 URI（签名兼容，当前未使用）
-   * @param qualifiedName 属性的限定名 (e.g., "xml:lang")
-   * @param value 属性值
-   * @returns 当前元素实例
-   */
-  public setAttributeNS(
-    _namespaceURI: string | null,
-    qualifiedName: string,
-    value: string
-  ): this {
-    /**
-     * 在 LTX 风格中，我们通常直接使用 qualifiedName 作为属性键，
-     * 因为命名空间声明（xmlns:prefix）本身就是属性。
-     * 这里的逻辑与 setAttribute 类似，但提供了 DOM 兼容的签名。
-     */
-    this.attrs[qualifiedName] = value;
+    this.attrs[String(name)] = String(val);
     return this;
   }
 
@@ -185,28 +189,8 @@ export class XMPPElement {
    * 移除属性。
    */
   public removeAttribute(name: string): this {
-    delete this.attrs[name];
+    delete this.attrs[String(name)];
     return this;
-  }
-
-  /**
-   * 获取第一个匹配的子元素（可指定本地名）。
-   */
-  private getChild(name: string): XMPPElement | undefined {
-    return this.getChildren(name)[0];
-  }
-
-  /**
-   * 返回所有匹配的直接子元素（不递归），可按名称过滤。
-   */
-  public getChildren(name: string): XMPPElement[] {
-    const result: XMPPElement[] = [];
-    for (const child of this._childNodes) {
-      if (child instanceof XMPPElement && child.localName === name) {
-        result.push(child);
-      }
-    }
-    return result;
   }
 
   /**
@@ -240,13 +224,14 @@ export class XMPPElement {
   /**
    * 设置当前元素的文本内容。null 与空字符串都会清空全部子节点。
    */
-  public set textContent(value: string | null) {
+  public set textContent(value: string) {
     for (const child of this._childNodes) {
       if (child instanceof XMPPElement) {
         child._parentNode = null;
       }
     }
-    this._childNodes = value ? [value] : [];
+    const text = value == null ? "" : String(value);
+    this._childNodes = text ? [text] : [];
   }
 
   /**
@@ -279,7 +264,7 @@ export class XMPPElement {
    */
   public getElementsByTagNameNS(
     namespaceURI: string | null,
-    localName: string
+    localName: string,
   ): XMPPElement[] {
     const ns = namespaceURI === "" ? null : namespaceURI;
     const result: XMPPElement[] = [];
@@ -300,38 +285,86 @@ export class XMPPElement {
   }
 
   /**
-   * 创建一个新的子元素（DOM 标准风格：appendChild）
+   * 返回与选择器匹配的第一个后代元素（前序），无匹配返回 null。
+   * @param selectors CSS 选择器。
+   * @returns 匹配的元素。
    */
-  public appendChild(child: XMPPElement): XMPPElement {
-    let ancestor = this.parentNode;
-    while (ancestor && ancestor !== child) {
-      ancestor = ancestor.parentNode;
-    }
-    // 禁止插入自身或祖先节点，避免形成循环引用
-    if (child === this || ancestor === child) {
-      throw new DOMException(
-        "The new child would create a cycle in the node tree.",
-        "HierarchyRequestError"
-      );
-    }
-
-    if (child.parentNode) {
-      child.parentNode.removeChild(child);
-    }
-    this._childNodes.push(child);
-    child._parentNode = this;
-    return child;
+  public querySelector(selectors: string): XMPPElement | null {
+    return QuerySelector.querySelector(this, selectors);
   }
 
   /**
-   * 移除指定的子元素（DOM 标准风格：removeChild）
+   * 返回与选择器匹配的所有后代元素（前序），以 XMPPElementCollection 形式返回。
+   * @param selectors CSS 选择器。
+   * @returns 匹配的元素集合。
+   */
+  public querySelectorAll(selectors: string): XMPPNodeList {
+    return new XMPPNodeList(
+      QuerySelector.querySelectorAll(this, selectors),
+    );
+  }
+
+  /**
+   * 元素自身是否匹配选择器（组合符会沿祖先链判断）。
+   * @param selectors CSS 选择器。
+   * @returns 是否匹配。
+   */
+  public matches(selectors: string): boolean {
+    return QuerySelector.matches(this, selectors);
+  }
+
+  /**
+   * 追加子元素（DOM 标准风格：appendChild）。
+   */
+  public appendChild(child: XMPPElement): XMPPElement {
+    return this.insertBefore(child, null);
+  }
+
+  /**
+   * 在参考节点前插入子元素；参考节点为 null 时追加到末尾（DOM 标准风格：insertBefore）。
+   */
+  public insertBefore<T extends XMPPElement>(
+    node: T,
+    child: XMPPElement | null,
+  ): T {
+    if (node === child) {
+      return node;
+    }
+    if (node === (this as XMPPElement)) {
+      throw new DOMException(
+        "unable to append a node to itself",
+        "HierarchyRequestError",
+      );
+    }
+    if (child && !this._childNodes.includes(child)) {
+      throw new DOMException(
+        "The node before which the new node is to be inserted is not a child of this node.",
+        "NotFoundError",
+      );
+    }
+
+    if (node.parentNode) {
+      node.parentNode.removeChild(node);
+    }
+    const index = child
+      ? this._childNodes.indexOf(child)
+      : this._childNodes.length;
+    this._childNodes.splice(index, 0, node);
+    node._parentNode = this;
+    return node;
+  }
+
+  /**
+   * 移除指定的子元素（DOM 标准风格：removeChild）。
    */
   public removeChild(child: XMPPElement): XMPPElement {
-    const idx = this._childNodes.indexOf(child);
-    if (idx < 0) {
-      throw new Error("The node to be removed is not a child of this node.");
+    if (child.parentNode !== this) {
+      throw new DOMException(
+        "The node to be removed is not a child of this node.",
+        "NotFoundError",
+      );
     }
-    this._childNodes.splice(idx, 1);
+    this._childNodes.splice(this._childNodes.indexOf(child), 1);
     child._parentNode = null;
     return child;
   }
@@ -346,8 +379,16 @@ export class XMPPElement {
     return this._parentNode;
   }
 
+  /**
+   * 仅供解析器使用：只设置祖先链以提供 xmlns 解析上下文，不把节点加入 childNodes。
+   * @param parent 上下文父节点（流头元素），null 表示清除
+   */
+  public _setParentNode(parent: XMPPElement | null): void {
+    this._parentNode = parent;
+  }
+
   /** 追加任意节点（可传多个），并设置对象节点的 parent */
-  public append(...nodes: Node[]): void {
+  public append(...nodes: XMPPNode[]): void {
     for (const node of nodes) {
       if (node instanceof XMPPElement) {
         this.appendChild(node);

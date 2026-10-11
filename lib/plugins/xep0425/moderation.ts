@@ -1,6 +1,4 @@
-
 import type { JID } from "@/JID";
-import { XMPPError } from "@/errors";
 import { XMPPElement } from "@/ltx/Element";
 import { Retraction } from "../xep0424/retraction";
 
@@ -23,18 +21,18 @@ export class Moderation {
      * - "moderated": 审核标记元素
      * 
      * @param moderationEl - 要解析的审核 XML 元素
-     * @throws {XMPPError} 当元素命名空间不合法或缺少必要属性时抛出错误
+     * @throws {Error} 当元素命名空间不合法或缺少必要属性时抛出错误
      */
     static parseModeration(moderationEl: XMPPElement) {
         if (moderationEl.namespaceURI !== Moderation.NS) {
-            throw new XMPPError(moderationEl, "非法命名空间的消息审核元素");
+            throw new Error(`非法命名空间的消息审核元素: ${moderationEl.toXMLString()}`);
         }
 
         // 处理 moderate 元素：审核请求
         if (moderationEl.tagName === "moderate") {
             const id = moderationEl.getAttribute("id");
             if (!id) {
-                throw new XMPPError(moderationEl, "消息审核元素缺少 id");
+                throw new Error(`消息审核元素缺少 id: ${moderationEl.toXMLString()}`);
             }
 
             // 验证必须包含 retract 元素
@@ -43,7 +41,7 @@ export class Moderation {
                 "retract"
             )[0];
             if (!retractEl) {
-                throw new XMPPError(moderationEl, "消息审核元素缺少必需的 retract 子元素");
+                throw new Error(`消息审核元素缺少必需的 retract 子元素: ${moderationEl.toXMLString()}`);
             }
 
             // 获取可选的 reason 元素
@@ -58,21 +56,17 @@ export class Moderation {
             };
         }
 
-        // 处理 moderated 元素：审核标记
+        // 处理 moderated 元素：审核标记（§9 schema 为 simpleContent，只带 by 属性）
+        // 平级的 <reason/> 由 XEP0424 的 `<retract/>` / `<retracted/>` 解析负责
         if (moderationEl.tagName === "moderated") {
-            const by = moderationEl.getAttribute("by");
-            const reasonEl = moderationEl.getElementsByTagName("reason")[0];
-            const reason = reasonEl?.textContent ?? void 0;
-
             return {
                 moderated: {
-                    by,
-                    reason,
+                    by: moderationEl.getAttribute("by") ?? void 0,
                 },
             };
         }
 
-        throw new XMPPError(moderationEl, "未知的消息审核元素标签");
+        throw new Error(`未知的消息审核元素标签: ${moderationEl.toXMLString()}`);
     }
 
     /**
@@ -86,8 +80,9 @@ export class Moderation {
      * @returns 返回创建的审核请求 XML 元素
      */
     static createModerationEl(id: string, reason?: string) {
-        const moderate = XMPPElement.createElementNS(Moderation.NS, "moderate");
-        moderate.setAttribute("id", id);
+        const moderate = XMPPElement.createElementNS(Moderation.NS, "moderate", {
+            id,
+        });
 
         // 复用 XEP0424 的 retract 元素创建方法
         moderate.appendChild(Retraction.createRetractionEl(id));
@@ -103,26 +98,20 @@ export class Moderation {
     }
 
     /**
-     * 创建包含审核标记的消息（用于 tombstone）
+     * 创建审核标记元素（`<moderated/>`，用于 tombstone）
      * 
      * 创建一个 moderated 元素，用于标记消息已被审核。
-     * 通常由 archiving 服务使用来标记已撤回的消息。
+     * 按 §3.1 与 §4，`<reason/>` 与 `<moderated/>` 平级（位于 `<retract/>` /
+     * `<retracted/>` 下），需由调用方单独追加，不能放进本元素内部。
      * 
-     * @param by - 执行审核的实体的 JID（可选）
-     * @param reason - 审核原因的可选描述
+     * @param by - 执行审核的实体的 JID（可选，省略表示不公开审核者）
      * @returns 返回创建的审核标记 XML 元素
      */
-    static createModeratedEl(by?: string | JID, reason?: string) {
+    static createModeratedEl(by?: string | JID) {
         const moderated = XMPPElement.createElementNS(Moderation.NS, "moderated");
 
         if (by) {
             moderated.setAttribute("by", by.toString());
-        }
-
-        if (reason) {
-            const reasonEl = XMPPElement.createElement("reason");
-            reasonEl.textContent = reason;
-            moderated.appendChild(reasonEl);
         }
 
         return moderated;

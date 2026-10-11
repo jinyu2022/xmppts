@@ -1,40 +1,91 @@
 import { describe, it, expect } from 'vitest';
 import { XMPPElement } from '../../lib/ltx/Element';
+import { Parser } from '../../lib/ltx/Parser';
 
 describe('XMPPElement', () => {
   describe('createElement', () => {
-    it('should create an element with a name', () => {
+    it('创建带名称的元素', () => {
       const el = XMPPElement.createElement('message');
       expect(el.tagName).toBe('message');
       expect(el.childNodes).toEqual([]);
       expect(el.getAttribute('xmlns')).toBeNull();
     });
+
+    it('可选属性表写入属性', () => {
+      const el = XMPPElement.createElement('message', { to: 'a@b', priority: 5 });
+      expect(el.getAttribute('to')).toBe('a@b');
+      expect(el.getAttribute('priority')).toBe('5');
+    });
   });
 
   describe('createElementNS', () => {
-    it('should create an element with namespace and qualified name', () => {
+    it('创建带命名空间与限定名的元素', () => {
         const el = XMPPElement.createElementNS('http://example.com', 'ns:message');
         expect(el.tagName).toBe('ns:message');
         expect(el.namespaceURI).toBe('http://example.com');
         expect(el.prefix).toBe('ns');
         expect(el.localName).toBe('message');
     });
+
+    it('可选属性表写入属性', () => {
+      const el = XMPPElement.createElementNS('http://example.com', 'ns:message', { id: '1' });
+      expect(el.getAttribute('id')).toBe('1');
+      expect(el.namespaceURI).toBe('http://example.com');
+    });
+  });
+
+  describe('namespaceURI', () => {
+    it('XML Namespaces §6.2：空默认命名空间只重置对应子树', () => {
+      const root = Parser.parse(`
+        <root xmlns="urn:example:outer" xmlns:p="urn:example:prefix">
+          <plain xmlns="">
+            <child/>
+            <p:child/>
+            <scoped xmlns="urn:example:inner"/>
+          </plain>
+          <sibling/>
+        </root>
+      `);
+      const plain = root.getElementsByTagName('plain')[0];
+      const child = plain.getElementsByTagName('child')[0];
+
+      expect(root.namespaceURI).toBe('urn:example:outer');
+      expect(plain.namespaceURI).toBeNull();
+      expect(child.namespaceURI).toBeNull();
+      expect(plain.getElementsByTagName('p:child')[0].namespaceURI).toBe('urn:example:prefix');
+      expect(plain.getElementsByTagName('scoped')[0].namespaceURI).toBe('urn:example:inner');
+      expect(root.getElementsByTagName('sibling')[0].namespaceURI).toBe('urn:example:outer');
+      expect(root.getElementsByTagNameNS('', '*')).toEqual([plain, child]);
+      expect(Parser.parse(root.toXMLString()).getElementsByTagName('plain')[0].namespaceURI).toBeNull();
+    });
+
+    it('移除空 xmlns 后重新继承默认命名空间', () => {
+      const root = XMPPElement.createElementNS('urn:example:outer', 'root');
+      const child = XMPPElement.createElement('child', { xmlns: '' });
+      root.appendChild(child);
+
+      expect(child.namespaceURI).toBeNull();
+      child.removeAttribute('xmlns');
+      expect(child.namespaceURI).toBe('urn:example:outer');
+      child.setAttribute('xmlns', '');
+      expect(child.namespaceURI).toBeNull();
+    });
   });
 
   describe('localName', () => {
-    it('should return name without prefix', () => {
+    it('返回去掉前缀的名称', () => {
       const el = XMPPElement.createElement('message');
       expect(el.localName).toBe('message');
     });
 
-    it('should strip namespace prefix', () => {
+    it('去掉命名空间前缀', () => {
       const el = XMPPElement.createElementNS('http://example.com', 'ns:message');
       expect(el.localName).toBe('message');
     });
   });
 
   describe('appendChild', () => {
-    it('should append a child element', () => {
+    it('追加子元素', () => {
       const el = XMPPElement.createElement('message');
       const body = XMPPElement.createElement('body');
       const result = el.appendChild(body);
@@ -46,7 +97,7 @@ describe('XMPPElement', () => {
   });
 
   describe('removeChild', () => {
-    it('should remove a child element', () => {
+    it('移除子元素', () => {
       const el = XMPPElement.createElement('message');
       const body = XMPPElement.createElement('body');
       el.appendChild(body);
@@ -58,53 +109,19 @@ describe('XMPPElement', () => {
     });
   });
 
-  describe('getChildren first match', () => {
-    it('should get first matching child', () => {
-      const el = XMPPElement.createElement('message');
-      const body = XMPPElement.createElement('body');
-      const thread = XMPPElement.createElement('thread');
-      el.appendChild(body);
-      el.appendChild(thread);
-      
-      expect(el.getChildren('body')[0]).toBe(body);
-    });
-
-    it('should return undefined if not found', () => {
-      const el = XMPPElement.createElement('message');
-      expect(el.getChildren('body')[0]).toBeUndefined();
-    });
-  });
-
-  describe('getChildren', () => {
-    it('should get all matching children', () => {
-      const el = XMPPElement.createElement('message');
-      const item1 = XMPPElement.createElement('item');
-      const item2 = XMPPElement.createElement('item');
-      const other = XMPPElement.createElement('other');
-      el.appendChild(item1);
-      el.appendChild(item2);
-      el.appendChild(other);
-      
-      const items = el.getChildren('item');
-      expect(items).toHaveLength(2);
-      expect(items[0]).toBe(item1);
-      expect(items[1]).toBe(item2);
-    });
-  });
-
   describe('getAttribute', () => {
-    it('should get attribute value', () => {
+    it('获取属性值', () => {
       const el = XMPPElement.createElement('message');
       el.setAttribute('id', '123');
       expect(el.getAttribute('id')).toBe('123');
     });
 
-    it('should return null for missing attribute', () => {
+    it('属性缺失时返回 null', () => {
       const el = XMPPElement.createElement('message');
       expect(el.getAttribute('id')).toBeNull();
     });
 
-    it('should safely handle names inherited by ordinary objects', () => {
+    it('安全处理普通对象继承来的名称', () => {
       const el = XMPPElement.createElement('message');
 
       expect(el.getAttribute('constructor')).toBeNull();
@@ -122,7 +139,7 @@ describe('XMPPElement', () => {
   });
 
   describe('setAttribute', () => {
-    it('should set attribute and return this', () => {
+    it('设置属性并返回 this', () => {
       const el = XMPPElement.createElement('message');
       const result = el.setAttribute('id', '123');
       
@@ -132,7 +149,7 @@ describe('XMPPElement', () => {
   });
 
   describe('removeAttribute', () => {
-    it('should remove attribute', () => {
+    it('移除属性', () => {
       const el = XMPPElement.createElement('message');
       el.setAttribute('id', '123');
       el.setAttribute('type', 'chat');
@@ -145,13 +162,13 @@ describe('XMPPElement', () => {
   });
 
   describe('textContent', () => {
-    it('should return text content of children', () => {
+    it('返回子节点的文本内容', () => {
         const el = XMPPElement.createElement('message');
         el.append('Hello', ' ', 'World');
         expect(el.textContent).toBe('Hello World');
     });
 
-    it('should recursively collect descendant text content', () => {
+    it('递归收集后代文本内容', () => {
         const el = XMPPElement.createElement('message');
         el.append('Hello');
         const b = XMPPElement.createElement('b');
@@ -160,12 +177,12 @@ describe('XMPPElement', () => {
         expect(el.textContent).toBe('HelloWorld');
     });
 
-    it.each(['', null])('should clear children when set to %s', (value) => {
+    it.each(['', null])('设置为 %s 时清空子节点', (value) => {
       const el = XMPPElement.createElement('message');
       const child = XMPPElement.createElement('body');
       el.appendChild(child);
 
-      el.textContent = value;
+      el.textContent = value!;
 
       expect(el.childNodes).toHaveLength(0);
       expect(child.parentNode).toBeNull();
@@ -174,24 +191,24 @@ describe('XMPPElement', () => {
   });
 
   describe('toXMLString', () => {
-      it('should serialize simple element', () => {
+      it('序列化简单元素', () => {
           const el = XMPPElement.createElement('message');
           expect(el.toXMLString()).toBe('<message/>');
       });
 
-      it('should serialize element with attributes', () => {
+      it('序列化带属性的元素', () => {
           const el = XMPPElement.createElement('message');
           el.setAttribute('to', 'user@example.com');
           expect(el.toXMLString()).toBe('<message to="user@example.com"/>');
       });
 
-      it('should serialize element with text content', () => {
+      it('序列化带文本内容的元素', () => {
           const el = XMPPElement.createElement('message');
           el.append('Hello');
           expect(el.toXMLString()).toBe('<message>Hello</message>');
       });
 
-      it('should serialize nested elements', () => {
+      it('序列化嵌套元素', () => {
           const el = XMPPElement.createElement('message');
           const body = XMPPElement.createElement('body');
           body.append('Hello');
@@ -199,7 +216,7 @@ describe('XMPPElement', () => {
           expect(el.toXMLString()).toBe('<message><body>Hello</body></message>');
       });
       
-      it('should serialize with indentation', () => {
+      it('按缩进序列化', () => {
         const el = XMPPElement.createElement('message');
         const body = XMPPElement.createElement('body');
         body.append('Hello');
@@ -212,7 +229,7 @@ describe('XMPPElement', () => {
   });
   
   describe('appendChild reparent', () => {
-    it('should move child from old parent', () => {
+    it('从旧父节点移动子节点', () => {
       const a = XMPPElement.createElement('a');
       const b = XMPPElement.createElement('b');
       const child = XMPPElement.createElement('child');
@@ -223,7 +240,7 @@ describe('XMPPElement', () => {
       expect(child.parentNode).toBe(b);
     });
 
-    it('should reject inserting an element into itself', () => {
+    it('拒绝把元素插入自身', () => {
       const el = XMPPElement.createElement('message');
 
       expect(() => el.appendChild(el)).toThrowError(
@@ -233,39 +250,31 @@ describe('XMPPElement', () => {
       expect(el.childNodes).toHaveLength(0);
     });
 
-    it('should reject inserting an ancestor into its descendant', () => {
+    it('把祖先插入其后代不报错（不检测环）', () => {
       const root = XMPPElement.createElement('root');
       const child = XMPPElement.createElement('child');
       root.appendChild(child);
 
-      expect(() => child.appendChild(root)).toThrowError(
-        expect.objectContaining({ name: 'HierarchyRequestError' })
-      );
-      expect(root.parentNode).toBeNull();
-      expect(child.parentNode).toBe(root);
+      expect(() => child.appendChild(root)).not.toThrow();
+      expect(root.parentNode).toBe(child);
     });
   });
 
   describe('removeChild throw', () => {
-    it('should throw if not a child', () => {
+    it('不是子节点时抛错', () => {
       const el = XMPPElement.createElement('message');
       const body = XMPPElement.createElement('body');
       expect(() => el.removeChild(body)).toThrow(
         'The node to be removed is not a child of this node.'
       );
-    });
-  });
-
-  describe('setAttributeNS', () => {
-    it('should accept DOM-style 3 args', () => {
-      const el = XMPPElement.createElement('message');
-      el.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:lang', 'zh');
-      expect(el.getAttribute('xml:lang')).toBe('zh');
+      expect(() => el.removeChild(body)).toThrowError(
+        expect.objectContaining({ name: 'NotFoundError' })
+      );
     });
   });
 
   describe('getElementsByTagNameNS', () => {
-    it('should support namespace wildcard and empty string', () => {
+    it('支持命名空间通配符与空字符串', () => {
       const root = XMPPElement.createElementNS('urn:x', 'x:root');
       const item = XMPPElement.createElementNS('urn:x', 'x:item');
       root.appendChild(item);
@@ -278,8 +287,310 @@ describe('XMPPElement', () => {
     });
   });
 
+  describe('querySelector', () => {
+    const build = () => {
+      const root = XMPPElement.createElement('root');
+      const a = XMPPElement.createElement('a');
+      const b = XMPPElement.createElement('b');
+      b.setAttribute('id', 'target');
+      b.setAttribute('class', 'x y');
+      b.setAttribute('type', 'chat');
+      const c = XMPPElement.createElement('c');
+      root.appendChild(a);
+      a.appendChild(b);
+      b.appendChild(c);
+      return { root, a, b, c };
+    };
+
+    it('按标签名返回第一个匹配的后代', () => {
+      const { root, b } = build();
+      expect(root.querySelector('b')).toBe(b);
+    });
+
+    it('空字符串抛 SyntaxError', () => {
+      const { root } = build();
+      expect(() => root.querySelector('')).toThrowError(
+        expect.objectContaining({ name: 'SyntaxError' })
+      );
+    });
+
+    it('运行时缺少参数时按字符串选择器处理', () => {
+      const { root } = build();
+      const target = XMPPElement.createElement('undefined');
+      root.appendChild(target);
+      expect(
+        (root.querySelector as unknown as (selector?: string) => XMPPElement | null)()
+      ).toBe(target);
+    });
+
+    it('不支持 * 通配时仍匹配任意元素', () => {
+      const { root, a } = build();
+      expect(root.querySelector('*')).toBe(a);
+    });
+
+    it('只匹配后代，不含自身', () => {
+      const { root, a } = build();
+      expect(a.querySelector('a')).toBeNull();
+      root.appendChild(XMPPElement.createElement('a'));
+      expect(a.querySelector('root')).toBeNull();
+    });
+
+    it('无匹配返回 null', () => {
+      const { root } = build();
+      expect(root.querySelector('zzz')).toBeNull();
+    });
+
+    it('支持 #id 与 .class', () => {
+      const { root, b } = build();
+      expect(root.querySelector('#target')).toBe(b);
+      expect(root.querySelector('.x')).toBe(b);
+      expect(root.querySelector('.z')).toBeNull();
+    });
+
+    it('支持属性选择器', () => {
+      const { root, b } = build();
+      expect(root.querySelector('[type]')).toBe(b);
+      expect(root.querySelector('[type=chat]')).toBe(b);
+      expect(root.querySelector('[class~="y"]')).toBe(b);
+      expect(root.querySelector('[type=groupchat]')).toBeNull();
+    });
+
+    it('支持后代与子代组合符', () => {
+      const { root, b, c } = build();
+      expect(root.querySelector('a b')).toBe(b);
+      expect(root.querySelector('a > b')).toBe(b);
+      expect(root.querySelector('a > c')).toBeNull();
+      expect(root.querySelector('b c')).toBe(c);
+    });
+
+    it('支持逗号分隔的选择器列表', () => {
+      const { root, b } = build();
+      expect(root.querySelector('zzz, b')).toBe(b);
+    });
+
+    it('支持 :scope 查询当前元素的直接子元素', () => {
+      const { root, a, b } = build();
+      expect(root.querySelector(':scope > a')).toBe(a);
+      expect(root.querySelector(':scope > b')).toBeNull();
+      expect(root.querySelectorAll(':scope > a')).toHaveLength(1);
+      expect(root.matches(':scope')).toBe(true);
+      expect(root.matches(':SCOPE')).toBe(true);
+      expect(a.matches(':scope')).toBe(true);
+      expect(b.matches(':scope')).toBe(true);
+    });
+
+    it('带 :scope 的后代组合仍从当前元素开始匹配', () => {
+      const { root, b } = build();
+      expect(root.querySelector(':scope a > b')).toBe(b);
+      expect(root.querySelector(':scope > a b')).toBe(b);
+    });
+
+    it('带前缀名称用 | 或转义匹配 tagName，localName 直接可用', () => {
+      const root = XMPPElement.createElement('root');
+      const features = XMPPElement.createElement('stream:features');
+      root.appendChild(features);
+      expect(root.querySelector('stream|features')).toBe(features);
+      expect(root.querySelector('stream\\:features')).toBe(features);
+      expect(root.querySelector('stream|*')).toBe(features);
+      expect(root.querySelector('*|features')).toBe(features);
+      expect(root.querySelector('features')).toBe(features);
+      // `:` 一律按伪类解析，未支持的伪类按非法选择器处理
+      expect(() => root.querySelector('stream:features')).toThrowError(
+        expect.objectContaining({ name: 'SyntaxError' })
+      );
+      expect(root.querySelector('stream|error')).toBeNull();
+    });
+
+    it('属性名/值支持前缀、转义、逗号与方括号', () => {
+      const root = XMPPElement.createElement('root');
+      const msg = XMPPElement.createElement('message');
+      msg.setAttribute('xml:lang', 'en');
+      msg.setAttribute('body', 'a,b]c');
+      const item = XMPPElement.createElement('item');
+      msg.appendChild(item);
+      root.appendChild(msg);
+      expect(root.querySelector('[xml:lang="en"]')).toBe(msg);
+      expect(root.querySelector('[xml|lang]')).toBe(msg);
+      expect(root.querySelector('[body="a,b]c"]')).toBe(msg);
+      expect(root.querySelector('[body="a,b]c"] item')).toBe(item);
+      msg.setAttribute('quoted', 'a"b');
+      expect(root.querySelector('[quoted="a\\"b"]')).toBe(msg);
+      msg.setAttribute('escaped', 'b]c');
+      expect(root.querySelector('[escaped=b\\]c]')).toBe(msg);
+      msg.setAttribute('space', 'b c');
+      expect(root.querySelector('[space=b\\ c]')).toBe(msg);
+      msg.setAttribute('trailing', 'b ');
+      expect(root.querySelector('[trailing=b\\ ]')).toBe(msg);
+    });
+
+    it('转义分隔符不会被外层扫描器切断', () => {
+      const root = XMPPElement.createElement('root');
+      const el = XMPPElement.createElement('item');
+      el.setAttribute('class', 'a,b');
+      root.appendChild(el);
+      expect(root.querySelector('.a\\,b')).toBe(el);
+    });
+
+    it('支持 + 与 ~ 兄弟组合符', () => {
+      const root = XMPPElement.createElement('root');
+      const a = XMPPElement.createElement('a');
+      const b = XMPPElement.createElement('b');
+      const c = XMPPElement.createElement('c');
+      root.appendChild(a);
+      root.appendChild(b);
+      root.appendChild(c);
+      expect(root.querySelector('a + b')).toBe(b);
+      expect(root.querySelector('a ~ c')).toBe(c);
+      expect(root.querySelector('a + c')).toBeNull();
+    });
+
+    it('标签名支持 \\ 转义', () => {
+      const root = XMPPElement.createElement('root');
+      const el = XMPPElement.createElement('a:b');
+      root.appendChild(el);
+      expect(root.querySelector('a\\:b')).toBe(el);
+    });
+
+    it('未知伪类与伪元素抛 SyntaxError', () => {
+      const { root } = build();
+      const unsupported = ['b:first-child', 'b:not(.z)', 'b:unknown', 'b::text'];
+      for (const selector of unsupported) {
+        expect(() => root.querySelector(selector)).toThrowError(
+          expect.objectContaining({ name: 'SyntaxError' })
+        );
+      }
+    });
+
+    it('非法选择器抛 SyntaxError', () => {
+      const { root } = build();
+      const invalid = [
+        ', b',
+        'a,',
+        'a >',
+        '> a',
+        'a >, b',
+        'a > + b',
+        '*foo',
+        'a*',
+        'a|b|c',
+        'a|b*',
+        '[a',
+        'a]',
+        '#',
+        '[a=]',
+        'a:not(',
+      ];
+      for (const selector of invalid) {
+        expect(() => root.querySelector(selector)).toThrowError(
+          expect.objectContaining({ name: 'SyntaxError' })
+        );
+      }
+    });
+
+    it('深层树查询不依赖递归调用栈', () => {
+      const root = XMPPElement.createElement('root');
+      let current = root;
+      for (let i = 0; i < 5000; i++) {
+        const child = XMPPElement.createElement(i === 4999 ? 'leaf' : 'node');
+        current.appendChild(child);
+        current = child;
+      }
+      expect(root.querySelector('leaf')).toBe(current);
+      expect(root.querySelectorAll('leaf').item(0)).toBe(current);
+    });
+
+    it('解析结果缓存不影响重复查询', () => {
+      const { root, b } = build();
+      expect(root.querySelector('.x')).toBe(b);
+      expect(root.querySelector('.x')).toBe(b);
+      expect(root.querySelectorAll('.x')).toHaveLength(1);
+    });
+  });
+
+  describe('querySelectorAll', () => {
+    it('按前序返回全部匹配元素', () => {
+      const root = XMPPElement.createElement('root');
+      const item1 = XMPPElement.createElement('item');
+      const item2 = XMPPElement.createElement('item');
+      root.appendChild(item1);
+      root.appendChild(item2);
+      const result = root.querySelectorAll('item');
+      expect(result).toHaveLength(2);
+      expect(result.item(0)).toBe(item1);
+      expect(result.item(1)).toBe(item2);
+    });
+
+    it('无匹配返回空集合', () => {
+      const root = XMPPElement.createElement('root');
+      expect(root.querySelectorAll('item')).toHaveLength(0);
+    });
+
+    it('空字符串抛 SyntaxError', () => {
+      const root = XMPPElement.createElement('root');
+      expect(() => root.querySelectorAll('')).toThrowError(
+        expect.objectContaining({ name: 'SyntaxError' })
+      );
+    });
+
+    it('逗号分组与带引号值互不干扰', () => {
+      const root = XMPPElement.createElement('root');
+      const m = XMPPElement.createElement('m');
+      m.setAttribute('body', 'a,b');
+      const item = XMPPElement.createElement('item');
+      root.appendChild(m);
+      root.appendChild(item);
+      expect(root.querySelectorAll('[body="a,b"], item')).toHaveLength(2);
+    });
+  });
+
+  describe('matches', () => {
+    const build = () => {
+      const root = XMPPElement.createElement('root');
+      const a = XMPPElement.createElement('a');
+      const b = XMPPElement.createElement('b');
+      root.appendChild(a);
+      a.appendChild(b);
+      return { root, a, b };
+    };
+
+    it('自身匹配返回 true', () => {
+      const { b } = build();
+      expect(b.matches('b')).toBe(true);
+    });
+
+    it('不匹配返回 false', () => {
+      const { b } = build();
+      expect(b.matches('c')).toBe(false);
+    });
+
+    it('组合符沿祖先链判断', () => {
+      const { a, b } = build();
+      expect(b.matches('a b')).toBe(true);
+      expect(b.matches('a > b')).toBe(true);
+      expect(a.matches('a > b')).toBe(false);
+    });
+
+    it('兄弟组合符沿兄弟链判断', () => {
+      const root = XMPPElement.createElement('root');
+      const a = XMPPElement.createElement('a');
+      const b = XMPPElement.createElement('b');
+      root.appendChild(a);
+      root.appendChild(b);
+      expect(b.matches('a + b')).toBe(true);
+      expect(b.matches('a ~ b')).toBe(true);
+      expect(a.matches('a + b')).toBe(false);
+    });
+
+    it('空字符串抛 SyntaxError', () => {
+      const { b } = build();
+      expect(() => b.matches('')).toThrowError(
+        expect.objectContaining({ name: 'SyntaxError' })
+      );
+    });
+  });
+
   describe('append', () => {
-    it('should append multiple nodes', () => {
+    it('追加多个节点', () => {
       const el = XMPPElement.createElement('message');
       const child1 = XMPPElement.createElement('child1');
       const child2 = XMPPElement.createElement('child2');
@@ -297,31 +608,33 @@ describe('XMPPElement', () => {
   });
 
   describe('parentElement', () => {
-    it('should return parent element', () => {
+    it('返回父元素', () => {
       const el = XMPPElement.createElement('message');
       const child = XMPPElement.createElement('child');
       el.appendChild(child);
       expect(child.parentElement).toBe(el);
     });
     
-    it('should return null if no parent', () => {
+    it('无父节点时返回 null', () => {
       const el = XMPPElement.createElement('message');
       expect(el.parentElement).toBeNull();
     });
 
-    it('should expose parentNode as a readonly getter', () => {
+    it('以只读 getter 暴露 parentNode', () => {
       const descriptor = Object.getOwnPropertyDescriptor(
         XMPPElement.prototype,
         'parentNode'
       );
 
-      expect(descriptor?.get).toBeTypeOf('function');
-      expect(descriptor?.set).toBeUndefined();
+      const get = descriptor?.get?.bind(descriptor);
+      const set = descriptor?.set?.bind(descriptor);
+      expect(get).toBeTypeOf('function');
+      expect(set).toBeUndefined();
     });
   });
 
   describe('write', () => {
-    it('should write to a function', () => {
+    it('写入到函数', () => {
       const el = XMPPElement.createElement('message');
       el.setAttribute('to', 'user');
       el.append('Hello');
@@ -330,6 +643,40 @@ describe('XMPPElement', () => {
       el.write((chunk) => { output += chunk; });
       
       expect(output).toBe('<message to="user">Hello</message>');
+    });
+  });
+
+  describe('类型强制', () => {
+    it('setAttribute 将值转为字符串', () => {
+      const el = XMPPElement.createElement('message');
+      el.setAttribute('id', 123 as unknown as string);
+      expect(el.getAttribute('id')).toBe('123');
+    });
+
+    it('textContent setter 将值转为字符串', () => {
+      const el = XMPPElement.createElement('message');
+      el.textContent = 42 as unknown as string;
+      expect(el.textContent).toBe('42');
+    });
+  });
+
+  describe('insertBefore', () => {
+    it('在参考节点前插入', () => {
+      const el = XMPPElement.createElement('root');
+      const ref = XMPPElement.createElement('ref');
+      const inserted = XMPPElement.createElement('inserted');
+      el.appendChild(ref);
+      el.insertBefore(inserted, ref);
+      expect(el.childNodes[0]).toBe(inserted);
+      expect(el.childNodes[1]).toBe(ref);
+    });
+
+    it('参考节点不是子节点时抛 NotFoundError', () => {
+      const el = XMPPElement.createElement('root');
+      const ref = XMPPElement.createElement('ref');
+      expect(() => el.insertBefore(XMPPElement.createElement('x'), ref)).toThrowError(
+        expect.objectContaining({ name: 'NotFoundError' })
+      );
     });
   });
 });

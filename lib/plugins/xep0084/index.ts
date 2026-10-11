@@ -6,12 +6,11 @@ import type { Plugin } from "../types";
 import type { JID } from "@/JID";
 /**
  * XEP-0084: User Avatar 插件实现
- * version: 1.1.4 (2019-09-20)
+ * @see https://xmpp.org/extensions/xep-0084.html
+ * @version 1.1.5 (2026-08-23)
  */
 export class XEP0084 extends Avatar implements Plugin {
-    static readonly name = "XEP-0084: User Avatar";
     static readonly dependencies = ["XEP0030"] as const;
-    static readonly version = "1.1.4 (2019-09-20)";
     readonly connection: Connection;
 
     constructor(connection: Connection) {
@@ -38,12 +37,12 @@ export class XEP0084 extends Avatar implements Plugin {
      * 通过jid获取头像数据
      * @param jid 对方的JID
      * @param metadata 头像元数据
-     * @returns 头像数据base64
+     * @returns 头像数据base64；无 metadata 元素返回 undefined，metadata 为空返回 null
      */
     async getAvatarData(
         jid: JID | string,
         metadata?: AvatarMetadata
-    ): Promise<AvatarMetadata & { data?: string; }> {
+    ): Promise<(AvatarMetadata & { data?: string; }) | undefined | null> {
         // NOTE: 其实不需要metadata ID也可以获取到头像数据，但是规范要求通过id获取
         if (!metadata) {
             // 先获取元数据
@@ -61,10 +60,15 @@ export class XEP0084 extends Avatar implements Plugin {
                 XEP0084.NS.metadata,
                 "metadata"
             )[0];
-            metadata = XEP0084.parseMetadataEl(metadataEL).metadata;
+            // 无 metadata 元素：对方没有头像
+            if (!metadataEL) return undefined;
+            const parsed = XEP0084.parseMetadataEl(metadataEL);
+            // metadata 元素存在但为空（无 info）
+            if (parsed.metadata === null) return null;
+            metadata = parsed.metadata;
         }
 
-        const iq = PEP.createRetrieveItemsIq(jid, XEP0084.NS.data, 1, metadata.id);
+        const iq = PEP.createRetrieveItemsIq(jid, XEP0084.NS.data, 1, [metadata.id]);
         const res = await this.connection.sendAsync(iq);
         if (res.getAttribute("type") === "error")
             throw new XMPPError(res, "获取头像数据失败");
@@ -72,7 +76,7 @@ export class XEP0084 extends Avatar implements Plugin {
         const dataEl = res.getElementsByTagNameNS(XEP0084.NS.data, "data")[0];
         return {
             ...metadata,
-            data: dataEl.textContent ?? void 0,
+            data: dataEl?.textContent ?? void 0,
         };
     }
 

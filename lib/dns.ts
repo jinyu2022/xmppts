@@ -8,88 +8,65 @@ export interface EndpointInfo {
     port: number;
 }
 
-class DoH {
-    private static readonly DEFAULT_TIMEOUT = 2000;
-    private static readonly API_URL = 'https://cloudflare-dns.com/dns-query';
-    static async resolveSrv(hostname: string): Promise<EndpointInfo[]> {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), DoH.DEFAULT_TIMEOUT);
-
-        try {
-            const response = await fetch(`${this.API_URL}?name=${hostname}&type=SRV`, {
-                headers: {
-                    'accept': 'application/dns-json',
-                },
-                signal: controller.signal
-            });
-
-            const data = await response.json() as { Status: number, Answer?: { name: string, data: string; }[]; };
-
-            if (data.Status === 0 && Array.isArray(data.Answer)) {
-                const endpoints = data.Answer.map(record => {
-                    const [priority, weight, port, target] = record.data.split(' ');
-                    return {
-                        priority: parseInt(priority, 10),
-                        weight: parseInt(weight, 10),
-                        port: parseInt(port, 10),
-                        name: target
-                    };
-                });
-                return sortBySrvPriority(endpoints).map(record => ({
-                    host: record.name,
-                    port: record.port
-                }));;
+/**
+ * 按 RFC 2782 生成 SRV 尝试顺序：
+ * 先按 priority 升序分组；同一优先级内 weight=0 的记录排在前面，
+ * 其余记录按 weight 加权随机依次选出（weight 越大被优先尝试的概率越高）。
+ * 不修改原数组。
+ */
+function orderBySrvPriorityAndWeight(records: SrvRecord[]): SrvRecord[] {
+    const ordered: SrvRecord[] = [];
+    // 按 priority 分组（数字越小越优先）
+    const byPriority = new Map<number, SrvRecord[]>();
+    for (const record of records) {
+        const group = byPriority.get(record.priority) ?? [];
+        group.push(record);
+        byPriority.set(record.priority, group);
+    }
+    const priorities = [...byPriority.keys()].sort((a, b) => a - b);
+    for (const priority of priorities) {
+        const group = byPriority.get(priority)!;
+        while (group.length > 0) {
+            const zeroIndex = group.findIndex(r => r.weight === 0);
+            if (zeroIndex !== -1) {
+                // weight=0 的记录不参与随机，优先尝试
+                ordered.push(group.splice(zeroIndex, 1)[0]);
+                continue;
             }
-
-            throw new Error(`DNS query failed: ${data.Status}`);
-        } catch (error) {
-            log.error(`DoH query failed for ${hostname}:`, error);
-            throw error;
-        } finally {
-            clearTimeout(timeoutId);
+            // 加权随机：取 [0, 总权重) 均匀随机数，累计权重首个超过它的记录被选中
+            const totalWeight = group.reduce((sum, r) => sum + r.weight, 0);
+            let remaining = Math.random() * totalWeight;
+            let pick = 0;
+            for (let i = 0; i < group.length; i++) {
+                remaining -= group[i].weight;
+                if (remaining < 0) {
+                    pick = i;
+                    break;
+                }
+            }
+            ordered.push(group.splice(pick, 1)[0]);
         }
     }
-}
-
-/** 按照 SRV 记录的优先级和权重排序 */
-function sortBySrvPriority(records: SrvRecord[]): SrvRecord[] {
-    return records.sort((a, b) => {
-        // 首先按优先级排序（较低的优先级值优先）
-        const priorityComparison = a.priority - b.priority;
-        if (priorityComparison !== 0) {
-            return priorityComparison;
-        }
-        // 在相同优先级内，按权重排序（较高的权重值优先）
-        return b.weight - a.weight;
-    });
+    return ordered;
 }
 
 /**
- * 查询并排序 SRV 记录
- * @param domain 域名
- * @param xmpps 是否查询 xmpps
- * @returns 
+ * 查询 SRV 记录并生成 RFC 2782 尝试顺序
+ * @param hostname 完整的 SRV 主机名，如 `_xmpp-client._tcp.example.com`
+ * @returns 按优先级和加权随机排列的端点列表，查询失败或未找到时为空数组
  */
-export async function resolveXMPPSrv(domain: string, xmpps: boolean): Promise<EndpointInfo[]> {
-    log.debug(`Resolving SRV records for ${domain} (TLS: ${xmpps})`);
-    let hostname;
-    if (xmpps) {
-        hostname = `_xmpps-client._tcp.${domain}`;
-    } else {
-        hostname = `_xmpp-client._tcp.${domain}`;
-    }
-    // try {
+export async function resolveSrv(hostname: string): Promise<EndpointInfo[]> {
+    log.debug(`Resolving SRV records: ${hostname}`);
+    try {
         const resolver = new dns.Resolver({ timeout: 1000, tries: 2 });
         const records = await resolver.resolveSrv(hostname);
-        // 按优先级和权重排序，然后转换为 EndpointInfo 数组
-        return sortBySrvPriority(records).map(record => ({
+        // 生成尝试顺序，然后转换为 EndpointInfo 数组
+        return orderBySrvPriorityAndWeight(records).map(record => ({
             host: record.name,
             port: record.port
         }));
-    // }
-    // catch (error) {
-    //     log.error(`获取SRV记录失败，尝试DoH: ${domain}`, error);
-    //     const endpoints = await DoH.resolveSrv(hostname);
-    //     return endpoints;
-    // }
+    } catch (error) {
+        log.warn(`SRV 查询失败: ${hostname}`, error);
+        return [];
+    }
 }

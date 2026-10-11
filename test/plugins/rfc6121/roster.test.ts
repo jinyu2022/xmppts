@@ -1,117 +1,92 @@
 import { describe, it, expect } from "vitest";
 import RFC6121 from "../../../lib/plugins/rfc6121";
-import { XMPPElement } from "../../../lib/ltx/Element";
 import { Parser } from "../../../lib/ltx/Parser";
 
 /**
  * RFC 6121: XMPP Instant Messaging and Presence — Roster
  * @see https://datatracker.ietf.org/doc/html/rfc6121
  *
- * 根据 RFC 6121 规范，roster（花名册）管理包括:
- * - 获取 roster: IQ get + query(jabber:iq:roster)
- * - 添加/更新联系人: IQ set + item(jid, name?, group?)
- * - 删除联系人: IQ set + item(jid, subscription="remove")
- * - 订阅管理: presence (subscribe/subscribed/unsubscribe/unsubscribed)
+ * 用例取自 §2.2（登录后获取名册的 roster result）、§3.1.2（带 ask='subscribe' 的 push）、
+ * §3.4.2（带 approved='true' 的 push）。
  */
 describe("RFC6121 Roster", () => {
-  describe("NS", () => {
-    it("should have correct namespace", () => {
-      expect(RFC6121.NS).toBe("jabber:iq:roster");
-    });
-  });
+  // §2.2：服务器返回的 roster result
+  const ROSTER_RESULT = `
+    <query xmlns='jabber:iq:roster' ver='ver11'>
+      <item jid='romeo@example.net' name='Romeo' subscription='both'>
+        <group>Friends</group>
+      </item>
+      <item jid='mercutio@example.com' name='Mercutio' subscription='from'/>
+      <item jid='benvolio@example.net' name='Benvolio' subscription='both'/>
+    </query>`;
+  // §3.1.2：待批准的订阅（ask='subscribe'）
+  const ROSTER_PUSH_ASK = `
+    <query xmlns='jabber:iq:roster'>
+      <item ask='subscribe' jid='juliet@example.com' subscription='none'/>
+    </query>`;
+  // §3.4.2：预批准订阅（approved='true'）
+  const ROSTER_PUSH_APPROVED = `
+    <query xmlns='jabber:iq:roster'>
+      <item approved='true' jid='juliet@example.com' subscription='none'/>
+    </query>`;
 
-  describe("parseRseterEl", () => {
-    it("should parse roster items from query element", () => {
-      const xml = Parser.parse(`
-        <query xmlns="jabber:iq:roster">
-          <item jid="romeo@example.net" name="Romeo" subscription="both">
-            <group>Friends</group>
-          </item>
-          <item jid="juliet@example.net" name="Juliet" subscription="from"/>
-          <item jid="benvolio@example.net" subscription="none"/>
-        </query>
-      `);
-      const result = RFC6121.parseRseterEl(xml);
-      expect(result.roster).toHaveLength(3);
-
-      expect(result.roster[0]).toEqual({
-        approved: false,
+  describe("parseRosterEl", () => {
+    it("§2.2：解析名册条目（含 name、subscription、group）", () => {
+      const roster = RFC6121.parseRosterEl(Parser.parse(ROSTER_RESULT)).roster;
+      expect(roster).toHaveLength(3);
+      expect(roster[0]).toMatchObject({
         jid: "romeo@example.net",
         name: "Romeo",
         subscription: "both",
-        ask: undefined,
-      });
-
-      expect(result.roster[1].jid).toBe("juliet@example.net");
-      expect(result.roster[1].subscription).toBe("from");
-
-      expect(result.roster[2].jid).toBe("benvolio@example.net");
-      expect(result.roster[2].subscription).toBe("none");
-      expect(result.roster[2].name).toBeUndefined();
-    });
-
-    it("should parse roster item with ask and approved attributes", () => {
-      const xml = Parser.parse(`
-        <query xmlns="jabber:iq:roster">
-          <item jid="romeo@example.net" subscription="none" ask="subscribe" approved="true"/>
-        </query>
-      `);
-      const result = RFC6121.parseRseterEl(xml);
-      expect(result.roster[0].ask).toBe("subscribe");
-      expect(result.roster[0].approved).toBe(true);
-    });
-
-    it("should throw when namespace is invalid", () => {
-      const el = XMPPElement.createElementNS("urn:invalid", "query");
-      expect(() => RFC6121.parseRseterEl(el)).toThrow("不是一个roster");
-    });
-
-    it("should return empty array when no items", () => {
-      const xml = Parser.parse(`
-        <query xmlns="jabber:iq:roster"/>
-      `);
-      const result = RFC6121.parseRseterEl(xml);
-      expect(result.roster).toHaveLength(0);
-    });
-  });
-
-  describe("roster item structure", () => {
-    it("should handle all subscription states", () => {
-      const states = ["none", "to", "from", "both", "remove"] as const;
-      for (const sub of states) {
-        const xml = Parser.parse(`
-          <query xmlns="jabber:iq:roster">
-            <item jid="test@example.net" subscription="${sub}"/>
-          </query>
-        `);
-        const result = RFC6121.parseRseterEl(xml);
-        expect(result.roster[0].subscription).toBe(sub);
-      }
-    });
-
-    it("should default to 'none' when subscription missing", () => {
-      const xml = Parser.parse(`
-        <query xmlns="jabber:iq:roster">
-          <item jid="test@example.net"/>
-        </query>
-      `);
-      const result = RFC6121.parseRseterEl(xml);
-      expect(result.roster[0].subscription).toBe("none");
-    });
-  });
-
-  describe("subscription management presence stanzas", () => {
-    it("should handle subscribe and unsubscribe", () => {
-      // RFC 6121 Section 8-9: 订阅管理使用特定的 presence type
-      expect(RFC6121.NS).toBe("jabber:iq:roster");
-      // 验证罗盘点名册的基本类型定义
-      const roster: Record<string, unknown> = {
         approved: false,
-        jid: "test@example.net",
-        name: "Test",
-        subscription: "both",
-      };
-      expect(roster.subscription).toBe("both");
+      });
+      expect(roster[1]).toMatchObject({
+        jid: "mercutio@example.com",
+        name: "Mercutio",
+        subscription: "from",
+      });
+      expect(roster[2].jid).toBe("benvolio@example.net");
+    });
+
+    it("§3.1.2：解析 ask='subscribe'", () => {
+      const item = RFC6121.parseRosterEl(Parser.parse(ROSTER_PUSH_ASK)).roster[0];
+      expect(item.jid).toBe("juliet@example.com");
+      expect(item.subscription).toBe("none");
+      expect(item.ask).toBe("subscribe");
+    });
+
+    it("§3.4.2：解析 approved='true'", () => {
+      const item = RFC6121.parseRosterEl(Parser.parse(ROSTER_PUSH_APPROVED)).roster[0];
+      expect(item.approved).toBe(true);
+    });
+
+    it("§2.1.4：无条目时返回空数组", () => {
+      const el = Parser.parse(`<query xmlns='jabber:iq:roster' ver='ver9'/>`);
+      expect(RFC6121.parseRosterEl(el).roster).toHaveLength(0);
+    });
+
+    it("命名空间非法时抛错", () => {
+      const el = Parser.parse(`<query xmlns='urn:invalid'/>`);
+      expect(() => RFC6121.parseRosterEl(el)).toThrow("不是一个roster");
+    });
+  });
+
+  describe("subscription 取值（§2.1.2.5）", () => {
+    it.each(["none", "to", "from", "both", "remove"])(
+      "解析 subscription=%s",
+      (sub) => {
+        const el = Parser.parse(
+          `<query xmlns="jabber:iq:roster"><item jid="mercutio@example.com" subscription="${sub}"/></query>`
+        );
+        expect(RFC6121.parseRosterEl(el).roster[0].subscription).toBe(sub);
+      },
+    );
+
+    it("subscription 缺失时默认 none（§2.1.2.5）", () => {
+      const el = Parser.parse(
+        `<query xmlns="jabber:iq:roster"><item jid="mercutio@example.com"/></query>`
+      );
+      expect(RFC6121.parseRosterEl(el).roster[0].subscription).toBe("none");
     });
   });
 });

@@ -1,5 +1,5 @@
-import { Connection } from "../../connection";
-import { Message } from "../../stanza";
+import type { Connection } from "../../connection";
+import type { Message } from "../../stanza";
 import type { Plugin } from "../types";
 import { Carbons } from "./carbons";
 import logger from "@/log";
@@ -8,7 +8,7 @@ const log = logger.getLogger("XEP0280");
 /**
  * XEP-0280: Message Carbons
  * @see https://xmpp.org/extensions/xep-0280.html
- * @version 1.0.0 (2014-11-18)
+ * @version 1.0.1 (2021-12-26)
  */
 export class XEP0280 extends Carbons implements Plugin {
   static readonly dependencies = ["XEP0030", "XEP0297"] as const;
@@ -21,59 +21,82 @@ export class XEP0280 extends Carbons implements Plugin {
   init() {
     this.connection.XEP0030!.addFeature(XEP0280.NS);
 
+    // 会话建立后才查询服务器特性
     this.connection.once("session:start", () => {
-      // 查询服务器是否支持
-      this.connection.XEP0030!.getServerFeatures().then((features) => {
-        // log.debug("服务器支持的特性", features);
-        if (features.has(XEP0280.NS)) {
-          this.enable();
-        } else {
+      void this.connection
+        .XEP0030!.getServerFeatures()
+        .then((features) => {
+          if (features.has(XEP0280.NS)) return this.enable();
           log.warn("服务器不支持 XEP-0280");
-        }
-      });
+        })
+        .catch((error: unknown) => log.warn("获取服务器特性失败", error));
     });
 
-    this.connection.registerStanzaPlugin("message", XEP0280.parseCarbonEl);
+    this.connection.registerStanzaPlugin(XEP0280.NS, XEP0280.parseCarbonEl);
 
     this.connection.registerEventPlugin("carbon:received", {
       tagName: "message",
       matcher: (message) => {
-        return message?.carbon?.type === "received";
+        if (message?.carbon?.type === "received") {
+          if (message.from.bare !== this.connection.jid.bare) {
+            log.warn(
+              `收到伪造的 carbon:received 消息，from=${message.from.toString()}，应为本账号 bare JID=${this.connection.jid.bare}，已忽略`
+            );
+            return false;
+          }
+          return true;
+        }
+        return false;
       },
     });
 
     this.connection.registerEventPlugin("carbon:sent", {
       tagName: "message",
       matcher: (message) => {
-        return !!(message?.carbon && message.carbon.type === "sent");
+        if (message?.carbon?.type === "sent") {
+          if (message.from.bare !== this.connection.jid.bare) {
+            log.warn(
+              `收到伪造的 carbon:sent 消息，from=${message.from.toString()}，应为本账号 bare JID=${this.connection.jid.bare}，已忽略`
+            );
+            return false;
+          }
+          return true;
+        }
+        return false;
       },
     });
   }
 
-  enable() {
+  async enable(): Promise<boolean> {
     const iq = Carbons.createEnableIq();
-    this.connection.sendAsync(iq).then((result) => {
+    try {
+      const result = await this.connection.sendAsync(iq);
       if (result.getAttribute("type") === "result") {
-        log.debug("消息碳 启动成功");
-      } else if (result.getAttribute("type") === "error") {
-        log.debug("消息碳 enable failed");
-      } else {
-        log.error("消息碳 enable failed");
+        log.debug("消息碳已启用");
+        return true;
       }
-    });
+      log.warn("服务器拒绝启用消息碳", result.toXMLString());
+      return false;
+    } catch (error) {
+      log.warn("启用消息碳失败", error);
+      return false;
+    }
   }
 
-  disable() {
+  async disable(): Promise<boolean> {
     const iq = Carbons.createDisableIq();
-    this.connection.sendAsync(iq).then((result) => {
+    try {
+      const result = await this.connection.sendAsync(iq);
       if (result.getAttribute("type") === "result") {
-        log.debug("disable success");
-      } else if (result.getAttribute("type") === "error") {
-        log.debug("disable failed");
-      } else {
-        log.error("disable failed");
+        log.debug("消息碳已禁用");
+        return true;
       }
-    });
+      log.warn("服务器拒绝禁用消息碳", result.toXMLString());
+      return false;
+    } catch (error) {
+      log.warn("禁用消息碳失败", error);
+      return false;
+    }
   }
 }
 

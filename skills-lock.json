@@ -1,15 +1,41 @@
 {
   "version": 1,
   "skills": {
+    "documentation-writer": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "skillPath": "skills/documentation-writer/SKILL.md",
+      "computedHash": "ee53d65b163cd7eb953a930c95841cfe398cc2c0bd24c06508bbaa07c432be35"
+    },
+    "git-commit": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "skillPath": "skills/git-commit/SKILL.md",
+      "computedHash": "2607fc60629b82b257136dd2a7a373f0a4466c0b49df7746d845d59313c99b21"
+    },
     "modern-javascript-patterns": {
       "source": "wshobson/agents",
       "sourceType": "github",
-      "computedHash": "35ec9acf08dabb77ca240330d10dd1a562ca869fe75e67ae12c4e472eb7fe498"
+      "skillPath": "plugins/javascript-typescript/skills/modern-javascript-patterns/SKILL.md",
+      "computedHash": "0d820adbeaa73ee1f6b1e075fb3ef1698d5d68ad59cb30fc935c857025e9b24f"
     },
     "typescript-advanced-types": {
       "source": "wshobson/agents",
       "sourceType": "github",
-      "computedHash": "ee8377c523a911be41c31037b477805773ca5ab5ade181e44ca7dd3cd8df6692"
+      "skillPath": "plugins/javascript-typescript/skills/typescript-advanced-types/SKILL.md",
+      "computedHash": "bc33bc9653d649a461e49abe45634b6b11a7aeeae552b05ec4d54d4589d16739"
+    },
+    "vitest": {
+      "source": "antfu/skills",
+      "sourceType": "github",
+      "skillPath": "skills/vitest/SKILL.md",
+      "computedHash": "62206e8e58bdad39fcdd4bd962dd592a6939ab13c068fd0618ff4304735d5e0b"
+    },
+    "write-notes-like-deepseek": {
+      "source": "czm15053/write-notes-like-deepseek",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "4ca3e222a31673779413de45b2758c739a37d3d9a87c28d50e25ea5e84a1bab9"
     }
   }
 }

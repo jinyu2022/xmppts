@@ -1,65 +1,75 @@
 import { describe, it, expect } from "vitest";
 import { XEP0392 } from "../../../lib/plugins/xep0392";
+import { JID } from "../../../lib/JID";
 
 /**
  * XEP-0392: Consistent Color Generation
  * @see https://xmpp.org/extensions/xep-0392.html
- * @version 1.2.0 (2024-03-20)
+ * @version 1.0.1 (2025-10-03)
  *
- * 根据 XEP-0392 规范，该协议根据字符串（如 JID）生成一贯的颜色。
- * 算法将输入字符串转换为 HSL 颜色值，使得同一字符串始终产生相同的颜色。
+ * 用例取自 §13.1 Test Vectors（saturation=100、lightness=50 的 RGB 值 → hex）。
  */
 describe("XEP0392", () => {
+  /** §13.1 测试向量：文本与对应的 #rrggbb（由向量 RGB 四舍五入到 0-255） */
+  const VECTORS: [string, string][] = [
+    ["Romeo", "#dd00af"],
+    ["juliet@capulet.lit", "#008392"],
+    ["😺", "#de00a8"],
+    ["council", "#ea0064"],
+    ["Board", "#008675"],
+  ];
+
   describe("colorize", () => {
-    it("should return a hex color string", async () => {
-      const color = await XEP0392.colorize("romeo@example.net");
-      expect(color).toMatch(/^#[0-9a-f]{6}$/);
-    });
-
-    it("should produce consistent colors for same input", async () => {
-      const input = "juliet@example.net";
-      const c1 = await XEP0392.colorize(input);
-      const c2 = await XEP0392.colorize(input);
-      expect(c1).toBe(c2);
-    });
-
-    it("should produce different colors for different inputs", async () => {
-      const c1 = await XEP0392.colorize("romeo@example.net");
-      const c2 = await XEP0392.colorize("juliet@example.net");
-      expect(c1).not.toBe(c2);
-    });
-
-    it("should use cached results", async () => {
-      const input = "test@example.com";
+    it.each(VECTORS)("§13.1 '%s' → %s", async (input, expected) => {
       XEP0392.cache.clear();
+      expect(await XEP0392.colorize(input)).toBe(expected);
+    });
+
+    it("同一输入颜色一致且写入缓存", async () => {
+      XEP0392.cache.clear();
+      const input = "juliet@capulet.lit";
       const color = await XEP0392.colorize(input);
+      expect(await XEP0392.colorize(input)).toBe(color);
       expect(XEP0392.cache.get(input)).toBe(color);
     });
 
-    it("should return cached result on repeated calls", async () => {
-      const input = "cached@example.com";
+    it.each(VECTORS)("返回合法 #rrggbb", async (input) => {
+      expect(await XEP0392.colorize(input)).toMatch(/^#[0-9a-f]{6}$/);
+    });
+  });
+
+  describe("colorizeJID", () => {
+    it("localpart/domainpart 大小写等价的 JID 得到同一颜色（§6.2）", async () => {
       XEP0392.cache.clear();
-      const color = await XEP0392.colorize(input);
-      // Call again - should use cache
-      const cached = await XEP0392.colorize(input);
-      expect(cached).toBe(color);
-    });
-
-    it("should handle empty string", async () => {
-      const color = await XEP0392.colorize("");
-      expect(color).toMatch(/^#[0-9a-f]{6}$/);
-    });
-
-    it("should handle single characters", async () => {
-      const color = await XEP0392.colorize("a");
-      expect(color).toMatch(/^#[0-9a-f]{6}$/);
-    });
-
-    it("should handle long strings", async () => {
-      const color = await XEP0392.colorize(
-        "very.long.username.with.many.parts@example.domain.org"
+      expect(await XEP0392.colorizeJID(new JID("Romeo@Example.COM"))).toBe(
+        await XEP0392.colorizeJID(new JID("romeo@example.com"))
       );
-      expect(color).toMatch(/^#[0-9a-f]{6}$/);
+    });
+
+    it("resourcepart 大小写敏感，视为不同 JID", async () => {
+      XEP0392.cache.clear();
+      expect(await XEP0392.colorizeJID(new JID("romeo@example.com/Cat"))).not.toBe(
+        await XEP0392.colorizeJID(new JID("romeo@example.com/cat"))
+      );
+    });
+
+    it("已规范化的 JID 与 §13.1 向量一致", async () => {
+      XEP0392.cache.clear();
+      expect(await XEP0392.colorizeJID(new JID("juliet@capulet.lit"))).toBe("#008392");
+    });
+  });
+
+  describe("cache", () => {
+    it("超过上限时按写入顺序淘汰最旧条目", async () => {
+      XEP0392.cache.clear();
+      const overflow = 2;
+      for (let i = 0; i < XEP0392.MAX_CACHE_SIZE + overflow; i++) {
+        await XEP0392.colorize(`user-${i}`);
+      }
+      expect(XEP0392.cache.size).toBe(XEP0392.MAX_CACHE_SIZE);
+      expect(XEP0392.cache.has("user-0")).toBe(false);
+      expect(XEP0392.cache.has("user-1")).toBe(false);
+      expect(XEP0392.cache.has("user-2")).toBe(true);
     });
   });
 });

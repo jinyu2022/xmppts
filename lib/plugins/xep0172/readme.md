@@ -1,23 +1,27 @@
 # XEP-0172 — 用户昵称
 
-## 自动行为
+通过 PEP 发布/获取用户昵称。
 
-加载此插件后，Connection 会自动：
+- **依赖**：XEP-0030（服务发现）、XEP-0163
+- **实例访问**：`connection.XEP0172`
 
-1. **注册 nick 解析器** — 自动解析 `http://jabber.org/protocol/nick` 命名空间的 stanza
-2. **注册 `pep:nickname` 事件** — 监听 PEP 昵称变更通知
+## 可配置项
 
-## Stanza 字段扩展
+无可配置项。
 
-加载后，**Message** 与 **Presence** 节新增：
+## 注册后行为
+
+`init()` 执行以下动作：
+
+1. **注册 nick 解析器** — 解析命名空间 `http://jabber.org/protocol/nick` 的元素为 `nick` 字段。
+2. **注册 `pep:nickname` 事件** — 匹配 `message.event.node === nick`。
+3. **监听 `session:start`** — 当前为空实现。
+
+## 扩展字段
 
 ```typescript
-interface Message {
-  nick?: string;   // 发送者的昵称（文本内容）
-}
-interface Presence {
-  nick?: string;   // 发送者的昵称（文本内容）
-}
+interface Message { nick?: string; }
+interface Presence { nick?: string; }
 ```
 
 ## 可监听事件
@@ -26,16 +30,45 @@ interface Presence {
 |------|---------|----------|
 | `pep:nickname` | 收到昵称更新的 PEP 通知 | `Message & { nick: string }` |
 
-## API
+## 公开 API
 
 | 方法 | 说明 |
 |------|------|
-| `setNick(nick)` | 发布自己的昵称到 PEP 节点 |
-| `retrieveNick(jid)` | 查询指定用户的昵称 |
-| `getSelfNick()` | 获取自己的昵称（带缓存，失败不抛异常） |
+| `retrieveNick(jid)` | 查询指定用户昵称 → `Promise<string>`；失败抛 `XMPPError` |
+| `getSelfNick()` | 获取自己的昵称，结果缓存，失败仅 warn 并返回 `undefined` |
+| `XEP0172.NS`（静态） | `"http://jabber.org/protocol/nick"` |
+| `XEP0172.parseNickEl(el)`（静态） | 解析 `<nick/>` → `{ nick }` |
+| `XEP0172.createNickPublishIq(nick)`（静态） | 构造发布昵称 IQ（PEP） |
+| `XEP0172.createRetrieveNickIq(jid)`（静态） | 构造检索昵称 IQ |
+| `XEP0172.createNickSubscribe(to, nick)`（静态） | 构造带 nick 的 `type="subscribe"` presence；目标转为 bare JID，无效 JID 抛 `Error` |
+| `XEP0172.createNickMessage(to, message, nick)`（静态） | 构造带 nick 的消息 |
+
+## 使用示例
+
+```typescript
+import XEP0172 from "@/plugins/xep0172";
+
+// 查询他人昵称 → Promise<string>（失败抛 XMPPError）
+const nick = await client.XEP0172!.retrieveNick("friend@example.com");
+
+// 获取自己的昵称 → Promise<string | undefined>（缓存，失败返回 undefined）
+const selfNick = await client.XEP0172!.getSelfNick();
+
+// 发布昵称：构造 IQ 后自行发送
+client.send(XEP0172.createNickPublishIq("小明"));
+```
+
+### 监听昵称更新
+
+```typescript
+client.on("pep:nickname", (message) => {
+  console.log(message.nick);
+});
+```
 
 ## 注意事项
 
-- `getSelfNick()` 结果会被缓存，只请求一次
-- 获取自身昵称失败时打印 warn，返回 `undefined`，不抛出异常（容错设计）
-- XEP-0402（书签）会使用 `getSelfNick()` 作为房间昵称回退
+- `getSelfNick()` 结果会被缓存，只请求一次（失败结果同样缓存）；失败时返回 `undefined` 不抛异常（容错设计）。
+- XEP-0402（书签）使用 `getSelfNick()` 作为房间昵称回退。
+- 发布昵称需自行调用静态 `createNickPublishIq()` 构造 IQ 后发送（无实例级 `setNick()`）。
+- 不支持回退到 XEP-0060（PEP 不可用时不做 pubsub 直查）。

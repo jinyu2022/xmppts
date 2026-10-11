@@ -34,36 +34,55 @@
 4.  **`Status.STREAM_ESTABLISHED` (4)**: 收到特性列表。
 5.  **SASL 认证 (`Status.AUTHENTICATING` -> `AUTHENTICATED`)**: 自动处理认证往返。认证成功后，底层会自动**重启流**并发送第二次流头。
 6.  **资源绑定 (`Status.BINDING` -> `BINDED`)**: 绑定后分配 Full JID。
-7.  **触发事件**: 底层触发 `binded` -> 高层发出 `session:start`。
+7.  **触发事件**: 底层 `open` -> 高层 `connect`；`binded` -> 高层 `session:start`；`stream:end` -> 高层 `session:end`；`close` -> 高层 `disconnect`。
 
 ### 2.4 活跃会话阶段 (Active Session)
 连接建立后，处理 Stanza 的收发流转。
 
 #### 发送管线 (Send Pipeline)
-1.  **`send(stanza)`**: 注入默认属性（`id`, `from`, `xmlns`），执行 `send` 拦截器链，最后通过 Socket 发送。
+1.  **`send(stanza)`**: 校验必备属性（message 需 `to`、iq 需 `type`，groupchat 的 `to` 归一化为 bare JID），补全 `id` / `xmlns` / `xml:lang`（message），执行 `send` 拦截器链，最后经传输层写出。
 2.  **`sendAsync(stanza)`**: 自动生成 ID，注册**一次性监听器**，设置 30s 超时计时器，返回 Promise。
 
 #### 接收管线 (Receive Pipeline)
-1.  **底层**: Parser 解析出完整 XML Tree，触发 `stanza` 事件。
+1.  **底层**: Parser 解析出完整 XML Tree，Socket 触发 `stanza` 事件。
 2.  **拦截器**: 执行 `receive` 拦截器链。
-3.  **转换器 (`traverseAndTransform`)**: 递归扫描子节点，将匹配 `StanzaPlugin` 的 XML 节点转换为结构化 JS 对象。
+3.  **转换器 (`transformExtensions`)**: 扫描直接子元素与构造期字段中的元素，将匹配 `StanzaPlugin` 的 XML 节点转换为结构化 JS 对象并合并到实例上。
 4.  **分发**: 发出 `message`, `iq`, `presence` 等具体事件。
 
 ### 2.5 终止阶段 (Termination)
 调用 `connection.disconnect()` 时：
-1.  **高层清理**: `removeAllListeners()` 移除所有业务回调，清空插件、拦截器和处理器映射表。
-2.  **流关闭**: 向服务器发送 `</stream:stream>`。
-3.  **物理断开**: `socket.end()` 关闭连接，状态机回滚到 `DISCONNECTED` (0)。
+1.  **断开连接**: `socket.disconnect()` 向服务器发送 `</stream:stream>`，Socket 触发 `stream:end`（状态为 `SESSIONEND`）。
+2.  **事件送达**: 清理延后到底层 `close` 之后，用户监听器可收到 `session:end` / `disconnect`。
+3.  **高层清理**: 仅在“真断开”（未启用自动重连，或重连次数已耗尽）时，底层 `close` 触发后 `removeAllListeners()` 移除所有监听器，并清空拦截器与插件注册表；`pendingPlugins` 保留，再次 `connect()` 时由 `initPlugins()` 重建插件。
 
 ## 3. 核心事件汇总表
 
+事件按层次分为两类，**socket 事件**（`lib/transport/*`）描述传输与协商事实，**conn 事件**（`lib/connection.ts`）表达会话级语义，二者命名刻意不重叠。
+
+### Socket 事件（传输层）
+
 | 事件名称 | 触发时机 | 典型用途 |
 | :--- | :--- | :--- |
-| `connect` | TCP/WS 握手完成且流开启 | 日志记录连接耗时 |
-| `session:start` | 资源绑定成功，连接完全就绪 | **业务入口**，在此发送在线状态 |
-| `stanza` | 收到任何完整 XML 节 | 插件拦截原始 XML 数据 |
-| `message/iq/p...` | 经过解析和插件转换后的业务数据 | 处理聊天消息、回复请求 |
-| `disconnect` | 物理连接彻底断开 | 触发自动重连逻辑 |
+| `open` | TCP/WS 握手完成 | 高层据此发出 `connect` |
+| `stream:start` | XMPP 流头部已发送（含认证后流重启） | 流开启信号 |
+| `authenticated` | SASL 认证成功，流重启前 | 内部状态切换信号 |
+| `binded` | 资源绑定成功，分配 Full JID | 高层据此发出 `session:start` |
+| `stanza` | 收到任何完整 XML 节 | 高层转发与插件拦截原始数据 |
+| `stream:end` | XMPP 流/会话关闭（主动或被动） | 高层据此发出 `session:end` |
+| `close` | 物理连接关闭 | 高层据此发出 `disconnect` |
+| `error` | 认证失败/超时/底层错误 | 错误处理 |
+
+> 另有**管线事件点**（非 socket 事件）：`beforeConnect` / `stream:features:starttls` / `starttls:proceed` / `stream:features:mechanisms` / `sasl` / `stream:negotiated` / `binding`，由 `pipeline.run()` 在各协商阶段触发，载荷类型见 `TransportPipelineEvents`。
+
+### Conn 事件（高层）
+
+| 事件名称 | 触发时机 | 典型用途 |
+| :--- | :--- | :--- |
+| `connect` | 网络连接建立（`open` 转发） | 日志记录连接耗时 |
+| `session:start` | 资源绑定成功，会话完全就绪 | **业务入口**，在此发送在线状态 |
+| `session:end` | XMPP 流关闭（`stream:end` 转发） | 清理会话资源 |
+| `disconnect` | 物理连接断开（`close` 转发） | 触发自动重连逻辑 |
+| `message/iq/presence/others` | 经过解析和插件转换后的业务数据 | 处理聊天消息、回复请求 |
 
 ## 4. 错误处理
 

@@ -10,19 +10,19 @@ interface MUCUserPresMap {
     decline: MUCUserPresBase & { decline: MUCDecline };
 }
 
-export type MUCUserPresKind = keyof MUCUserPresMap;
+type MUCUserPresKind = keyof MUCUserPresMap;
 
 export type MUCUserPres<
     T extends MUCUserPresKind = MUCUserPresKind
 > = MUCUserPresMap[T];
 
-export interface MUCDestroy {
+interface MUCDestroy {
     jid?: string;
     password?: string;
     reason?: string;
 }
 
-export interface MUCInvite {
+interface MUCInvite {
     to?: string;
     from?: string;
     reason?: string;
@@ -32,25 +32,26 @@ export interface MUCInvite {
     };
 }
 
-export interface MUCDecline {
+interface MUCDecline {
     to?: string;
     from?: string;
     reason?: string;
 }
 
-export type MUCAffiliation = "none" | "outcast" | "member" | "admin" | "owner";
-export type MUCRole = "none" | "visitor" | "participant" | "moderator";
+type MUCAffiliation = "none" | "outcast" | "member" | "admin" | "owner";
+type MUCRole = "none" | "visitor" | "participant" | "moderator";
 
 export interface MUCItem {
     jid?: string;
     nick?: string;
-    affiliation: MUCAffiliation;
-    role: MUCRole;
+    /** 部分 presence 只带 affiliation 或 role，二者都可缺省 */
+    affiliation?: MUCAffiliation;
+    role?: MUCRole;
     actor?: MUCActor;
     reason?: string;
 }
 
-export interface MUCActor {
+interface MUCActor {
     nick?: string;
     jid?: string;
 }
@@ -59,6 +60,7 @@ export interface MUCUser {
     /** 真实jid */
     jid?: string;
     nick: string;
-    affiliation: MUCAffiliation;
-    role: MUCRole;
+    /** 随 presence 更新，可能尚未知（如仅带 role 的权限变更 presence） */
+    affiliation?: MUCAffiliation;
+    role?: MUCRole;
 }

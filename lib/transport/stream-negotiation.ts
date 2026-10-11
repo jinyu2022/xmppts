@@ -19,10 +19,10 @@ const SECURITY_LEVELS = {
 } as const;
 
 /** 支持的 SASL 认证机制类型。 */
-export type SaslMechanism = keyof typeof SECURITY_LEVELS;
+type SaslMechanism = keyof typeof SECURITY_LEVELS;
 
 /** 流功能宣告解析结果。 */
-export interface StreamFeatures {
+interface StreamFeatures {
   /** 服务器支持的所有命名空间集合。 */
   namespaces: Set<string>;
   /** 可选的实体能力 (XEP-0115)。 */
@@ -30,40 +30,33 @@ export interface StreamFeatures {
 }
 
 /** 资源绑定请求，包含唯一 ID 和 XML 序列化数据。 */
-export interface BindRequest {
+interface BindRequest {
   id: string;
   data: string;
 }
 
 /** SASL 步骤处理结果。 */
-export type SaslResult =
+type SaslResult =
   | { type: "send"; data: string }
   | { type: "success" }
   | { type: "ignore" };
 
 /**
- * 判断 stanza 是否为流功能宣告 (<stream:features>)。
- * 兼容不同实现可能使用的 tagName 或 namespaceURI 变体。
+ * 判断 stanza 是否为流功能宣告 (<features> / <stream:features>)。
+ * 前缀可有可无，命名空间才是语义（RFC 6120 §4.3.2）。
  */
 export function isStreamFeatures(stanza: XMPPElement): boolean {
   return (
-    stanza.localName === "features" &&
-    (stanza.namespaceURI === STREAM_NS ||
-      stanza.tagName === "stream:features" ||
-      stanza.prefix === "stream")
+    stanza.localName === "features" && stanza.namespaceURI === STREAM_NS
   );
 }
 
 /**
- * 判断 stanza 是否为流错误 (<stream:error>)。
+ * 判断 stanza 是否为流错误 (<error> / <stream:error>)。
+ * 前缀可有可无，命名空间才是语义（RFC 6120 §4.9）。
  */
 export function isStreamError(stanza: XMPPElement): boolean {
-  return (
-    stanza.localName === "error" &&
-    (stanza.namespaceURI === STREAM_NS ||
-      stanza.tagName === "stream:error" ||
-      stanza.prefix === "stream")
-  );
+  return stanza.localName === "error" && stanza.namespaceURI === STREAM_NS;
 }
 
 /**
@@ -151,6 +144,18 @@ export function getSaslFailureCondition(stanza: XMPPElement): string {
   return "not-authorized";
 }
 
+/** SASL 认证失败（RFC 6120 §6.5.2），携带机器可读的条件名供状态判定。 */
+export class SaslError extends Error {
+  /** SASL 失败条件，如 not-authorized */
+  readonly condition: string;
+
+  constructor(condition: string) {
+    super(`认证失败: ${condition}`);
+    this.name = "SaslError";
+    this.condition = condition;
+  }
+}
+
 /**
  * 从流错误 stanza 中提取错误条件名称。
  * 优先匹配 STREAM_ERROR_NS 命名空间下的子元素，
@@ -178,8 +183,7 @@ function buildAuthXml(
   mechanism: SaslMechanism,
   initialResponseBase64: string,
 ): string {
-  const auth = XMPPElement.createElementNS(SASL_NS, "auth");
-  auth.setAttribute("mechanism", mechanism);
+  const auth = XMPPElement.createElementNS(SASL_NS, "auth", { mechanism });
   auth.textContent = initialResponseBase64;
   return auth.toXMLString();
 }
@@ -199,9 +203,7 @@ function buildResponseXml(responseBase64: string): string {
  */
 export function buildBindRequest(resource?: string): BindRequest {
   const id = `bind-${generateSecureNonce(8)}`;
-  const iq = XMPPElement.createElement("iq");
-  iq.setAttribute("type", "set");
-  iq.setAttribute("id", id);
+  const iq = XMPPElement.createElement("iq", { type: "set", id });
 
   const bind = XMPPElement.createElementNS(BIND_NS, "bind");
   if (resource) {
@@ -229,11 +231,14 @@ export function parseBindResult(
   // 服务器返回错误：提取错误条件
   if (type === "error") {
     const error = response.getElementsByTagName("error")[0];
-    // 优先取 children[0]（标准 DOM），回退通配符查询
-    const condition =
-      error?.children.item(0)?.localName ??
-      error?.getElementsByTagName("*")[0]?.localName ??
-      "unknown";
+    // 条件元素在 <text/> 之前（RFC 6120 §8.3.2），取首个非 text 子元素
+    let condition = "unknown";
+    for (const child of error?.children ?? []) {
+      if (child.localName !== "text") {
+        condition = child.localName;
+        break;
+      }
+    }
     throw new Error(`资源绑定失败: ${condition}`);
   }
   if (type !== "result") {
@@ -268,14 +273,18 @@ export function parseBindResult(
 export class SaslClient {
   private readonly state: SaslData = {};
 
-  constructor(
-    private readonly jid: JID,
-    private readonly password: string,
-  ) {}
+  constructor(private readonly jid: JID) {}
 
   /** 当前使用的 SASL 机制，在调用 start() 后可用。 */
   get mechanism(): SaslData["mechanism"] {
     return this.state.mechanism;
+  }
+
+  /** 清除上一次认证的中间状态（重连前调用） */
+  reset(): void {
+    this.state.mechanism = undefined;
+    this.state.clientFirstMessageBare = undefined;
+    this.state.serverProof = undefined;
   }
 
   /**
@@ -285,21 +294,26 @@ export class SaslClient {
    * - SCRAM-SHA-1：发送 client-first-message-bare（省略 gs2-header）。
    *
    * @param features - 服务器流功能宣告。
+   * @param password - 明文密码，仅本调用期间使用，不驻留实例。
    * @returns 要发送给服务器的 XML 字符串。
    */
-  start(features: XMPPElement): string {
+  start(features: XMPPElement, password: string): string {
     const mechanism = selectSaslMechanism(features);
     this.state.mechanism = mechanism;
 
     if (mechanism === "PLAIN") {
       // PLAIN 格式: \0username\0password
-      const plain = `\0${this.jid.local}\0${this.password}`;
+      const plain = `\0${this.jid.local}\0${password}`;
       return buildAuthXml(mechanism, utf8ToBase64(plain));
     }
 
     // SCRAM-SHA-1: 构造 client-first-message-bare (n=用户名,r=随机nonce)
+    // RFC 5802 §5.1：用户名中的 = 与 , 需转义，否则服务端按属性分隔符解析会截断
+    const username = this.jid.local
+      .replace(/=/g, "=3D")
+      .replace(/,/g, "=2C");
     this.state.clientFirstMessageBare =
-      `n=${this.jid.local},r=${generateSecureNonce()}`;
+      `n=${username},r=${generateSecureNonce()}`;
     // 完整 client-first-message 包含 gs2-header (n,,) + client-first-message-bare
     return buildAuthXml(
       mechanism,
@@ -314,12 +328,18 @@ export class SaslClient {
    * - SCRAM-SHA-1：多轮交互，收到 challenge 后计算响应。
    *
    * @param stanza - 服务器发来的 SASL stanza。
+   * @param password - 明文密码，仅本调用期间使用，不驻留实例。
    * @returns 下一步行动：send（需回复 XML）/ success / ignore。
    */
-  async process(stanza: XMPPElement): Promise<SaslResult> {
+  async process(stanza: XMPPElement, password: string): Promise<SaslResult> {
+    // 生命周期守卫：必须先 start() 选定机制
+    if (!this.state.mechanism) {
+      throw new Error("SaslClient 尚未 start，无法处理 SASL stanza");
+    }
+
     // 统一处理认证失败
     if (stanza.localName === "failure" && stanza.namespaceURI === SASL_NS) {
-      throw new Error(`认证失败: ${getSaslFailureCondition(stanza)}`);
+      throw new SaslError(getSaslFailureCondition(stanza));
     }
 
     // PLAIN 仅一轮交互，直接判断 success
@@ -328,10 +348,8 @@ export class SaslClient {
         ? { type: "success" }
         : { type: "ignore" };
     }
-    if (this.state.mechanism !== "SCRAM-SHA-1") {
-      return { type: "ignore" };
-    }
 
+    // 至此机制必为 SCRAM-SHA-1（守卫已排除未选机制，PLAIN 已在上方返回）
     // SCRAM-SHA-1: 处理服务器的 challenge
     if (stanza.localName === "challenge" && stanza.namespaceURI === SASL_NS) {
       const challenge = stanza.textContent;
@@ -339,7 +357,7 @@ export class SaslClient {
 
       // 计算 client-final-message + 缓存 server-proof 用于最终验证
       const { clientResponse, serverProof } = await scramResponse(
-        this.password,
+        password,
         challenge,
         this.state.clientFirstMessageBare!,
         "SCRAM-SHA-1",

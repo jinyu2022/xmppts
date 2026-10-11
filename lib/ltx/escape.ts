@@ -30,11 +30,14 @@ const unescapeXMLTable = {
  *
  * @param match 匹配到的 XML 实体字符串
  * @returns 对应的字符
- * @throws {Error} 如果实体是非法的 XML 字符或未知的命名实体
+ * @throws {Error} 如果字符引用格式错误、引用了非法 XML 字符或未知命名实体
  */
 function unescapeXMLReplace(match: string): string {
   // 处理数字字符引用 (&#nnn; 或 &#xnnn;)
   if (match.startsWith("&#")) {
+    if (!/^&#(?:\d+|x[0-9a-fA-F]+);$/.test(match)) {
+      throw new Error("Illegal XML entity " + match);
+    }
     const isHex = match.startsWith("&#x");
     const numStr = isHex ? match.slice(3, -1) : match.slice(2, -1);
     const num = parseInt(numStr, isHex ? 16 : 10);
@@ -75,8 +78,8 @@ export function escapeXML(s: string): string {
  */
 export function unescapeXML(s: string): string {
   let result = "";
-  let start = -1;
-  let end = -1;
+  let start: number;
+  let end: number;
   let previous = 0;
   while (
     (start = s.indexOf("&", previous)) !== -1 &&

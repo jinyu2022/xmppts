@@ -1,57 +1,59 @@
-# XMPP.js 项目
+# xmppjs
 
-## 项目简介
-XMPP.js 是一个基于 XMPP 协议的即时通讯库，支持浏览器和 Node.js 环境。它提供了丰富的功能，包括用户认证、消息收发、群聊支持以及多种 XMPP 扩展协议（XEP）的实现。
+基于 TypeScript 的 XMPP 协议库，目标环境为 Node.js 与浏览器，扩展协议以插件形式实现。
+
+> 当前可运行路径为 Node.js + 明文 TCP / STARTTLS；浏览器与 WSS 尚未接线。
 
 ## 功能特性
-- **多环境支持**：兼容浏览器和 Node.js。
-- **插件化设计**：支持通过插件扩展功能。
-- **XMPP 协议支持**：实现了多种 XMPP 扩展协议（如 XEP-0077、XEP-0392 等）。
-- **灵活的日志系统**：可配置日志级别，便于调试。
+
+- **插件化设计** — 通过 `registerPlugin()` / `registerDefaultPlugins()` 按需加载扩展协议。
+- **类型安全** — 全量 TypeScript，插件可扩充实例类型、Stanza 字段与事件映射。
+- **传输层管线** — 发送 / 接收拦截器可介入 stanza 加工。
+- **可观测** — 基于 loglevel 的日志系统。
 
 ## 快速开始
 
-
-
-### 配置
-
-在 `index.ts` 中初始化客户端：
 ```typescript
-import { Client } from './lib/client';
+import { Client } from "xmppjs";
 
-const client = new Client('username@domain', 'password', { protocol: 'xmpps' });
+const client = new Client("user@example.com", "password", {
+  protocol: "xmpp", // 或 "xmpps"（直连 TLS）
+});
 client.registerDefaultPlugins();
-client.connect();
+client.on("session:start", () => {
+  console.log("已登录", client.jid.toString());
+});
+await client.connect();
 ```
 
-### 运行
+### 常用命令
 
-使用以下命令启动项目：
-```bash
-npm run dev
+| 命令 | 用途 |
+|------|------|
+| `npm run build` | 类型检查 + 打包到 `dist/` |
+| `npm run dev` | 构建监听（`tsdown --watch`） |
+| `npm run ts-check` | 仅类型检查 |
+| `npm test` | Vitest（watch 模式；一次性运行用 `npx vitest run`） |
+| `npx eslint .` | ESLint |
+
+## 目录结构
+
+```
+├── lib/                # 核心库（connection / stanza / ltx / transport / plugins）
+├── test/               # 测试（按模块组织）
+├── index.ts            # 包入口
+├── tsdown.config.ts    # 打包配置
+└── vitest.config.ts    # 测试配置
 ```
 
-
-## 文件结构
-
-```
-├── lib/                # 核心库文件
-├── plugins/            # 插件目录
-├── public/             # 静态资源
-├── test/               # 测试用例
-├── index.ts            # 项目入口
-├── vite.config.ts      # Vite 配置文件
-└── README.md           # 项目说明文件
-```
+- 已实现的协议清单见 [lib/README.md](lib/README.md)。
+- 连接生命周期与状态机见 [lib/LIFECYCLE.md](lib/LIFECYCLE.md)。
 
 ## 贡献
 
-欢迎提交 Issue 和 Pull Request！
-
-这是我对js/ts和xmpp的学习项目，他有很多不足之处，欢迎大家提出意见和建议。
+欢迎提交 Issue 和 Pull Request。这是一个 JS/TS 与 XMPP 的学习项目，不足之处欢迎指正。
 
 ## 感谢
-感谢以下项目和库的支持：
 
 - [XMPP.js](https://github.com/xmppjs/xmpp.js)
 - [Strophe.js](https://github.com/strophe/strophejs)
@@ -59,4 +61,4 @@ npm run dev
 
 ## 许可证
 
-本项目基于 [MPL License](./LICENSE) 开源。
+[Mozilla Public License 2.0](./LICENSE)

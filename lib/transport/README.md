@@ -1,8 +1,53 @@
 # XMPP 核心登录流程 (RFC 6120)
 
-本文档概述了 XMPP 客户端连接到服务器并建立会话的核心流程，主要基于 RFC 6120 (XMPP Core) 的规范。理解这些步骤对于实现 `Connection` 和 `CoreSession` 逻辑至关重要。
+本文档概述了 XMPP 客户端连接到服务器并建立会话的核心流程，主要基于 RFC 6120 (XMPP Core) 的规范。理解这些步骤对于实现传输层 `XMPPConnection` 与高层 `Connection` 逻辑至关重要。
 
 整个流程是一个多阶段的**流协商 (Stream Negotiation)**过程，直到客户端完成认证和资源绑定，才能开始发送消息节（Stanza）。
+
+## 0. 生命周期事件总览
+
+下图为 ASCII 时序图，将传输层 `Socket`（WS/TCP）事件与高层 `Connection` 事件绘制在同一时间轴上。`Connection` 在 [`_setupSocketEvents()`](../connection.ts) 中订阅 socket 事件并转发为自身事件。
+
+```text
+  应用层                Connection              Socket (WS/TCP)            XMPP 服务器
+    │                      │                        │                          │
+    │  connect()           │                        │                          │
+    ├─────────────────────►│                        │                          │
+    │                      ├── connect(url)────────►│                          │
+    │                      │                        ├── TCP/TLS/WS 握手 ──────►│
+    │                      │                        │◄──────── 握手完成 ────────┤
+    │                      │               socket: open                       │
+    │◄───── conn: connect ─┼──────── 转发 ──────────│                          │
+    │                      │                        ├── 流头部 ───────────────►│
+    │                      │              socket: stream:start                │
+    │                      │                        ├── <auth> SASL 认证 ─────►│
+    │                      │                        │◄──────── <success> ──────┤
+    │                      │            socket: authenticated                 │
+    │                      │                        ├── 流重启 + 二次流特性 ────►│
+    │                      │                        │◄─── <features><bind/> ────┤
+    │                      │       pipeline: stream:negotiated                │
+    │                      │                        ├── <iq set><bind/> ───────►│
+    │                      │                        │◄─────── bound JID ────────┤
+    │                      │               socket: binded                     │
+    │◄─ conn: session:start┼──────── 转发 ──────────│                          │
+    │                      │                        │                          │
+    │    ═════ 活跃会话（循环）═════                  │                          │
+    │                      │                        │◄──────── stanza ─────────┤
+    │                      │               socket: stanza                     │
+    │◄─ conn: message/iq/presence/others ── 转发 ───│                          │
+    │                      │                        │                          │
+    │    ═════ 关闭 ═════                              │                          │
+    │                      │                        ├── </stream:stream> ─────►│
+    │                      │              socket: stream:end（会话关闭）       │
+    │◄── conn: session:end ┼──────── 转发 ──────────│                          │
+    │                      │               socket: close（连接关闭）           │
+    │◄──── conn: disconnect┼──────── 转发 ──────────│                          │
+    │                      │                        │                          │
+    │    ═════ 异常路径 ═════                        │                          │
+    │                      │       socket: error（认证失败 / 绑定超时 / WS 错误） │
+```
+
+> 事件归属速查：**socket** 事件为 `open` / `authenticated` / `stream:start` / `binded` / `stanza` / `stream:end` / `close` / `error`（`stream:negotiated` 属管线事件点，见 `TransportPipelineEvents`）；**connection** 事件为 `connect` / `session:start` / `session:end` / `connection:lost` / `reconnecting` / `reconnected` / `disconnect` / `message` / `iq` / `presence` / `others`。两层命名零重叠：`open → connect`、`binded → session:start`、`stream:end → session:end`、`close → disconnect`。会话关闭（`stream:end`）与连接关闭（`close`）是两个独立事件。
 
 ## 1. 网络连接 (TCP Binding)
 
@@ -11,7 +56,7 @@
 *   **客户端动作:**
     1.  **DNS 解析 FQDN** (Section 3.2): 解析服务器的完全限定域名（FQDN）以获取 IP 地址和端口。
     2.  **建立 TCP 连接** (Section 3.1): 通过解析得到的地址和端口建立持久的 TCP 连接。
-*   **对应方法/函数 (建议):** `resolveHost()`, `openTcpConnection()`
+*   **对应代码:** [connect()](tcp.ts#L178)（SRV 解析 L211-L217）、[setupSocketListeners()](tcp.ts#L259)
 
 ## 2. 流建立 (Stream Establishment)
 
@@ -42,7 +87,7 @@
         xmlns='jabber:client'
         xmlns:stream='http://etherx.jabber.org/streams'>
     ```
-*   **对应方法/函数 (建议):** `sendInitialStreamHeader()`
+*   **对应代码:** [openStream()](tcp.ts#L378)、[sendStreamHeader()](tcp.ts#L571)
 
 ## 3. 流协商：传输层安全 (TLS Negotiation)
 
@@ -68,7 +113,7 @@
     <proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>
     ```
     *   **执行 TLS 握手** (Section 5.4.3): 客户端和服务器在底层 TCP 连接上执行 TLS 握手。
-*   **对应方法/函数 (建议):** `handleStreamFeatures()`, `sendStartTLS()`, `negotiateTLS()`
+*   **对应代码:** [onFeaturesStartTls()](tcp.ts#L386)、[onStartTls()](tcp.ts#L445)、[upgradeToTLS()](tcp.ts#L602)
 
 ## 4. 流重启 (Post-TLS Stream Restart)
 
@@ -99,7 +144,7 @@ TLS 握手成功后，必须重启 XML 流以清除旧的流上下文，并在�
         xmlns='jabber:client'
         xmlns:stream='http://etherx.jabber.org/streams'>
     ```
-*   **对应方法/函数 (建议):** `restartStream()`
+*   **对应代码:** [upgradeToTLS()](tcp.ts#L602) 内 `secureConnect`（L614-L617）→ [sendStreamHeader()](tcp.ts#L571)
 
 ## 5. 流协商：认证 (SASL Negotiation)
 
@@ -109,11 +154,17 @@ TLS 握手成功后，必须重启 XML 流以清除旧的流上下文，并在�
     *   **发送流特性** (包含 `<mechanisms/>`):
     ```xml
     <stream:features>
-        <mechanisms xmlns='urn:ietf:params:xml:ns:xmpp-sasl'>
+        <mechanisms xmlns="urn:ietf:params:xml:ns:xmpp-sasl">
+            <mechanism>PLAIN</mechanism>
             <mechanism>SCRAM-SHA-1-PLUS</mechanism>
             <mechanism>SCRAM-SHA-1</mechanism>
-            <mechanism>PLAIN</mechanism>
+            <mechanism>X-OAUTH2</mechanism>
         </mechanisms>
+        <sasl-channel-binding xmlns="urn:xmpp:sasl-cb:0">
+            <channel-binding type="tls-exporter" />
+            <channel-binding type="tls-server-end-point" />
+        </sasl-channel-binding>
+        <register xmlns="http://jabber.org/features/iq-register" />
     </stream:features>
     ```
 *   **客户端动作 (C:):**
@@ -154,11 +205,11 @@ TLS 握手成功后，必须重启 XML 流以清除旧的流上下文，并在�
     </failure>
     ```
 *   **客户端动作 (C:) (如果失败):**
-    *   **重试认证** (如果未达到重试上限，发送新的 `<auth/>`):
+    *   **当前实现不重试**：`<failure/>` 会抛 `SaslError`，由 `handleFailure()` 置 `Status.AUTHFAIL`、发出 `error` 事件并断开（[tcp.ts#L322-L329](tcp.ts#L322-L329)）。需要重试时重新 `connect()`。
     ```xml
     <auth xmlns='urn:ietf:params:xml:ns:xmpp-sasl' mechanism='PLAIN'>...</auth>
     ```
-*   **对应方法/函数 (建议):** `handleStreamFeatures()`, `performSASLAuth()`, `handleSASLChallenge()`, `handleSASLSuccess()`, `handleSASLFailure()`
+*   **对应代码:** [onSasl()](tcp.ts#L457)（success → `emit("authenticated")` L466 + 流重启 L467；失败 → [handleFailure()](tcp.ts#L322)）
 
 ## 6. 流重启 (Post-SASL Stream Restart)
 
@@ -187,7 +238,7 @@ SASL 认证成功后，必须再次重启 XML 流以清除旧的流上下文，�
         xmlns='jabber:client'
         xmlns:stream='http://etherx.jabber.org/streams'>
     ```
-*   **对应方法/函数 (建议):** `restartStream()`
+*   **对应代码:** [onSasl()](tcp.ts#L457) 内 success → [sendStreamHeader()](tcp.ts#L571)
 
 ## 7. 资源绑定 (Resource Binding)
 
@@ -197,7 +248,16 @@ SASL 认证成功后，必须再次重启 XML 流以清除旧的流上下文，�
     *   **发送流特性** (包含 `<bind/>`):
     ```xml
     <stream:features>
-        <bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'/>
+        <bind xmlns="urn:ietf:params:xml:ns:xmpp-bind" />
+        <session xmlns="urn:ietf:params:xml:ns:xmpp-session">
+            <optional />
+        </session>
+        <c ver="qgDV6mKelsyqnn+KAHDtwHKe69A=" node="https://www.process-one.net/ejabberd/" hash="sha-1" xmlns="http://jabber.org/protocol/caps" />
+        <sm xmlns="urn:xmpp:sm:2" />
+        <sm xmlns="urn:xmpp:sm:3" />
+        <sub xmlns="urn:xmpp:features:pre-approval" />
+        <ver xmlns="urn:xmpp:features:rosterver" />
+        <csi xmlns="urn:xmpp:csi:0" />
     </stream:features>
     ```
 *   **客户端动作 (C:):**
@@ -218,17 +278,14 @@ SASL 认证成功后，必须再次重启 XML 流以清除旧的流上下文，�
         </bind>
     </iq>
     ```
-*   **对应方法/函数 (建议):** `handleStreamFeatures()`, `sendBindIQ()`, `handleBindResult()`
+*   **对应代码:** [onNegotiated()](tcp.ts#L475) 预填并发送绑定请求（记录 `bindId`，L492-L501）→ 绑定响应经 [onBinding()](tcp.ts#L515) 处理（[route()](tcp.ts#L332) 的 `BINDING` 分支）；[startBind()](tcp.ts#L542) 供插件回退重绑（如 XEP-0198 恢复被拒）
 
 ## 8. 会话建立 (Session Establishment)
 
-在资源绑定之后，客户端被认为已登录。如果服务器支持 XEP-0357 等会话管理扩展，可能需要额外的 IQ 交换来建立会话。
+在资源绑定之后，客户端被认为已登录。RFC 6120 起不再要求独立的会话建立步骤（RFC 3921 的 `<iq type='set'><session/></iq>` 已废弃，个别老服务器仍会宣告 `urn:ietf:params:xml:ns:xmpp-session`）。
 
-*   **客户端动作 (C:):**
-    *   **发送 IQ set 建立会话** (可选): (如果服务器支持 XEP-0357 等，可能需要发送 IQ set 建立会话)。
-*   **服务器动作 (S:):**
-    *   **响应 IQ result** (可选)。
-*   **对应方法/函数 (建议):** `establishSession()`
+*   **客户端动作 (C:):** 无——绑定成功后本库直接触发 `session:start`（见 [Connection._setupSocketEvents()](../connection.ts#L358)）。
+*   **对应代码:** 如需向老服务器补发 `<session/>`，可自行用 [sendAsync()](../connection.ts#L644) 实现。
 
 ## 9. 节交换 (Stanza Exchange)
 
@@ -245,7 +302,7 @@ SASL 认证成功后，必须再次重启 XML 流以清除旧的流上下文，�
     ```
 *   **服务器动作 (S:):**
     *   **接收并路由/投递节。**
-*   **对应方法/函数 (建议):** `sendStanza()`, `onStanza()`
+*   **对应代码:** 发送 [Connection.send()](../connection.ts#L595)；接收 [route()](tcp.ts#L332) 分发 → `stanza` 事件 → [Connection 转发](../connection.ts#L381)
 
 ## 10. 流关闭 (Stream Closure)
 
@@ -261,7 +318,7 @@ SASL 认证成功后，必须再次重启 XML 流以清除旧的流上下文，�
     ```xml
     </stream:stream>
     ```
-*   **对应方法/函数 (建议):** `disconnect()`, `sendStreamClose()`
+*   **对应代码:** [disconnect()](tcp.ts#L676)（发 `</stream:stream>` L685）、[close()](tcp.ts#L698)
 
 ### 关键概念和实现要点
 

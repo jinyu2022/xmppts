@@ -1,116 +1,136 @@
 import { describe, it, expect } from "vitest";
 import { Bookmarks } from "../../../lib/plugins/xep0402/bookmarks";
-import { XMPPElement } from "../../../lib/ltx/Element";
 import { Parser } from "../../../lib/ltx/Parser";
 
 /**
  * XEP-0402: PEP Native Bookmarks
  * @see https://xmpp.org/extensions/xep-0402.html
- * @version 1.2.0 (2024-07-15)
+ * @version 1.2.0 (2024-08-15)
  *
- * 根据 XEP-0402 规范，书签通过 PEP 发布，每个书签是一个 conference 元素:
- * - jid: 房间 JID（在 item 的 id 属性中）
- * - name: 用户指定的群聊名称
- * - autojoin: 自动加入
- * - nick: 房间昵称
- * - password: 房间密码
- * - extensions: 扩展元素
+ * 用例取自 §2 Example 1（conference 元素）与 Example 2（最小元素）、
+ * §3.2 Example 4（检索书签）、§3.3 Example 6（添加书签）、§3.5 Example 10（删除书签）。
  */
 describe("Bookmarks", () => {
-  describe("NS", () => {
-    it("should have correct namespace", () => {
-      expect(Bookmarks.NS).toBe("urn:xmpp:bookmarks:1");
-    });
-  });
+  // §2 Example 1：带 name/autojoin 与 nick 的 conference
+  const EXAMPLE_1_CONFERENCE = `
+    <conference xmlns='urn:xmpp:bookmarks:1' name='Council of Oberon' autojoin='true'>
+      <nick>Puck</nick>
+    </conference>`;
+  // §2 Example 2：最小合法 conference
+  const EXAMPLE_2_CONFERENCE = `<conference xmlns='urn:xmpp:bookmarks:1'/>`;
 
   describe("createRetrieveBookmarksIq", () => {
-    it("should create a get IQ to retrieve bookmarks", () => {
-      const iq = Bookmarks.createRetrieveBookmarksIq("romeo@example.net");
+    it("Example 4：生成检索书签的 get IQ", () => {
+      const iq = Bookmarks.createRetrieveBookmarksIq("juliet@capulet.lit");
       expect(iq.getAttribute("type")).toBe("get");
-      expect(iq.getAttribute("to")).toBe("romeo@example.net");
+      expect(iq.getAttribute("to")).toBe("juliet@capulet.lit");
+      expect(iq.getElementsByTagName("items")[0].getAttribute("node")).toBe(Bookmarks.NS);
     });
   });
 
-  describe("pareseConferenceEl", () => {
-    it("should parse a conference element with all attributes", () => {
-      const xml = Parser.parse(`
-        <conference xmlns="urn:xmpp:bookmarks:1" name="Test Room" autojoin="true">
-          <nick>Romeo</nick>
-          <password>secret</password>
-        </conference>
-      `);
-      const result = Bookmarks.pareseConferenceEl(xml);
-      expect(result.conference.name).toBe("Test Room");
+  describe("parseConferenceEl", () => {
+    it("Example 1：解析 name/autojoin/nick", () => {
+      const el = Parser.parse(EXAMPLE_1_CONFERENCE);
+      const result = Bookmarks.parseConferenceEl(el);
+      expect(result.conference.name).toBe("Council of Oberon");
       expect(result.conference.autojoin).toBe(true);
-      expect(result.conference.nick).toBe("Romeo");
-      expect(result.conference.password).toBe("secret");
+      expect(result.conference.nick).toBe("Puck");
     });
 
-    it("should parse a conference element with minimal attributes", () => {
-      const xml = Parser.parse(`
-        <conference xmlns="urn:xmpp:bookmarks:1" name="Simple Room"/>
-      `);
-      const result = Bookmarks.pareseConferenceEl(xml);
-      expect(result.conference.name).toBe("Simple Room");
+    it("Example 2：最小元素解析出空字段", () => {
+      const el = Parser.parse(EXAMPLE_2_CONFERENCE);
+      const result = Bookmarks.parseConferenceEl(el);
+      expect(result.conference.name).toBeUndefined();
       expect(result.conference.autojoin).toBe(false);
       expect(result.conference.nick).toBeUndefined();
-      expect(result.conference.password).toBeUndefined();
     });
 
-    it("should throw when element is not a conference", () => {
-      const el = XMPPElement.createElement("not-conference");
-      expect(() => Bookmarks.pareseConferenceEl(el)).toThrow(
-        "不是一个conference元素"
-      );
+    it("非 conference 元素时抛错", () => {
+      const el = Parser.parse(`<foo xmlns="urn:xmpp:bookmarks:1"/>`);
+      expect(() => Bookmarks.parseConferenceEl(el)).toThrow("不是一个conference元素");
     });
   });
 
   describe("createAddBookmarkIq", () => {
-    it("should create a publish IQ for adding a bookmark", () => {
-      const iq = Bookmarks.createAddBookmarkIq({
-        jid: "room@conference.example.net",
-        name: "My Room",
-        autojoin: true,
-        nick: "Romeo",
-      });
+    it("Example 6：生成携带 publish-options 的发布 IQ", () => {
+      const iq = Bookmarks.createAddBookmarkIq(
+        {
+          jid: "theplay@conference.shakespeare.lit",
+          name: "The Play's the Thing",
+          autojoin: true,
+          nick: "JC",
+        },
+        Bookmarks.createPublishOptionsEl()
+      );
+      const item = iq.getElementsByTagName("item")[0];
+      const conferenceEl = iq.getElementsByTagNameNS(Bookmarks.NS, "conference")[0];
       expect(iq.getAttribute("type")).toBe("set");
+      expect(item.getAttribute("id")).toBe("theplay@conference.shakespeare.lit");
+      expect(conferenceEl.getAttribute("name")).toBe("The Play's the Thing");
+      expect(conferenceEl.getElementsByTagName("nick")[0].textContent).toBe("JC");
+      expect(iq.getElementsByTagName("publish-options")).toHaveLength(1);
     });
 
-    it("should create a publish IQ without optional fields", () => {
+    it("不传 publish-options 时不生成该元素", () => {
       const iq = Bookmarks.createAddBookmarkIq({
-        jid: "simple@conference.example.net",
-        name: "Simple Room",
+        jid: "theplay@conference.shakespeare.lit",
       });
-      expect(iq.getAttribute("type")).toBe("set");
+      expect(iq.getElementsByTagName("publish-options")).toHaveLength(0);
+    });
+  });
+
+  describe("createPublishOptionsEl", () => {
+    // §3.3 Example 6：FORM_TYPE 为 pubsub#publish-options，前提条件要求私有且持久化
+    it("按 Example 6 生成前提条件表单", () => {
+      const options = Bookmarks.createPublishOptionsEl();
+      expect(options.tagName).toBe("publish-options");
+      const form = options.getElementsByTagName("x")[0];
+      expect(form.getAttribute("type")).toBe("submit");
+
+      const fields = Array.from(options.getElementsByTagName("field"));
+      const fieldValues = (name: string) =>
+        fields
+          .find((field) => field.getAttribute("var") === name)!
+          .getElementsByTagName("value")[0].textContent;
+      expect(fieldValues("FORM_TYPE")).toBe(
+        "http://jabber.org/protocol/pubsub#publish-options"
+      );
+      expect(fieldValues("pubsub#persist_items")).toBe("true");
+      expect(fieldValues("pubsub#max_items")).toBe("max");
+      expect(fieldValues("pubsub#send_last_published_item")).toBe("never");
+      expect(fieldValues("pubsub#access_model")).toBe("whitelist");
+    });
+  });
+
+  describe("createNodeConfigForm", () => {
+    // §8.2.4：owner 配置节点用的 #node_config 表单，字段值与发布前提条件一致
+    it("生成 #node_config 提交表单", () => {
+      const form = Bookmarks.createNodeConfigForm();
+      expect(form.getAttribute("type")).toBe("submit");
+
+      const fields = Array.from(form.getElementsByTagName("field"));
+      const fieldValues = (name: string) =>
+        fields
+          .find((field) => field.getAttribute("var") === name)!
+          .getElementsByTagName("value")[0].textContent;
+      expect(fieldValues("FORM_TYPE")).toBe(
+        "http://jabber.org/protocol/pubsub#node_config"
+      );
+      expect(fieldValues("pubsub#access_model")).toBe("whitelist");
+      expect(fieldValues("pubsub#persist_items")).toBe("true");
     });
   });
 
   describe("createDeleteBookmarkIq", () => {
-    it("should create a retract IQ for deleting a bookmark", () => {
-      const iq = Bookmarks.createDeleteBookmarkIq("room@conference.example.net");
+    it("Example 10：生成带 notify 的撤回 IQ", () => {
+      const iq = Bookmarks.createDeleteBookmarkIq("theplay@conference.shakespeare.lit");
+      const retract = iq.getElementsByTagName("retract")[0];
       expect(iq.getAttribute("type")).toBe("set");
-    });
-  });
-
-  describe("parseBookmarksEvent", () => {
-    it("should parse a bookmarks PEP event", () => {
-      // parseBookmarksEvent 接收一个元素，其 namespace 为 Bookmarks.NS，
-      // 并包含 <items> 子元素（内部包含 conference 元数据）
-      const xml = Parser.parse(`<x xmlns="urn:xmpp:bookmarks:1"><items node="urn:xmpp:bookmarks:1">
-            <item id="room@conference.example.net">
-              <conference xmlns="urn:xmpp:bookmarks:1" name="Test Room" autojoin="true">
-                <nick>Romeo</nick>
-                <password>secret</password>
-              </conference>
-            </item>
-          </items></x>`);
-      const items = Bookmarks.parseBookmarksEvent(xml);
-      expect(items).toHaveLength(1);
-      expect(items[0].jid).toBe("room@conference.example.net");
-      expect(items[0].name).toBe("Test Room");
-      expect(items[0].autojoin).toBe(true);
-      expect(items[0].nick).toBe("Romeo");
-      expect(items[0].password).toBe("secret");
+      expect(retract.getAttribute("node")).toBe(Bookmarks.NS);
+      expect(retract.getAttribute("notify")).toBe("true");
+      expect(retract.getElementsByTagName("item")[0].getAttribute("id")).toBe(
+        "theplay@conference.shakespeare.lit"
+      );
     });
   });
 });

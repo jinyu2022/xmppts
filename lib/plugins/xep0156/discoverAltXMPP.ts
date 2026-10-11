@@ -1,4 +1,9 @@
 import { Parser } from "../../ltx/Parser";
+import { TimeoutError } from "@/errors";
+import logger from "@/log";
+
+const log = logger.getLogger("XEP0156");
+
 interface ConnectionMethods {
   websocket?: string;
   httppoll?: string;
@@ -13,13 +18,14 @@ export class XMPPDiscoverer {
     const url = `https://${domain}/.well-known/host-meta`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
+    timeoutId.unref?.();
 
     try {
       const response = (await Promise.race([
         fetch(url, { signal: controller.signal }),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("请求超时")), timeout)
-        ),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new TimeoutError("请求超时")), timeout).unref?.();
+        }),
       ])) as Response;
 
       if (!response.ok) {
@@ -45,20 +51,12 @@ export class XMPPDiscoverer {
             const key = REL_TO_KEY[rel as keyof typeof REL_TO_KEY];
             result[key] = href;
           } else {
-            console.warn(`发现未知的连接类型: ${rel}`);
+            log.warn(`发现未知的连接类型: ${rel}`);
           }
         }
       }
 
       return result;
-    } catch (error) {
-      if (error instanceof Error) {
-        if (error.name === "AbortError") {
-          throw new Error("请求超时");
-        }
-        throw error;
-      }
-      throw new Error("未知错误");
     } finally {
       clearTimeout(timeoutId);
     }

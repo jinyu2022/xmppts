@@ -1,12 +1,13 @@
 import type Connection from "@/connection";
 import type { Plugin } from "../types";
+import { XMPPError } from "@/errors";
 import { Nickname } from "./nickname";
 import logger from "@/log";
 const log = logger.getLogger("XEP0172");
 /**
  * XEP-0172: User Nickname
  * @see https://xmpp.org/extensions/xep-0172.html
- * @version: 1.1 (2012-03-21)
+ * @version 1.1 (2012-03-21)
  */
 class XEP0172 extends Nickname implements Plugin {
     static readonly dependencies = ["XEP0030"] as const;
@@ -59,7 +60,6 @@ class XEP0172 extends Nickname implements Plugin {
 }
 
 import type { Message } from "@/stanza";
-import { XMPPError } from "@/errors";
 declare module "../../stanza" {
     interface Message {
         nick?: string;

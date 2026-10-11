@@ -1,7 +1,6 @@
 import { XMPPElement } from "@/ltx/Element";
-import { Iq } from "@/stanza";
 import { XEP0128 } from "@/plugins/xep0128";
-import logger from "@/log";
+import { Iq } from "@/stanza";
 import type { JID } from "@/JID";
 export interface Identity {
   category: string;
@@ -15,11 +14,8 @@ export interface Item {
   name?: string | null;
 }
 
-const log = logger.getLogger("XEP0030"); 
 /**
- * Service Discovery (XEP-0030) 插件
- * 用于处理XMPP实体的服务发现信息和项目列表
- * 包括解析和生成disco#info和disco#items的IQ响应
+ * Service Discovery (XEP-0030) 纯工具类：命名空间常量与 disco 报文解析。
  * @see https://xmpp.org/extensions/xep-0030.html
  * @version 2.5.0 (2024-04-30)
  */
@@ -29,18 +25,15 @@ export class Disco {
     DISCO_ITEMS: "http://jabber.org/protocol/disco#items",
   } as const;
 
-  /** 自己的身份 */
-  identities: Identity[] = [];
-  /** 自己的特性 */
-  readonly features: Set<string> = new Set();
-  items: Item[] = [];
-
   static parseDiscoInfo(xml: XMPPElement) {
-    let query: XMPPElement;
+    let query: XMPPElement | undefined;
     if (xml.namespaceURI !== Disco.NS.DISCO_INFO) {
       query = xml.getElementsByTagNameNS(Disco.NS.DISCO_INFO, "query")[0];
     } else {
       query = xml;
+    }
+    if (!query) {
+      throw new Error(`disco#info 响应缺少 query 元素: ${xml.toXMLString()}`);
     }
     const identities = Array.from(query.getElementsByTagName("identity")).map(
       (identity) => {
@@ -62,11 +55,14 @@ export class Disco {
   }
 
   static parseDiscoItems(xml: XMPPElement) {
-    let query: XMPPElement;
+    let query: XMPPElement | undefined;
     if (xml.namespaceURI !== Disco.NS.DISCO_ITEMS) {
       query = xml.getElementsByTagNameNS(Disco.NS.DISCO_ITEMS, "query")[0];
     } else {
       query = xml;
+    }
+    if (!query) {
+      throw new Error(`disco#items 响应缺少 query 元素: ${xml.toXMLString()}`);
     }
     const items = Array.from(query.getElementsByTagName("item")).map((item) => {
       return {
@@ -79,144 +75,76 @@ export class Disco {
   }
 
   /**
-   * 添加一个特性
-   * @param value <feature/>元素的var属性值
+   * 用给定身份与特性构造 disco#info 应答
+   * @param identities 身份列表
+   * @param features 特性集合
+   * @param to 应答对象
+   * @param id 对应请求的 id
+   * @param queryNode 请求的节点
    */
-  addFeature(value: string) {
-    // 检查有没有重复的
-    if (this.features.has(value)) {
-      log.warn("已经存在相同的特性");
-    }
-    this.features.add(value);
-  }
-
-  /**
-   * 移除一个特性
-   * @param value <feature/>元素的var属性值
-   * @returns 是否成功移除
-   */
-  removeFeature(value: string) {
-    return this.features.delete(value);
-  }
-  /**
-   * 添加一个身份标识
-   * @param category 身份类别
-   * @param type 身份类型
-   * @param name 身份的显示名称
-   * @param lang 名称使用的语言二字代码
-   */
-  addIdentity(category: string, type: string, name: string, lang: string) {
-    // 检查有没有冲突，四个都一样就冲突
-    if (
-      this.identities.some(
-        (i) =>
-          i.category === category &&
-          i.type === type &&
-          i.name === name &&
-          i.lang === lang
-      )
-    ) {
-      throw new Error("已经存在相同的身份标识");
-    }
-    this.identities.push({ category, type, name, lang });
-  }
-
-  /**
-   * 移除一个身份标识
-   * @param category 身份类别
-   * @param type 身份类型
-   * @param name 身份的显示名称
-   * @param lang 名称使用的语言二字代码
-   */
-  removeIdentity(category: string, type: string, name: string, lang: string) {
-    this.identities = this.identities.filter(
-      (i) =>
-        i.category !== category ||
-        i.type !== type ||
-        i.name !== name ||
-        i.lang !== lang
-    );
-  }
-
-  /**
-   * 添加一个项目
-   * @param jid 项目的JID
-   * @param node 项目的节点
-   * @param name 项目的显示名称
-   */
-  addItem(jid: string, node?: string, name?: string) {
-    if (
-      this.items.some(
-        (i) => i.jid === jid && i.name === name && i.node === node
-      )
-    ) {
-      throw new Error("已经存在相同的项目");
-    }
-    this.items.push({ jid, name, node });
-  }
-
-  /**
-   * 移除一个项目
-   * @param jid 项目的JID
-   * @param name 项目的显示名称
-   */
-  removeItem(jid: string, name: string) {
-    this.items = this.items.filter((i) => i.jid !== jid || i.name !== name);
-  }
-
-  createInfoResult(to: string | JID, id: string, queryNode?: string | null) {
+  static createInfoResult(
+    identities: Identity[],
+    features: Iterable<string>,
+    to: string | JID,
+    id: string,
+    queryNode?: string | null
+  ) {
     const iq = Iq.createIq("result", to);
     iq.setAttribute("id", id);
     const query = XMPPElement.createElementNS(Disco.NS.DISCO_INFO, "query");
-
-    const identities = this.identities;
     if (queryNode) {
       query.setAttribute("node", queryNode);
       // TODO: 到底要根据node返回什么？
     }
-    for (const identity of identities) {
-      const identityElement = XMPPElement.createElement("identity");
-      identityElement.setAttribute("category", identity.category);
-      identityElement.setAttribute("type", identity.type);
-      if (identity.name) {
-        identityElement.setAttribute("name", identity.name);
-      }
-      if (identity.lang) {
-        identityElement.setAttribute("xml:lang", identity.lang);
-      }
-      query.appendChild(identityElement);
-    }
-    for (const feature of this.features) {
-      const featureElement = XMPPElement.createElement("feature");
-      featureElement.setAttribute("var", feature);
-      query.appendChild(featureElement);
-    }
     iq.appendChild(query);
+    for (const identity of identities) {
+      query.appendChild(
+        XMPPElement.createElement("identity", {
+          category: identity.category,
+          type: identity.type,
+          ...(identity.name ? { name: identity.name } : {}),
+          ...(identity.lang ? { "xml:lang": identity.lang } : {}),
+        })
+      );
+    }
+    for (const feature of features) {
+      query.appendChild(XMPPElement.createElement("feature", { var: feature }));
+    }
     return iq;
   }
 
-  createItemsResult(to: string | JID, id: string, queryNode?: string | null) {
+  /**
+   * 用给定子项构造 disco#items 应答
+   * @param items 子项列表
+   * @param to 应答对象
+   * @param id 对应请求的 id
+   * @param queryNode 请求的节点，同一节点下的子项才返回
+   */
+  static createItemsResult(
+    items: Item[],
+    to: string | JID,
+    id: string,
+    queryNode?: string | null
+  ) {
     const iq = Iq.createIq("result", to);
     iq.setAttribute("id", id);
     const query = XMPPElement.createElementNS(Disco.NS.DISCO_ITEMS, "query");
-    let items = this.items;
     if (queryNode) {
       query.setAttribute("node", queryNode);
-      // items要和queryNode一样
-      items = items.filter((i) => i.node === queryNode);
-    }
-    for (const item of items) {
-      const itemElement = XMPPElement.createElement("item");
-      itemElement.setAttribute("jid", item.jid);
-      if (item.name) {
-        itemElement.setAttribute("name", item.name);
-      }
-      if (item.node) {
-        itemElement.setAttribute("node", item.node);
-      }
-      query.appendChild(itemElement);
     }
     iq.appendChild(query);
+    const matched = queryNode
+      ? items.filter((i) => i.node === queryNode)
+      : items;
+    for (const item of matched) {
+      query.appendChild(
+        XMPPElement.createElement("item", {
+          jid: item.jid,
+          ...(item.name ? { name: item.name } : {}),
+          ...(item.node ? { node: item.node } : {}),
+        })
+      );
+    }
     return iq;
   }
 }

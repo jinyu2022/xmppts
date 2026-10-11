@@ -1,5 +1,6 @@
 import { Iq } from "@/stanza";
 import { XMPPElement } from "@/ltx";
+import { JID } from "@/JID";
 export default class Ping {
     static readonly NS = "urn:xmpp:ping" as const;
 
@@ -10,8 +11,9 @@ export default class Ping {
         return iq;
     }
 
-    static createPingResultIq(to: string, id: string) {
+    static createPingResultIq(from: string | JID, to: string | JID, id: string) {
         const iq = Iq.createIq("result", to);
+        iq.setAttribute("from", from.toString());
         iq.setAttribute("id", id);
         return iq;
     }

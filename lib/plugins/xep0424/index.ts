@@ -11,11 +11,11 @@ import {
 /**
  * XEP-0424: Message Retraction
  * @see https://xmpp.org/extensions/xep-0424.html
- * @version 0.4.2 (2025-01-18)
+ * @version 0.5.0 (2026-07-03)
  */
 export class XEP0424 extends Retraction implements Plugin {
     static readonly dependencies = ["XEP0030"] as const;
-    readonly connection: Connection;
+    private readonly connection: Connection;
 
     constructor(connection: Connection) {
         super();
@@ -52,17 +52,17 @@ export class XEP0424 extends Retraction implements Plugin {
 
 declare module "@/stanza" {
     interface Message {
-        /** XEP0424: 请求消息撤回 */
-        retract?: { id: string };
-        /** XEP0424: 撤回标记 */
-        retracted?: { id: string; stamp?: Date };
+        /** XEP0424: 请求消息撤回（`reason` 不在规范 schema 中，见 `parseRetractionEl`） */
+        retract?: { id: string; reason?: string };
+        /** XEP0424: 撤回标记；只出现在归档结果（`<forwarded/>` 内层消息）里，不会作为广播到达 */
+        retracted?: { id: string; stamp?: Date; by?: string; reason?: string };
     }
 }
 
 declare module "@/connection" {
     interface SocketEventMap {
         /** XEP0424 请求消息撤回*/
-        "message:retract": Message & { retract: { id: string } };
+        "message:retract": Message & { retract: { id: string; reason?: string } };
     }
 }
 

@@ -1,5 +1,4 @@
 import { XMPPElement } from "@/ltx";
-import { XMPPError } from "../../errors";
 import { Iq } from "@/stanza";
 export class Carbons {
   static readonly NS = "urn:xmpp:carbons:2";
@@ -48,7 +47,7 @@ export class Carbons {
         },
       };
     } else {
-      throw new XMPPError(carbon, "未找到 carbon 元素");
+      throw new Error(`未找到 carbon 元素: ${carbon.toXMLString()}`);
     }
   }
 }

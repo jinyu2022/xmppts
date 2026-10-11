@@ -1,4 +1,3 @@
-import { XMPPError } from "@/errors";
 import { XMPPElement } from "@/ltx/Element";
 import { Message, type MsgType } from "@/stanza";
 import type { JID } from "@/JID";
@@ -19,16 +18,16 @@ export class Correction {
      * 从 XML 元素中解析更正请求信息。
      *
      * @param replaceEl - 要解析的更正 XML 元素
-     * @throws {XMPPError} 当元素命名空间不合法或缺少必要属性时抛出错误
+     * @throws {Error} 当元素命名空间不合法或缺少必要属性时抛出错误
      */
     static parseReplaceEl(replaceEl: XMPPElement) {
         if (replaceEl.namespaceURI !== Correction.NS) {
-            throw new XMPPError(replaceEl, "非法命名空间的消息更正元素");
+            throw new Error(`非法命名空间的消息更正元素: ${replaceEl.toXMLString()}`);
         }
 
         const id = replaceEl.getAttribute("id");
         if (!id) {
-            throw new XMPPError(replaceEl, "消息更正元素缺少 id");
+            throw new Error(`消息更正元素缺少 id: ${replaceEl.toXMLString()}`);
         }
 
         return {
@@ -45,8 +44,9 @@ export class Correction {
      * @returns 返回创建的更正 XML 元素
      */
     static createReplaceEl(id: string) {
-        const replace = XMPPElement.createElementNS(Correction.NS, "replace");
-        replace.setAttribute("id", id);
+        const replace = XMPPElement.createElementNS(Correction.NS, "replace", {
+            id,
+        });
         return replace;
     }
 

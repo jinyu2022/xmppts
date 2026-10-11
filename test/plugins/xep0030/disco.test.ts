@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Disco } from "../../../lib/plugins/xep0030/disco";
-import { XMPPElement } from "../../../lib/ltx/Element";
+import XEP0030 from "../../../lib/plugins/xep0030";
+import { Connection } from "../../../lib/connection";
 import { Parser } from "../../../lib/ltx/Parser";
 
 /**
@@ -8,217 +9,246 @@ import { Parser } from "../../../lib/ltx/Parser";
  * @see https://xmpp.org/extensions/xep-0030.html
  * @version 2.5.0 (2024-04-30)
  *
- * 根据 XEP-0030 规范，服务发现支持两种查询:
- * - disco#info: 获取实体支持的特性和身份
- * - disco#items: 获取实体的子节点列表
+ * 用例取自 §3/§4 的规范示例：服务器下发的（Example 2/6/8/10/12/15/17/21）测解析，
+ * 本地 API 构造的应答与示例对齐；其余按 §11 XML Schema 推导补充。
  */
-describe("Disco", () => {
-  describe("NS", () => {
-    it("should have correct namespace constants", () => {
-      expect(Disco.NS.DISCO_INFO).toBe("http://jabber.org/protocol/disco#info");
-      expect(Disco.NS.DISCO_ITEMS).toBe(
-        "http://jabber.org/protocol/disco#items"
-      );
-    });
-  });
+describe("XEP-0030", () => {
+  /** Example 2：plays.shakespeare.lit 的 disco#info 应答 */
+  const EXAMPLE_2 = `
+    <iq type="result" from="plays.shakespeare.lit" to="romeo@montague.net/orchard" id="info1">
+      <query xmlns="http://jabber.org/protocol/disco#info">
+        <identity category="conference" type="text" name="Play-Specific Chatrooms"/>
+        <identity category="directory" type="chatroom" name="Play-Specific Chatrooms"/>
+        <feature var="http://jabber.org/protocol/disco#info"/>
+        <feature var="http://jabber.org/protocol/disco#items"/>
+        <feature var="jabber:iq:register"/>
+        <feature var="jabber:iq:search"/>
+        <feature var="jabber:iq:time"/>
+        <feature var="jabber:iq:version"/>
+      </query>
+    </iq>
+  `;
+
+  /** Example 12：shakespeare.lit 的 disco#items 应答 */
+  const EXAMPLE_12 = `
+    <iq type="result" from="shakespeare.lit" to="romeo@montague.net/orchard" id="items1">
+      <query xmlns="http://jabber.org/protocol/disco#items">
+        <item jid="people.shakespeare.lit" name="Directory of Characters"/>
+        <item jid="plays.shakespeare.lit" name="Play-Specific Chatrooms"/>
+        <item jid="mim.shakespeare.lit" name="Gateway to Marlowe IM"/>
+        <item jid="words.shakespeare.lit" name="Shakespearean Lexicon"/>
+        <item jid="globe.shakespeare.lit" name="Calendar of Performances"/>
+        <item jid="headlines.shakespeare.lit" name="Latest Shakespearean News"/>
+        <item jid="catalog.shakespeare.lit" name="Buy Shakespeare Stuff!"/>
+        <item jid="en2fr.shakespeare.lit" name="French Translation Service"/>
+      </query>
+    </iq>
+  `;
 
   describe("parseDiscoInfo", () => {
-    it("should parse identities and features from disco info response", () => {
-      const xml = Parser.parse(`
-        <query xmlns="http://jabber.org/protocol/disco#info">
-          <identity category="client" type="bot" name="TestBot"/>
-          <identity category="automation" type="command-list" name="Commands"/>
-          <feature var="http://jabber.org/protocol/disco#info"/>
-          <feature var="urn:xmpp:ping"/>
-        </query>
-      `);
-      const result = Disco.parseDiscoInfo(xml);
-      expect(result.identities).toHaveLength(2);
-      expect(result.identities[0]).toEqual({
-        category: "client",
-        type: "bot",
-        name: "TestBot",
-        lang: undefined,
-      });
-      expect(result.identities[1]).toEqual({
-        category: "automation",
-        type: "command-list",
-        name: "Commands",
-        lang: undefined,
-      });
-      expect(result.features.has("http://jabber.org/protocol/disco#info")).toBe(
-        true
+    it("Example 2：解析多个 identity 与 feature 的应答", () => {
+      const result = Disco.parseDiscoInfo(Parser.parse(EXAMPLE_2));
+      expect(result.identities).toEqual([
+        { category: "conference", type: "text", name: "Play-Specific Chatrooms", lang: undefined },
+        { category: "directory", type: "chatroom", name: "Play-Specific Chatrooms", lang: undefined },
+      ]);
+      expect(result.features).toEqual(
+        new Set([
+          "http://jabber.org/protocol/disco#info",
+          "http://jabber.org/protocol/disco#items",
+          "jabber:iq:register",
+          "jabber:iq:search",
+          "jabber:iq:time",
+          "jabber:iq:version",
+        ])
       );
-      expect(result.features.has("urn:xmpp:ping")).toBe(true);
-      expect(result.features.size).toBe(2);
     });
 
-    it("should handle identity with xml:lang attribute", () => {
+    it("Example 6：解析服务器代 bare JID 应答的 account 身份", () => {
       const xml = Parser.parse(`
-        <query xmlns="http://jabber.org/protocol/disco#info">
-          <identity category="client" type="pc" name="Pidgin" xml:lang="en"/>
-        </query>
-      `);
-      const result = Disco.parseDiscoInfo(xml);
-      expect(result.identities[0].lang).toBe("en");
-    });
-
-    it("should handle disco info wrapped in iq element", () => {
-      const xml = Parser.parse(`
-        <iq type="result" to="romeo@example.net" from="example.org">
+        <iq type="result" from="juliet@capulet.com" to="shakespeare.lit" id="info2">
           <query xmlns="http://jabber.org/protocol/disco#info">
-            <identity category="server" type="im"/>
+            <identity category="account" type="registered"/>
             <feature var="http://jabber.org/protocol/disco#info"/>
           </query>
         </iq>
       `);
       const result = Disco.parseDiscoInfo(xml);
-      expect(result.identities).toHaveLength(1);
-      expect(result.identities[0].category).toBe("server");
-      expect(result.features.size).toBe(1);
+      expect(result.identities).toEqual([
+        { category: "account", type: "registered", name: undefined, lang: undefined },
+      ]);
     });
 
-    it("should return empty arrays when no identities or features", () => {
+    it("Example 8：解析连接资源的 client 身份", () => {
       const xml = Parser.parse(`
-        <query xmlns="http://jabber.org/protocol/disco#info"/>
+        <iq type="result" from="romeo@montague.net/orchard" to="juliet@capulet.com/balcony" id="info4">
+          <query xmlns="http://jabber.org/protocol/disco#info">
+            <identity category="client" type="pc" name="Gabber"/>
+            <feature var="http://jabber.org/protocol/disco#info"/>
+          </query>
+        </iq>
       `);
       const result = Disco.parseDiscoInfo(xml);
-      expect(result.identities).toHaveLength(0);
-      expect(result.features.size).toBe(0);
+      expect(result.identities[0].category).toBe("client");
+      expect(result.identities[0].type).toBe("pc");
+    });
+
+    it("Example 10：解析 JID+node 结果", () => {
+      const xml = Parser.parse(`
+        <iq type="result" from="mim.shakespeare.lit" to="romeo@montague.net/orchard" id="info3">
+          <query xmlns="http://jabber.org/protocol/disco#info" node="http://jabber.org/protocol/commands">
+            <identity category="automation" type="command-list"/>
+            <feature var="http://jabber.org/protocol/disco#info"/>
+          </query>
+        </iq>
+      `);
+      const result = Disco.parseDiscoInfo(xml);
+      expect(result.identities[0]).toEqual({
+        category: "automation",
+        type: "command-list",
+        name: undefined,
+        lang: undefined,
+      });
+    });
+
+    it("§3.1：identity 可带 xml:lang", () => {
+      const result = Disco.parseDiscoInfo(Parser.parse(`
+        <query xmlns="http://jabber.org/protocol/disco#info">
+          <identity category="client" type="pc" name="Pidgin" xml:lang="en"/>
+        </query>
+      `));
+      expect(result.identities[0].lang).toBe("en");
+    });
+
+    it("缺少 query 元素时抛 Error", () => {
+      expect(() => Disco.parseDiscoInfo(Parser.parse(`<x xmlns="other"/>`))).toThrow();
     });
   });
 
   describe("parseDiscoItems", () => {
-    it("should parse items from disco items response", () => {
-      const xml = Parser.parse(`
-        <query xmlns="http://jabber.org/protocol/disco#items">
-          <item jid="chat.example.org" name="Chat Service"/>
-          <item jid="proxy.example.org" name="Proxy Service"/>
-        </query>
-      `);
-      const items = Disco.parseDiscoItems(xml);
-      expect(items).toHaveLength(2);
-      expect(items[0]).toEqual({
-        jid: "chat.example.org",
-        node: undefined,
-        name: "Chat Service",
-      });
-      expect(items[1]).toEqual({
-        jid: "proxy.example.org",
-        node: undefined,
-        name: "Proxy Service",
-      });
+    it("Example 12：解析全部 item 列表", () => {
+      const items = Disco.parseDiscoItems(Parser.parse(EXAMPLE_12));
+      expect(items).toHaveLength(8);
+      expect(items[0]).toEqual({ jid: "people.shakespeare.lit", node: undefined, name: "Directory of Characters" });
+      expect(items[7]).toEqual({ jid: "en2fr.shakespeare.lit", node: undefined, name: "French Translation Service" });
     });
 
-    it("should parse items with node attribute", () => {
-      const xml = Parser.parse(`
-        <query xmlns="http://jabber.org/protocol/disco#items">
-          <item jid="example.org" node="http://jabber.org/protocol/commands" name="Commands"/>
-        </query>
-      `);
-      const items = Disco.parseDiscoItems(xml);
-      expect(items[0].node).toBe("http://jabber.org/protocol/commands");
-      expect(items[0].name).toBe("Commands");
-    });
-
-    it("should handle items wrapped in iq element", () => {
-      const xml = Parser.parse(`
-        <iq type="result" to="romeo@example.net" from="example.org">
+    it("Example 15：解析代 bare JID 应答的资源 item", () => {
+      const items = Disco.parseDiscoItems(Parser.parse(`
+        <iq type="result" from="juliet@capulet.com" to="shakespeare.lit" id="items2">
           <query xmlns="http://jabber.org/protocol/disco#items">
-            <item jid="conference.example.org" name="Conference Service"/>
+            <item jid="juliet@capulet.com/balcony"/>
+            <item jid="juliet@capulet.com/chamber"/>
           </query>
         </iq>
-      `);
-      const items = Disco.parseDiscoItems(xml);
-      expect(items).toHaveLength(1);
-      expect(items[0].jid).toBe("conference.example.org");
+      `));
+      expect(items).toEqual([
+        { jid: "juliet@capulet.com/balcony", node: undefined, name: undefined },
+        { jid: "juliet@capulet.com/chamber", node: undefined, name: undefined },
+      ]);
     });
 
-    it("should return empty array when no items", () => {
-      const xml = Parser.parse(`
-        <query xmlns="http://jabber.org/protocol/disco#items"/>
-      `);
-      const items = Disco.parseDiscoItems(xml);
-      expect(items).toHaveLength(0);
+    it("Example 17：解析带 node 的 item", () => {
+      const items = Disco.parseDiscoItems(Parser.parse(`
+        <iq type="result" from="catalog.shakespeare.lit" to="romeo@montague.net/orchard" id="items2">
+          <query xmlns="http://jabber.org/protocol/disco#items">
+            <item jid="catalog.shakespeare.lit" node="books" name="Books by and about Shakespeare"/>
+            <item jid="catalog.shakespeare.lit" node="clothing" name="Wear your literary taste with pride"/>
+            <item jid="catalog.shakespeare.lit" node="music" name="Music from the time of Shakespeare"/>
+          </query>
+        </iq>
+      `));
+      expect(items[0]).toEqual({ jid: "catalog.shakespeare.lit", node: "books", name: "Books by and about Shakespeare" });
+    });
+
+    it("Example 13：空结果集", () => {
+      const items = Disco.parseDiscoItems(Parser.parse(`
+        <iq type="result" from="shakespeare.lit" to="romeo@montague.net/orchard" id="items1">
+          <query xmlns="http://jabber.org/protocol/disco#items"/>
+        </iq>
+      `));
+      expect(items).toEqual([]);
     });
   });
 
-  describe("local feature management", () => {
-    it("should add and remove features", () => {
-      const disco = new Disco();
+  describe("本地 feature / identity / item 管理", () => {
+    it("添加与移除 feature", () => {
+      const disco = createDisco();
       disco.addFeature("urn:xmpp:ping");
       expect(disco.features.has("urn:xmpp:ping")).toBe(true);
       disco.removeFeature("urn:xmpp:ping");
       expect(disco.features.has("urn:xmpp:ping")).toBe(false);
     });
 
-    it("should add and remove identities", () => {
-      const disco = new Disco();
-      disco.addIdentity("client", "bot", "TestBot");
-      expect(disco.identities).toHaveLength(1);
-      expect(disco.identities[0]).toEqual({
-        category: "client",
-        type: "bot",
-        name: "TestBot",
-        lang: undefined,
-      });
-      disco.removeIdentity("client", "bot", "TestBot");
+    it("添加与移除 identity", () => {
+      const disco = createDisco();
+      disco.addIdentity("client", "pc", "Gabber");
+      expect(disco.identities).toEqual([
+        { category: "client", type: "pc", name: "Gabber", lang: undefined },
+      ]);
+      disco.removeIdentity("client", "pc");
       expect(disco.identities).toHaveLength(0);
     });
 
-    it("should add and remove items", () => {
-      const disco = new Disco();
-      disco.addItem("chat.example.org", undefined, "Chat");
-      expect(disco.items).toHaveLength(1);
-      expect(disco.items[0]).toEqual({
-        jid: "chat.example.org",
-        node: undefined,
-        name: "Chat",
-      });
-      disco.removeItem("chat.example.org", "Chat");
+    it("添加与移除 item", () => {
+      const disco = createDisco();
+      disco.addItem("people.shakespeare.lit", undefined, "Directory of Characters");
+      expect(disco.items).toEqual([
+        { jid: "people.shakespeare.lit", node: undefined, name: "Directory of Characters" },
+      ]);
+      disco.removeItem("people.shakespeare.lit", "Directory of Characters");
       expect(disco.items).toHaveLength(0);
     });
   });
 
   describe("createInfoResult", () => {
-    it("should create an iq result with disco info payload", () => {
-      const disco = new Disco();
-      disco.addIdentity("client", "bot", "TestBot");
-      disco.addFeature("urn:xmpp:ping");
-      const iq = disco.createInfoResult("romeo@example.net", "info-1");
+    it("按 Example 2 的数据生成 info 应答并可解析回原值", () => {
+      const identities = [
+        { category: "conference", type: "text", name: "Play-Specific Chatrooms" },
+        { category: "directory", type: "chatroom", name: "Play-Specific Chatrooms" },
+      ];
+      const features = ["http://jabber.org/protocol/disco#info", "jabber:iq:version"];
+      const iq = Disco.createInfoResult(identities, features, "romeo@montague.net/orchard", "info1");
       expect(iq.getAttribute("type")).toBe("result");
-      expect(iq.getAttribute("to")).toBe("romeo@example.net");
-      expect(iq.getAttribute("id")).toBe("info-1");
-      const query = iq.getElementsByTagNameNS(
-        Disco.NS.DISCO_INFO,
-        "query"
-      )[0];
-      expect(query).toBeDefined();
-      const identities = query!.getElementsByTagName("identity");
-      expect(identities).toHaveLength(1);
-      expect(identities[0].getAttribute("category")).toBe("client");
-      const features = query!.getElementsByTagName("feature");
-      expect(features).toHaveLength(1);
-      expect(features[0].getAttribute("var")).toBe("urn:xmpp:ping");
+      expect(iq.getAttribute("to")).toBe("romeo@montague.net/orchard");
+      expect(iq.getAttribute("id")).toBe("info1");
+      const result = Disco.parseDiscoInfo(iq);
+      expect(result.identities).toEqual(identities.map((i) => ({ ...i, lang: undefined })));
+      expect(result.features).toEqual(new Set(features));
     });
   });
 
   describe("createItemsResult", () => {
-    it("should create an iq result with disco items payload", () => {
-      const disco = new Disco();
-      disco.addItem("chat.example.org", undefined, "Chat Service");
-      const iq = disco.createItemsResult("romeo@example.net", "items-1");
+    it("按 Example 12 的数据生成 items 应答并可解析回原值", () => {
+      const items = [
+        { jid: "people.shakespeare.lit", name: "Directory of Characters" },
+        { jid: "catalog.shakespeare.lit", node: "books", name: "Books by and about Shakespeare" },
+      ];
+      const iq = Disco.createItemsResult(items, "romeo@montague.net/orchard", "items1");
       expect(iq.getAttribute("type")).toBe("result");
-      expect(iq.getAttribute("to")).toBe("romeo@example.net");
-      const query = iq.getElementsByTagNameNS(
-        Disco.NS.DISCO_ITEMS,
-        "query"
-      )[0];
-      expect(query).toBeDefined();
-      const items = query!.getElementsByTagName("item");
-      expect(items).toHaveLength(1);
-      expect(items[0].getAttribute("jid")).toBe("chat.example.org");
-      expect(items[0].getAttribute("name")).toBe("Chat Service");
+      const parsed = Disco.parseDiscoItems(iq);
+      expect(parsed).toEqual([
+        { jid: "people.shakespeare.lit", node: undefined, name: "Directory of Characters" },
+        { jid: "catalog.shakespeare.lit", node: "books", name: "Books by and about Shakespeare" },
+      ]);
+    });
+
+    it("带 queryNode 时只返回该节点下的 item", () => {
+      const items = [
+        { jid: "catalog.shakespeare.lit", node: "music", name: "Music" },
+        { jid: "catalog.shakespeare.lit", node: "books", name: "Books" },
+      ];
+      const iq = Disco.createItemsResult(items, "romeo@montague.net/orchard", "items2", "music");
+      const query = iq.getElementsByTagNameNS(Disco.NS.DISCO_ITEMS, "query")[0];
+      expect(query.getAttribute("node")).toBe("music");
+      expect(Disco.parseDiscoItems(iq)).toEqual([
+        { jid: "catalog.shakespeare.lit", node: "music", name: "Music" },
+      ]);
     });
   });
 });
+
+/** 用于自身 disco 数据用例的插件实例，不建立连接 */
+function createDisco() {
+  return new XEP0030(new Connection("juliet@capulet.com/balcony", "test123"));
+}

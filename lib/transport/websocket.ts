@@ -1,9 +1,10 @@
 import { EventEmitter } from "events";
 import type { Capabilities } from "@/plugins/xep0115/entityCaps";
-import { TimeoutError, XMPPError } from "@/errors";
+import { TimeoutError } from "@/errors";
 import { Status } from "./typing";
 import {
   SaslClient,
+  SaslError,
   buildBindRequest,
   collectStreamFeatures,
   getStreamErrorCondition,
@@ -22,8 +23,8 @@ type BrowserWebSocket = typeof globalThis.WebSocket;
 type WebSocketInstance = InstanceType<BrowserWebSocket>;
 
 interface SocketEventMap {
-  connect: void;
-  disconnect: CloseEvent | undefined;
+  open: void;
+  close: CloseEvent | undefined;
   error: Error;
   /** Auth finished; stream restart may still be in progress */
   authenticated: void;
@@ -31,8 +32,6 @@ interface SocketEventMap {
   "stream:end": void;
   "stream:negotiated": void;
   stanza: XMPPElement;
-  "session:start": void;
-  "session:end": void;
   binded: void;
 }
 
@@ -89,7 +88,7 @@ export class WSConnection extends EventEmitter {
     this.jid = jid;
     this.domain = jid.domain;
     this.password = password;
-    this.sasl = new SaslClient(jid, password);
+    this.sasl = new SaslClient(jid);
   }
 
   async connect(url?: string) {
@@ -100,7 +99,7 @@ export class WSConnection extends EventEmitter {
 
     const WSCtor = await this.resolveWebSocket();
     this.status = Status.CONNECTING;
-    this.ws = new WSCtor(this.url, "xmpp") as WebSocketInstance;
+    this.ws = new WSCtor(this.url, "xmpp");
     log.debug("connecting", this.url);
 
     this.ws.onopen = () => this.onOpen();
@@ -113,11 +112,11 @@ export class WSConnection extends EventEmitter {
     if (typeof globalThis.WebSocket !== "undefined") {
       return globalThis.WebSocket;
     }
-    // Node.js optional dependency (`ws`); types may be absent
-    const mod = (await import(
-      /* @vite-ignore */ "ws" as string
-    )) as { default?: BrowserWebSocket } & BrowserWebSocket;
-    return (mod.default ?? mod) as BrowserWebSocket;
+    // Node.js optional dependency (`ws`)；非字面量说明符可避免 noImplicitAny 下的 TS7016
+    const wsSpecifier: string = "ws";
+    const mod = (await import(wsSpecifier)) as { default?: BrowserWebSocket } &
+      BrowserWebSocket;
+    return mod.default ?? mod;
   }
 
   private onOpen() {
@@ -125,18 +124,17 @@ export class WSConnection extends EventEmitter {
     this.status = Status.CONNECTED;
     this.sendOpen();
     this.status = Status.STREAM_START;
-    this.emit("connect");
+    this.emit("open");
   }
 
   private onClose(ev: CloseEvent) {
     if (this.status !== Status.SESSIONEND) {
       this.status = Status.SESSIONEND;
-      log.info("session:end");
-      this.emit("session:end");
+      this.emit("stream:end");
     }
     this.status = Status.DISCONNECTED;
     log.debug("ws close", ev.code, ev.reason);
-    this.emit("disconnect", ev);
+    this.emit("close", ev);
   }
 
   private onMessage(ev: MessageEvent) {
@@ -176,7 +174,7 @@ export class WSConnection extends EventEmitter {
       if (stanza.localName === "close" && stanza.namespaceURI === FRAMING_NS) {
         log.info("server closed framing stream");
         this.status = Status.SESSIONEND;
-        this.emit("session:end");
+        this.emit("stream:end");
         this.close();
         return;
       }
@@ -185,7 +183,7 @@ export class WSConnection extends EventEmitter {
     } catch (error) {
       const failure = error instanceof Error ? error : new Error(String(error));
       log.error("negotiation failed", failure);
-      this.status = failure.message.startsWith("认证失败")
+      this.status = failure instanceof SaslError
         ? Status.AUTHFAIL
         : Status.ERROR;
       this.emit("error", failure);
@@ -200,13 +198,13 @@ export class WSConnection extends EventEmitter {
 
     if (this.status === Status.STREAM_START && isStreamFeatures(stanza)) {
       this.status = Status.STREAM_ESTABLISHED;
-      this.send(this.sasl.start(stanza));
+      this.send(this.sasl.start(stanza, this.password));
       this.status = Status.AUTHENTICATING;
       return true;
     }
 
     if (this.status === Status.AUTHENTICATING) {
-      const result = await this.sasl.process(stanza);
+      const result = await this.sasl.process(stanza, this.password);
       if (result.type === "send") this.send(result.data);
       if (result.type === "success") {
         this.status = Status.AUTHENTICATED;
@@ -247,6 +245,7 @@ export class WSConnection extends EventEmitter {
       this.emit("error", error);
       this.disconnect();
     }, 30000);
+    this.bindTimer?.unref?.();
   }
 
   private finishBind(response: XMPPElement): void {
@@ -263,6 +262,7 @@ export class WSConnection extends EventEmitter {
     this.writeRaw(
       `<open to="${this.domain}" version="1.0" xmlns="${FRAMING_NS}"/>`,
     );
+    this.emit("stream:start");
   }
 
   private writeRaw(data: string): void {
@@ -278,34 +278,6 @@ export class WSConnection extends EventEmitter {
 
   send(data: string | XMPPElement): void {
     this.writeRaw(typeof data === "string" ? data : data.toXMLString());
-  }
-
-  /**
-   * Send a stanza and wait for matching id response.
-   * @throws TimeoutError on timeout
-   */
-  sendAsync(stanza: XMPPElement, timeout = 30000): Promise<XMPPElement> {
-    const id = stanza.getAttribute("id");
-    if (!id) throw new XMPPError(stanza, "missing id");
-
-    return new Promise((resolve, reject) => {
-      const onResponse = (response: XMPPElement) => {
-        if (response.getAttribute("id") === id) {
-          this.off("stanza", onResponse);
-          clearTimeout(timer);
-          resolve(response);
-        }
-      };
-
-      this.on("stanza", onResponse);
-
-      const timer = setTimeout(() => {
-        this.off("stanza", onResponse);
-        reject(new TimeoutError(`timeout: ${id}`));
-      }, timeout);
-
-      this.send(stanza);
-    });
   }
 
   private close() {
@@ -326,7 +298,7 @@ export class WSConnection extends EventEmitter {
       // already closed
     }
     this.status = Status.SESSIONEND;
-    this.emit("session:end");
+    this.emit("stream:end");
     this.close();
     log.debug("disconnected");
   }

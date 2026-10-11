@@ -117,6 +117,7 @@ export function scramParseChallenge(challenge: string) {
 
       default: // optional extension
         // 非强制扩展，根据 RFC 5802 我们应该忽略它
+        log.warn(`遇到未知的可选扩展，忽略它: ${matches[1]}=${matches[2]}`);
         break;
     }
   }
@@ -131,10 +132,13 @@ export function scramParseChallenge(challenge: string) {
     log.warn("服务器未提供有效的盐值");
     return null;
   }
-  // 考虑迭代次数少于 4096 不安全，如 RFC 5802 所建议
-  if (!iter || iter < 4096) {
-    log.warn(`迭代次数 ${iter} 小于安全最小值 4096`);
+  if (!iter) {
+    log.warn("服务器未提供迭代次数");
     return null;
+  }
+  // RFC 5802 未强制客户端设阈值，小于 4096 仅告警不拒绝
+  if (iter < 4096) {
+    log.warn(`迭代次数 ${iter} 小于常见最小值 4096，继续认证`);
   }
 
   return { nonce, salt, iter };
@@ -257,6 +261,11 @@ export async function scramResponse(
   if (!parsedChallenge) throw new Error("无法解析 SCRAM 挑战");
   
   const { nonce, salt, iter } = parsedChallenge;
+  // RFC 5802 §5.1：客户端必须验证服务器 nonce 以客户端 nonce 开头，防中间人
+  const clientNonce = /,r=([^,]+)$/.exec(clientFirstMessageBare)?.[1];
+  if (clientNonce && !nonce.startsWith(clientNonce)) {
+    throw new Error("服务器 nonce 未以客户端 nonce 开头");
+  }
   const clientFinalMessageBare = `c=biws,r=${nonce}`;
   const authMessage = `${clientFirstMessageBare},${decodedChallenge},${clientFinalMessageBare}`;
   

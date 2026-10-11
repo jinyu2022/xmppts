@@ -12,21 +12,20 @@ export interface AvatarMetadata {
 }
 export class Avatar {
     static readonly NS = {
-        metadata: "urn:xmpp:avatar:metadata" as const,
-        data: "urn:xmpp:avatar:data" as const,
-    };
+        metadata: "urn:xmpp:avatar:metadata",
+        data: "urn:xmpp:avatar:data",
+    } as const;
 
     /** 浏览器环境 */
     private static async browserImageParser(image: File) {
         const base64Data = await new Promise<string>((resolve) => {
-            //@ts-expect-error 浏览器专用api
             const reader = new FileReader();
             reader.onload = () => resolve((reader.result as string).split(",")[1]);
             reader.readAsDataURL(image);
         });
 
         const sha1 = await crypto.subtle
-            .digest("SHA-1", new TextEncoder().encode(base64Data))
+            .digest("SHA-1", await image.arrayBuffer())
             .then((hash) =>
                 Array.from(new Uint8Array(hash))
                     .map((b) => b.toString(16).padStart(2, "0"))
@@ -34,7 +33,6 @@ export class Avatar {
             );
 
         const metadata = await new Promise<AvatarMetadata>((resolve) => {
-            //@ts-expect-error 浏览器专用api
             const img = new Image();
             img.onload = () => {
                 resolve({
@@ -72,7 +70,7 @@ export class Avatar {
         ]);
 
         const { imageSize } = await import("image-size");
-        const dimensions = imageSize(imagePath);
+        const dimensions = imageSize(fileBuffer);
         const mimeType = IMAGE_TYPES[dimensions.type as keyof typeof IMAGE_TYPES];
         if (!mimeType) {
             throw new Error(`不支持的图片类型: ${dimensions.type}`);
@@ -80,7 +78,7 @@ export class Avatar {
 
         const base64Data = fileBuffer.toString("base64");
         const sha1 = await crypto.subtle
-            .digest("SHA-1", new TextEncoder().encode(base64Data))
+            .digest("SHA-1", fileBuffer)
             .then((hash) =>
                 Array.from(new Uint8Array(hash))
                     .map((b) => b.toString(16).padStart(2, "0"))
@@ -126,29 +124,32 @@ export class Avatar {
         /** @see https://xmpp.org/extensions/xep-0084.html#proto-info */
         if (metadata.type !== "image/png") throw new Error("只支持png格式的图片");
 
-        const publishDate = XMPPElement.createElement("publish");
-        publishDate.setAttribute("node", Avatar.NS.data);
-        const item = XMPPElement.createElement("item");
-        item.setAttribute("id", metadata.id);
+        const publishDate = XMPPElement.createElement("publish", {
+            node: Avatar.NS.data,
+        });
+        const item = XMPPElement.createElement("item", { id: metadata.id });
         const data = XMPPElement.createElementNS(Avatar.NS.data, "data");
         data.textContent = base64Data;
         item.appendChild(data);
         publishDate.appendChild(item);
 
-        const publishMetadata = XMPPElement.createElement("publish");
-        publishMetadata.setAttribute("node", Avatar.NS.metadata);
-        const itemMetadata = XMPPElement.createElement("item");
-        itemMetadata.setAttribute("id", metadata.id);
+        const publishMetadata = XMPPElement.createElement("publish", {
+            node: Avatar.NS.metadata,
+        });
+        const itemMetadata = XMPPElement.createElement("item", {
+            id: metadata.id,
+        });
         const metadataEl = XMPPElement.createElementNS(
             Avatar.NS.metadata,
             "metadata"
         );
-        const infoEl = XMPPElement.createElement("info");
-        infoEl.setAttribute("id", metadata.id);
-        infoEl.setAttribute("type", metadata.type);
-        infoEl.setAttribute("bytes", metadata.bytes.toString());
-        infoEl.setAttribute("width", metadata.width!.toString());
-        infoEl.setAttribute("height", metadata.height!.toString());
+        const infoEl = XMPPElement.createElement("info", {
+            id: metadata.id,
+            type: metadata.type,
+            bytes: metadata.bytes.toString(),
+            width: metadata.width!.toString(),
+            height: metadata.height!.toString(),
+        });
         metadataEl.appendChild(infoEl);
         itemMetadata.appendChild(metadataEl);
         publishMetadata.appendChild(itemMetadata);
@@ -163,14 +164,17 @@ export class Avatar {
      * @param to 对方jid
      * @param id sha-1值
      */
-    static creatRetrieveDataIq(to: string | JID, id: string) {
-        return PEP.createRetrieveItemsIq(to, Avatar.NS.data, 1, id);
+    static createRetrieveDataIq(to: string | JID, id: string) {
+        // §3.4：按元数据里的 ItemID 从 data 节点取该头像数据
+        return PEP.createRetrieveItemsIq(to, Avatar.NS.data, undefined, [id]);
     }
 
     static parseMetadataEl(metadata: XMPPElement) {
         if (metadata.namespaceURI !== Avatar.NS.metadata)
             throw new Error("不是一个metadata元素");
         const infoEl = metadata.getElementsByTagName("info")[0];
+        /** 元素存在但没有 info 子元素（空 metadata） */
+        if (!infoEl) return {metadata: null};
         return {
             metadata: {
                 id: infoEl.getAttribute("id")!,
@@ -182,6 +186,7 @@ export class Avatar {
                 height: infoEl.getAttribute("height")
                     ? parseInt(infoEl.getAttribute("height")!)
                     : undefined,
+                url: infoEl.getAttribute("url") || undefined,
             },
         };
     }

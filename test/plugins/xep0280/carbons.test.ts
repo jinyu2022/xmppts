@@ -6,89 +6,75 @@ import { Parser } from "../../../lib/ltx/Parser";
 /**
  * XEP-0280: Message Carbons
  * @see https://xmpp.org/extensions/xep-0280.html
- * @version 1.1.0 (2024-07-15)
+ * @version 1.0.1 (2021-12-26)
  *
- * 根据 XEP-0280 规范，消息碳副本允许服务器将消息副本发送到同一用户的其他资源:
- * - <enable/>: 启用碳副本
- * - <disable/>: 禁用碳副本
- * - <received/>: 在其他资源上接收的消息
- * - <sent/>: 从其他资源发送的消息
+ * 用例取自规范示例：客户端发出的 enable/disable（Example 3/6）测构造，
+ * 服务器下发的 received/sent（Example 10/13）测解析；无示例分支按 §14 schema 补充。
  */
 describe("Carbons", () => {
-  describe("NS", () => {
-    it("should have correct namespace", () => {
-      expect(Carbons.NS).toBe("urn:xmpp:carbons:2");
-    });
-  });
+  /** Example 10：服务器把 Juliet 的来信作为 carbon 转发给 Romeo 的其它资源 */
+  const EXAMPLE_10 = `
+    <message xmlns="jabber:client" from="romeo@montague.example" to="romeo@montague.example/home" type="chat">
+      <received xmlns="urn:xmpp:carbons:2">
+        <forwarded xmlns="urn:xmpp:forward:0">
+          <message xmlns="jabber:client" from="juliet@capulet.example/balcony" to="romeo@montague.example/garden" type="chat">
+            <body>What man art thou that, thus bescreen'd in night, so stumblest on my counsel?</body>
+            <thread>0e3141cd80894871a68e6fe6b1ec56fa</thread>
+          </message>
+        </forwarded>
+      </received>
+    </message>
+  `;
+
+  /** Example 13：Romeo 的其它资源收到自己发出消息的 carbon */
+  const EXAMPLE_13 = `
+    <message xmlns="jabber:client" from="romeo@montague.example" to="romeo@montague.example/garden" type="chat">
+      <sent xmlns="urn:xmpp:carbons:2">
+        <forwarded xmlns="urn:xmpp:forward:0">
+          <message xmlns="jabber:client" to="juliet@capulet.example/balcony" from="romeo@montague.example/home" type="chat">
+            <body>Neither, fair saint, if either thee dislike.</body>
+            <thread>0e3141cd80894871a68e6fe6b1ec56fa</thread>
+          </message>
+        </forwarded>
+      </sent>
+    </message>
+  `;
 
   describe("createEnableIq", () => {
-    it("should create a set IQ with enable element", () => {
+    it("Example 3：生成带 enable 元素的 set IQ", () => {
       const iq = Carbons.createEnableIq();
-      expect(iq.getAttribute("type")).toBe("set");
       const enable = iq.getElementsByTagName("enable")[0];
-      expect(enable).toBeDefined();
-      expect(enable!.namespaceURI).toBe(Carbons.NS);
+      expect(iq.getAttribute("type")).toBe("set");
+      expect(enable.namespaceURI).toBe(Carbons.NS);
+      expect(enable.children).toHaveLength(0);
     });
   });
 
   describe("createDisableIq", () => {
-    it("should create a set IQ with disable element", () => {
+    it("Example 6：生成带 disable 元素的 set IQ", () => {
       const iq = Carbons.createDisableIq();
-      expect(iq.getAttribute("type")).toBe("set");
       const disable = iq.getElementsByTagName("disable")[0];
-      expect(disable).toBeDefined();
-      expect(disable!.namespaceURI).toBe(Carbons.NS);
+      expect(iq.getAttribute("type")).toBe("set");
+      expect(disable.namespaceURI).toBe(Carbons.NS);
+      expect(disable.children).toHaveLength(0);
     });
   });
 
   describe("parseCarbonEl", () => {
-    it("should parse a received carbon element", () => {
-      const xml = Parser.parse(`
-        <received xmlns="urn:xmpp:carbons:2">
-          <forwarded xmlns="urn:xmpp:forward:0">
-            <message xmlns="jabber:client" from="romeo@example.net" to="juliet@example.net" type="chat">
-              <body>Hello!</body>
-            </message>
-          </forwarded>
-        </received>
-      `);
-      const result = Carbons.parseCarbonEl(xml);
+    it("Example 10：解析 received carbon 及其 forwarded", () => {
+      const result = Carbons.parseCarbonEl(Parser.parse(EXAMPLE_10));
       expect(result.carbon.type).toBe("received");
       expect(result.carbon.forwarded).toBeDefined();
+      expect(result.carbon.forwarded.getElementsByTagName("message")).toHaveLength(1);
     });
 
-    it("should parse a sent carbon element", () => {
-      const xml = Parser.parse(`
-        <sent xmlns="urn:xmpp:carbons:2">
-          <forwarded xmlns="urn:xmpp:forward:0">
-            <message xmlns="jabber:client" to="romeo@example.net" type="chat">
-              <body>Hey there!</body>
-            </message>
-          </forwarded>
-        </sent>
-      `);
-      const result = Carbons.parseCarbonEl(xml);
+    it("Example 13：解析 sent carbon 及其 forwarded", () => {
+      const result = Carbons.parseCarbonEl(Parser.parse(EXAMPLE_13));
       expect(result.carbon.type).toBe("sent");
       expect(result.carbon.forwarded).toBeDefined();
     });
 
-    it("should find received element as child when wrapper provided", () => {
-      const xml = Parser.parse(`
-        <message xmlns="jabber:client" from="example.net" to="juliet@example.net">
-          <received xmlns="urn:xmpp:carbons:2">
-            <forwarded xmlns="urn:xmpp:forward:0">
-              <message xmlns="jabber:client" from="romeo@example.net" to="juliet@example.net" type="chat">
-                <body>Test</body>
-              </message>
-            </forwarded>
-          </received>
-        </message>
-      `);
-      const result = Carbons.parseCarbonEl(xml);
-      expect(result.carbon.type).toBe("received");
-    });
-
-    it("should throw when no carbon element found", () => {
+    it("未找到 carbon 元素时抛错", () => {
       const el = XMPPElement.createElement("message");
       expect(() => Carbons.parseCarbonEl(el)).toThrow("未找到 carbon 元素");
     });

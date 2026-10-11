@@ -3,28 +3,35 @@ import type Connection from "@/connection";
 import type { Plugin } from "../types";
 import type { XMPPElement } from "@/ltx";
 // TODO: 准备一个文件，内置部分能力与哈希值的映射
+
+/**
+ * XEP-0115: Entity Capabilities
+ * @see https://xmpp.org/extensions/xep-0115.html
+ * @version 1.6.0 (2022-03-08)
+ */
 export default class XEP0115 extends EntityCaps implements Plugin {
-    static readonly name = "XEP-0115: Entity Capabilities";
-    static readonly version = "1.6.0 (2022-03-08)";
     static readonly dependencies = ["XEP0030"] as const;
     readonly connection: Connection;
-    private selfCaps?: XMPPElement
+    private selfCaps?: XMPPElement;
     constructor(connection: Connection) {
         super();
         this.connection = connection;
     }
 
     init() {
+        this.connection.XEP0030!.addFeature(EntityCaps.NS);
         this.connection.registerStanzaPlugin(EntityCaps.NS, EntityCaps.parseCaps);
 
-        // this.connection.registerInterceptor("send", (stanza) => {
-        //     if (stanza.tagName === "presence" && this.selfCaps) {
-        //         stanza.appendChild(this.selfCaps);
-        //     }
-        //     return stanza; 
-        // });
+        // 按照规范需要在发送presence时附加自己的实体能力
+        this.connection.pipeline.use("send", (ctx, next) => {
+            const stanza = ctx.stanza;
+            if (stanza.tagName === "presence" && this.selfCaps) {
+                stanza.appendChild(this.selfCaps);
+            }
+            return next();
+        });
 
-        this.connection.on("presence", (presence) => {
+        this.connection.on("presence", () => {
             // TODO: 通过ver查找文件中对应的实体能力，然后加入到discos中
         });
 

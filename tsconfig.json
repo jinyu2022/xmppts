@@ -9,23 +9,18 @@
     ],
     "skipLibCheck": true,
     "outDir": "./dist",
-    "baseUrl": ".",
     "paths": {
       "@/*": [
         "./lib/*"
       ]
     },
-    /* Bundler mode */
     "moduleResolution": "bundler",
-    // "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "moduleDetection": "force",
     "allowJs": true,
     "checkJs": true,
     "declaration": true,
-    // "emitDeclarationOnly": true,
-    // "noEmit": true,
-    /* Linting */
+    "noEmit": true,
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
@@ -36,13 +31,11 @@
   },
   "include": [
     "lib",
-    "./index.ts"
+    "./index.ts",
+    "test"
   ],
   "exclude": [
     "node_modules",
-    "dist",
-  ],
-  "tsc-alias": {
-    "resolveFullPaths": true,
-  }
+    "dist"
+  ]
 }

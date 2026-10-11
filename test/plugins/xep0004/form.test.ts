@@ -3,179 +3,244 @@ import { Form } from "../../../lib/plugins/xep0004/form";
 import { Parser } from "../../../lib/ltx/Parser";
 
 /**
- * @description XMPP Data Form (XEP-0004) 单元测试
+ * XEP-0004: Data Forms
+ * @see https://xmpp.org/extensions/xep-0004.html
+ * @version 2.13.2 (2024-08-30)
+ *
+ * 用例取自 §5 Examples：服务器下发的（Example 2 / 8）测解析，客户端发出的
+ * （Example 3）测构造；无示例的分支按 §10 XML Schema 推导补充。
  */
-describe('Form', () => {
+describe("Form", () => {
+  /** Example 2：服务返回的机器人创建表单 */
+  const EXAMPLE_2 = `
+    <x xmlns="jabber:x:data" type="form">
+      <title>Bot Configuration</title>
+      <instructions>Fill out this form to configure your new bot!</instructions>
+      <field type="hidden" var="FORM_TYPE">
+        <value>jabber:bot</value>
+      </field>
+      <field type="fixed"><value>Section 1: Bot Info</value></field>
+      <field type="text-single" label="The name of your bot" var="botname"/>
+      <field type="text-multi" label="Helpful description of your bot" var="description"/>
+      <field type="boolean" label="Public bot?" var="public">
+        <required/>
+      </field>
+      <field type="text-private" label="Password for special access" var="password"/>
+      <field type="fixed"><value>Section 2: Features</value></field>
+      <field type="list-multi" label="What features will the bot support?" var="features">
+        <option label="Contests"><value>contests</value></option>
+        <option label="News"><value>news</value></option>
+        <option label="Polls"><value>polls</value></option>
+        <option label="Reminders"><value>reminders</value></option>
+        <option label="Search"><value>search</value></option>
+        <value>news</value>
+        <value>search</value>
+      </field>
+      <field type="fixed"><value>Section 3: Subscriber List</value></field>
+      <field type="list-single" label="Maximum number of subscribers" var="maxsubs">
+        <value>20</value>
+        <option label="10"><value>10</value></option>
+        <option label="20"><value>20</value></option>
+        <option label="30"><value>30</value></option>
+        <option label="50"><value>50</value></option>
+        <option label="100"><value>100</value></option>
+        <option label="None"><value>none</value></option>
+      </field>
+      <field type="fixed"><value>Section 4: Invitations</value></field>
+      <field type="jid-multi" label="People to invite" var="invitelist">
+        <desc>Tell all your friends about your new bot!</desc>
+      </field>
+    </x>
+  `;
 
-    describe('parseFormEl', () => {
-        it('should parse various field types including options and requirements correctly', () => {
-            /**
-             * 包含多种字段类型的XML字符串
-             */
-            const xmlString = `
-                <x xmlns="jabber:x:data" type="form">
-                    <field var="f1" type="text-single" label="Text Single Field">
-                        <value>TS Value</value>
-                    </field>
-                    <field var="f2" type="boolean" label="Boolean Field">
-                        <value>1</value>
-                    </field>
-                    <field var="f3" type="list-multi" label="List Multi Field">
-                        <required/>
-                        <value>LM1</value>
-                        <value>LM2</value>
-                        <option label="Opt A"><value>A</value></option>
-                        <option label="Opt B"><value>B</value></option>
-                    </field>
-                    <field type="fixed" label="Fixed Text">
-                        <desc>Fixed description</desc>
-                    </field>
-                    <field var="f5" type="hidden">
-                        <value>Secret</value></field>
-                </x>
-            `;
-            // 使用项目中的 Parser 将 XML 字符串解析为 XMPPElement
-            const formElement = Parser.parse(xmlString);
-            const parsedForm = Form.parseFormEl(formElement).form;
+  /** Example 3：用户提交的机器人创建表单 */
+  const EXAMPLE_3 = `
+    <x xmlns="jabber:x:data" type="submit">
+      <field type="hidden" var="FORM_TYPE">
+        <value>jabber:bot</value>
+      </field>
+      <field type="text-single" var="botname">
+        <value>The Jabber Google Bot</value>
+      </field>
+      <field type="text-multi" var="description">
+        <value>This bot enables you to send requests to</value>
+        <value>Google and receive the search results right</value>
+        <value>in your Jabber client. It&apos; really cool!</value>
+        <value>It even supports Google News!</value>
+      </field>
+      <field type="boolean" var="public">
+        <value>0</value>
+      </field>
+      <field type="text-private" var="password">
+        <value>v3r0na</value>
+      </field>
+      <field type="list-multi" var="features">
+        <value>news</value>
+        <value>search</value>
+      </field>
+      <field type="list-single" var="maxsubs">
+        <value>50</value>
+      </field>
+      <field type="jid-multi" var="invitelist">
+        <value>juliet@capulet.com</value>
+        <value>benvolio@montague.net</value>
+      </field>
+    </x>
+  `;
 
-            // 验证字段数量
-            expect(parsedForm.fields.length).toBe(5);
+  /** Example 8：服务返回的搜索结果（reported + item） */
+  const EXAMPLE_8 = `
+    <x xmlns="jabber:x:data" type="result">
+      <title>Joogle Search: verona</title>
+      <reported>
+        <field var="name"/>
+        <field var="url"/>
+      </reported>
+      <item>
+        <field var="name">
+          <value>Comune di Verona - Benvenuti nel sito ufficiale</value>
+        </field>
+        <field var="url">
+          <value>http://www.comune.verona.it/</value>
+        </field>
+      </item>
+      <item>
+        <field var="name">
+          <value>benvenuto!</value>
+        </field>
+        <field var="url">
+          <value>http://www.hellasverona.it/</value>
+        </field>
+      </item>
+    </x>
+  `;
 
-            // 验证 text-single 字段
-            expect(parsedForm.fields[0]).toEqual({
-                type: 'text-single',
-                var: 'f1',
-                label: 'Text Single Field',
-                desc: undefined,
-                required: false,
-                values: ['TS Value'],
-                options: undefined,
-            });
+  describe("parseFormEl", () => {
+    it("Example 2：解析服务端下发的表单", () => {
+      const form = Form.parseFormEl(Parser.parse(EXAMPLE_2)).form;
+      const byVar = (v: string) => form.fields.find((f) => f.var === v)!;
 
-            // 验证 boolean 字段
-            expect(parsedForm.fields[1]).toEqual({
-                type: 'boolean',
-                var: 'f2',
-                label: 'Boolean Field',
-                desc: undefined,
-                required: false,
-                values: ['1'],
-                options: undefined,
-            });
+      expect(form.type).toBe("form");
+      expect(form.title).toBe("Bot Configuration");
+      expect(form.instructions).toBe("Fill out this form to configure your new bot!");
+      expect(form.fields).toHaveLength(12);
 
-            // 验证 list-multi 字段 (包含 required, 多个值和选项)
-            expect(parsedForm.fields[2]).toEqual({
-                type: 'list-multi',
-                var: 'f3',
-                label: 'List Multi Field',
-                desc: undefined,
-                required: true,
-                values: ['LM1', 'LM2'],
-                options: [
-                    { label: 'Opt A', value: 'A' },
-                    { label: 'Opt B', value: 'B' },
-                ],
-            });
+      const formType = byVar("FORM_TYPE");
+      expect(formType.type).toBe("hidden");
+      expect(formType.values).toEqual(["jabber:bot"]);
 
-            // 验证 fixed 字段 (无 var, 有 desc)
-            expect(parsedForm.fields[3]).toEqual({
-                type: 'fixed',
-                var: undefined,
-                label: 'Fixed Text',
-                desc: 'Fixed description',
-                required: false,
-                values: [],
-                options: undefined,
-            });
+      const section = form.fields[1];
+      expect(section.type).toBe("fixed");
+      expect(section.var).toBeUndefined();
+      expect(section.values).toEqual(["Section 1: Bot Info"]);
 
-            // 验证 hidden 字段 (有值)
-            expect(parsedForm.fields[4]).toEqual({
-                type: 'hidden',
-                var: 'f5',
-                label: undefined,
-                desc: undefined,
-                required: false,
-                values: ['Secret'],
-                options: undefined,
-            });
-        });
+      const publicField = byVar("public");
+      expect(publicField.type).toBe("boolean");
+      expect(publicField.label).toBe("Public bot?");
+      expect(publicField.required).toBe(true);
+      expect(publicField.values).toEqual([]);
+
+      const features = byVar("features");
+      expect(features.type).toBe("list-multi");
+      expect(features.values).toEqual(["news", "search"]);
+      expect(features.options).toEqual([
+        { label: "Contests", value: "contests" },
+        { label: "News", value: "news" },
+        { label: "Polls", value: "polls" },
+        { label: "Reminders", value: "reminders" },
+        { label: "Search", value: "search" },
+      ]);
+
+      const maxsubs = byVar("maxsubs");
+      expect(maxsubs.type).toBe("list-single");
+      expect(maxsubs.values).toEqual(["20"]);
+      expect(maxsubs.options).toHaveLength(6);
+
+      const invitelist = byVar("invitelist");
+      expect(invitelist.type).toBe("jid-multi");
+      expect(invitelist.desc).toBe("Tell all your friends about your new bot!");
+      expect(invitelist.values).toEqual([]);
     });
 
-    describe('createFormEl', () => {
-        it('should create XML for various field types including requirements and options', () => {
-            /**
-             * 包含多种字段类型的 DataForm 对象
-             */
-            const dataForm = {
-                type: 'form' as const,
-                fields: [
-                    {
-                        type: 'jid-single' as const,
-                        var: 'jid1',
-                        label: 'JID Single',
-                        values: ['user@example.com'],
-                    },
-                    {
-                        type: 'text-multi' as const,
-                        var: 'tm1',
-                        values: ['Line 1', 'Line 2'],
-                        required: true,
-                    },
-                    {
-                        type: 'list-single' as const,
-                        var: 'ls1',
-                        label: 'List Single',
-                        values: ['B'],
-                        options: [
-                            { label: 'Option A', value: 'A' },
-                            { label: 'Option B', value: 'B' },
-                        ],
-                    },
-                    {
-                        type: 'fixed' as const,
-                        desc: 'A fixed message.',
-                        values: [],
-                    },
-                ]
-            };
-
-            const formElement = Form.createFormEl(dataForm);
-            const fields = formElement.getElementsByTagName('field');
-
-            expect(fields.length).toBe(4);
-
-            // 验证 jid-single 字段
-            const field0 = fields[0];
-            expect(field0.getAttribute('type')).toBe('jid-single');
-            expect(field0.getAttribute('var')).toBe('jid1');
-            expect(field0.getChildren('value')[0]?.textContent).toBe('user@example.com');
-
-            // 验证 text-multi 字段 (包含 required 和多个值)
-            const field1 = fields[1];
-            expect(field1.getAttribute('type')).toBe('text-multi');
-            expect(field1.getAttribute('var')).toBe('tm1');
-            expect(field1.getElementsByTagName('required').length).toBe(1);
-            const values1 = field1.getChildren('value');
-            expect(values1.length).toBe(2);
-            expect(values1[0].textContent).toBe('Line 1');
-            expect(values1[1].textContent).toBe('Line 2');
-
-            // 验证 list-single 字段 (包含 options)
-            const field2 = fields[2];
-            expect(field2.getAttribute('type')).toBe('list-single');
-            expect(field2.getAttribute('var')).toBe('ls1');
-            expect(field2.getChildren('value')[0]?.textContent).toBe('B');
-            const options2 = field2.getChildren('option');
-            expect(options2.length).toBe(2);
-            expect(options2[0].getAttribute('label')).toBe('Option A');
-            expect(options2[0].getChildren('value')[0]?.textContent).toBe('A');
-
-            // 验证 fixed 字段 (包含 desc)
-            const field3 = fields[3];
-            expect(field3.getAttribute('type')).toBe('fixed');
-            expect(field3.getAttribute('var')).toBeNull();
-            expect(field3.getChildren('desc')[0]?.textContent).toBe('A fixed message.');
-            expect(field3.getChildren('value').length).toBe(0);
-        });
+    it("Example 8：解析 result 表单的 reported 与 item", () => {
+      const form = Form.parseFormEl(Parser.parse(EXAMPLE_8)).form;
+      expect(form.type).toBe("result");
+      expect(form.title).toBe("Joogle Search: verona");
+      expect(form.fields).toEqual([]);
+      expect(form.reported).toHaveLength(2);
+      expect(form.reported?.[0].var).toBe("name");
+      expect(form.reported?.[0].type).toBe("text-single");
+      expect(form.reported?.[0].values).toEqual([]);
+      expect(form.items).toHaveLength(2);
+      expect(form.items?.[1].fields).toEqual([
+        { type: "text-single", var: "name", label: undefined, desc: undefined, required: false, values: ["benvenuto!"] },
+        { type: "text-single", var: "url", label: undefined, desc: undefined, required: false, values: ["http://www.hellasverona.it/"] },
+      ]);
     });
+
+    it("§3.6：保留缺失 value 与空 value 的原始表示", () => {
+      const form = Form.parseFormEl(Parser.parse(`
+        <x xmlns="jabber:x:data" type="submit">
+          <field var="absent"/>
+          <field var="empty"><value/></field>
+          <field var="explicit-empty"><value></value></field>
+        </x>
+      `)).form;
+
+      expect(form.fields.map((field) => field.values)).toEqual([[], [""], [""]]);
+      const xml = Form.createFormEl(form);
+      expect(xml.getElementsByTagName("value")).toHaveLength(2);
+      expect(Form.parseFormEl(Parser.parse(xml.toXMLString())).form).toEqual(form);
+    });
+
+    it("text-multi 的首尾与中间空行可往返保留", () => {
+      const form = Form.parseFormEl(Parser.parse(`
+        <x xmlns="jabber:x:data" type="form">
+          <field var="description" type="text-multi">
+            <value/><value>First line</value><value/><value>Last line</value><value/>
+          </field>
+        </x>
+      `)).form;
+
+      expect(form.fields[0].values).toEqual(["", "First line", "", "Last line", ""]);
+      const xml = Form.createFormEl(form).toXMLString();
+      expect(Form.parseFormEl(Parser.parse(xml)).form).toEqual(form);
+    });
+
+    it("非 jabber:x:data 元素抛错", () => {
+      expect(() => Form.parseFormEl(Parser.parse(`<x xmlns="other"/>`))).toThrow("不是一个data form");
+    });
+
+    it("§3.2：type 缺失或不可识别时视为 text-single", () => {
+      const form = Form.parseFormEl(Parser.parse(`
+        <x xmlns="jabber:x:data" type="form">
+          <field var="a"><value>1</value></field>
+          <field var="b" type="unknown"><value>2</value></field>
+        </x>
+      `)).form;
+      expect(form.fields[0].type).toBe("text-single");
+      expect(form.fields[1].type).toBe("text-single");
+    });
+  });
+
+  describe("createFormEl", () => {
+    it("Example 3：构造客户端提交表单并可往返解析", () => {
+      const data = Form.parseFormEl(Parser.parse(EXAMPLE_3)).form;
+      const el = Form.createFormEl(data);
+      expect(el.namespaceURI).toBe("jabber:x:data");
+      expect(el.getAttribute("type")).toBe("submit");
+      expect(Form.parseFormEl(el).form).toEqual(data);
+    });
+
+    it("Example 8：构造 result 表单的 reported 与 item 并可往返解析", () => {
+      const data = Form.parseFormEl(Parser.parse(EXAMPLE_8)).form;
+      const el = Form.createFormEl(data);
+      const names = Array.from(el.children).map((c) => c.localName);
+      // §10 schema 顺序：title, field*, reported, item*
+      expect(names).toEqual(["title", "reported", "item", "item"]);
+      expect(Form.parseFormEl(el).form).toEqual(data);
+    });
+  });
 });
+
+

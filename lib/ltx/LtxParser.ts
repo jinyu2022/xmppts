@@ -22,7 +22,7 @@ const STATE_ATTR_QUOT = 7;
 const STATE_ATTR_VALUE = 8;
 /** CDATA 内容状态 */
 const STATE_CDATA = 9;
-const STATE_IGNORE_CDATA = 10; // 原始代码中未使用，此处省略
+// const STATE_IGNORE_CDATA = 10; // 原始代码中未使用，此处省略
 /**
  * LtxParser 事件类型映射定义
  */
@@ -57,7 +57,7 @@ export class LtxParser extends EventEmitter {
   private remainder: string | null = null;
   private parseRemainder: boolean = false;
   private tagName: string | undefined;
-  private attrs: Record<string, string> = {};
+  private attrs: Record<string, string> = Object.create(null) as Record<string, string>;
   private endTag: boolean | undefined;
   private selfClosing: boolean | undefined;
   private attrQuote: number | undefined;
@@ -120,15 +120,15 @@ export class LtxParser extends EventEmitter {
       return undefined;
     };
 
-    for (; pos < currentData.length; pos++) {
+    scan: for (; pos < currentData.length; pos++) {
       // 利用 indexOf 快速跳过不必要的字符（性能优化）
       switch (this.state) {
         case STATE_TEXT: {
           // 文本状态：跳到下一个 '<'（标签开始）
           const lt = currentData.indexOf("<", pos);
-          if (lt !== -1 && pos !== lt) {
-            pos = lt;
-          }
+          // 块内已无 '<' 则无需继续扫描
+          if (lt === -1) break scan;
+          if (pos !== lt) pos = lt;
           break;
         }
         case STATE_ATTR_VALUE: {
@@ -137,6 +137,9 @@ export class LtxParser extends EventEmitter {
             const quot = currentData.indexOf(this.attrQuoteChar, pos);
             if (quot !== -1) {
               pos = quot;
+            } else {
+              // 块内无结束引号：结束本块扫描，未完成的值由 remainder 保留（引号为单字符，不会跨块切开）
+              break scan;
             }
           }
           break;
@@ -146,6 +149,9 @@ export class LtxParser extends EventEmitter {
           const endcomment = currentData.indexOf("-->", pos);
           if (endcomment !== -1) {
             pos = endcomment + 2; // 指向 '>' 字符
+          } else {
+            // 块内无注释结束符：结束本块扫描，注释内容本就丢弃，继续逐字符推进只会反复重扫块尾
+            break scan;
           }
           break;
         }
@@ -154,6 +160,12 @@ export class LtxParser extends EventEmitter {
           const endCDATA = currentData.indexOf("]]>", pos);
           if (endCDATA !== -1) {
             pos = endCDATA; // 指向 ']' 字符
+          } else if (currentData.endsWith("]")) {
+            // 块尾是 ']'：可能是跨块 ']]>' 的前缀，定位到该字符交由下方逻辑置 parseRemainder 保留
+            pos = currentData.length - 1;
+          } else {
+            // 块内已无可能拼出 ']]>' 的字符：结束本块扫描
+            break scan;
           }
           break;
         }
@@ -173,7 +185,7 @@ export class LtxParser extends EventEmitter {
             this.state = STATE_TAG_NAME;
             // 记录标签名开始位置（紧随 '<' 之后）
             this.recordStart = pos + 1;
-            this.attrs = {}; // 初始化属性对象
+            this.attrs = Object.create(null) as Record<string, string>;
             this.endTag = false;
             this.selfClosing = false;
           }
@@ -181,7 +193,7 @@ export class LtxParser extends EventEmitter {
         case STATE_CDATA:
           // CDATA 内部直接输出原始文本，直到检测到 ']]>' 结束标记
           if (c === 93 /* ] */) {
-            if (currentData.substr(pos + 1, 2) === "]>") {
+            if (currentData.slice(pos + 1, pos + 3) === "]>") {
               const cData = endRecording();
               if (cData) {
                 this.emit("text", cData);
@@ -202,7 +214,7 @@ export class LtxParser extends EventEmitter {
             this.endTag = true;
           } else if (c === 33 /* ! */) {
             // 可能是 CDATA 或注释
-            if (currentData.substr(pos + 1, 7) === "[CDATA[") {
+            if (currentData.slice(pos + 1, pos + 8) === "[CDATA[") {
               this.recordStart = pos + 8; // 跳过 '[CDATA['
               this.state = STATE_CDATA;
               pos += 7;
@@ -256,7 +268,7 @@ export class LtxParser extends EventEmitter {
             this._handleTagOpening(this.endTag, this.tagName, this.attrs);
             // 重置与准备下一次
             this.tagName = undefined;
-            this.attrs = {};
+            this.attrs = Object.create(null) as Record<string, string>;
             this.endTag = undefined;
             this.selfClosing = undefined;
             this.state = STATE_TEXT;

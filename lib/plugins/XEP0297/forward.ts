@@ -1,4 +1,3 @@
-import { XMPPError } from "../../errors";
 import type { XMPPElement } from "@/ltx";
 interface Base {
   message?: XMPPElement | null;
@@ -20,16 +19,18 @@ export class Forward {
       message.tagName === "forwarded"
         ? message
         : message.getElementsByTagName("forwarded")[0];
-    if (!forwarded) throw new XMPPError(message, "未找到forwarded标签");
+    if (!forwarded)
+      throw new Error(`未找到forwarded标签: ${message.toXMLString()}`);
     const delayElement = forwarded.getElementsByTagName("delay")[0];
-    // let delay = null;
     // 按照规范应该只有一个"message" | "presence" | "iq"标签
     const childrens = Array.from(forwarded.children).filter(
       (child) =>
         ["message", "presence", "iq"].includes(child.tagName)
     );
     if (childrens.length !== 1) {
-      throw new XMPPError(message, "forwarded包含多个message | presence | iq");
+      throw new Error(
+        `forwarded包含多个message | presence | iq: ${message.toXMLString()}`
+      );
     }
     const childrenTag = childrens[0].tagName as keyof Base;
     return {

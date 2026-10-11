@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import { Form } from "../xep0004/form";
+import { Form, type Field } from "../xep0004/form";
 import { Iq } from "@/stanza"
 import { XMPPElement } from "@/ltx/Element";
 export class Register {
@@ -7,12 +7,15 @@ export class Register {
 
   static async createSocket(domain: string, protocol: "xmpps" | "ws") {
     if (protocol === "xmpps") {
-      const { resolveXMPPSrv } = await import("@/dns");
+      const { default: XEP0368 } = await import("../xep0368");
       const { connect } = await import("node:tls");
-      const srv = await resolveXMPPSrv(domain, true);
+      const srv = await XEP0368.resolveDirectTLS(domain);
+      const target = srv[0] ?? { host: domain, port: 5222 };
       return connect({
-        host: srv[0].host,
-        port: srv[0].port,
+        host: target.host,
+        port: target.port,
+        // SRV target 常与账号域不同，SNI 需用账号域做证书校验
+        servername: domain,
         timeout: 10_000,
       });
     } else {
@@ -22,18 +25,19 @@ export class Register {
         throw new Error("未发现websocket地址");
       }
       const connection = new WSconnection(websocket);
-      await connection.connect();
+      connection.connect();
       return connection;
     }
   }
 
   static createSubmitFormEL(username: string, password: string, captcha?: string, challenge?: string) {
     
-    const fields = [
+    const fields: Field[] = [
       { type: "hidden" as const, var: "FORM_TYPE", values: [Register.NS] },
-      { var: "username", values: [username] },
-      { var: "password", values: [password] },
+      { type: "text-single" as const, var: "username", values: [username] },
+      { type: "text-private" as const, var: "password", values: [password] },
   ]
+    // ocr/challenge 非 XEP-0077 v2.4 §13.4.1 登记字段，属服务器方言
     if (captcha) fields.push({ var: "ocr", values: [captcha] });
     if (challenge) fields.push({ var: "challenge", values: [challenge] });
     const form = Form.createFormEl({
@@ -44,8 +48,7 @@ export class Register {
     const query = XMPPElement.createElementNS(Register.NS, "query")
     query.appendChild(form)
     iq.appendChild(query);
-    iq.setAttribute("id", "reg2");
-    console.log(iq.namespaceURI)
+    iq.setAttribute("id", crypto.randomUUID());
     return iq;
   }
 }
@@ -55,7 +58,7 @@ export class Register {
  * WebSocket 注册通道暂时禁用：旧 shims 已移除，保留此类供后续重构参考。
  */
 export class WSconnection extends EventEmitter{
-  private readonly url: string;
+  readonly url: string;
   private socket: WebSocket| null = null;
   static readonly eventMap = {
     data: "message",
@@ -68,8 +71,7 @@ export class WSconnection extends EventEmitter{
     this.url = url;
   }
 
-  async connect() {
-    void this.url;
+  connect() {
     throw new Error("WebSocket registration transport is temporarily disabled: shims has been removed.");
   }
 

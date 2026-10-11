@@ -3,13 +3,12 @@ import { Iq } from "@/stanza";
 import { XMPPElement } from "@/ltx";
 import { VCardTemp } from "../xep0054/vcardTemp";
 import type { JID } from "@/JID";
-import { XMPPError } from "@/errors";
 
 /**
  * XEP-0153: vCard-Based Avatars  
  * 应该只有muc还用这个，个人头像应该用XEP-0084
  * @see https://xmpp.org/extensions/xep-0153.html
- * @version: 1.1.1 (2024-06-10)
+ * @version 1.1.1 (2024-06-10)
  */
 export class XEP0153 {
     static readonly NS = "vcard-temp:x:update" as const;
@@ -50,9 +49,12 @@ export class XEP0153 {
 
     static parseVCardAvatar(stanza: XMPPElement): VCardPhoto {
         const photo = stanza.getElementsByTagName("PHOTO")[0];
-        if (!photo) throw new XMPPError(stanza, "没有photo标签");
-        const binval = photo.getElementsByTagName("BINVAL")[0].textContent;
-        const type = photo.getElementsByTagName("TYPE")[0].textContent as VCardPhoto["type"];
+        if (!photo)
+            throw new Error(`没有photo标签: ${stanza.toXMLString()}`);
+        if (photo.namespaceURI !== VCardTemp.NS)
+            throw new Error(`不是vcard-temp命名空间: ${stanza.toXMLString()}`);
+        const binval = photo.getElementsByTagName("BINVAL")[0]?.textContent ?? "";
+        const type = photo.getElementsByTagName("TYPE")[0]?.textContent as VCardPhoto["type"];
         return {binval, type};
     }
 }

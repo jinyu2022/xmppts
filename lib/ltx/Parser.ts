@@ -8,6 +8,10 @@ interface ParserEvents {
   tree: [tree: XMPPElement];
   /** 当解析过程中发生错误时触发 */
   error: [error: Error];
+  /** 流开始标记（收到对端的 <stream:stream ...>）：载荷为流头元素，可读 from/id/version */
+  streamStart: [header: XMPPElement];
+  /** 流结束标记（</stream:stream>）：对端关闭流，负责触发本端关闭 */
+  streamEnd: [];
   /** 当遇到开始标签时触发 */
   startElement: [name: string, attrs: Record<string, string>];
   /** 当遇到结束标签时触发 */
@@ -31,6 +35,8 @@ export interface Parser {
  * emit 事件：
  * - 'tree': 解析完成时触发，传递根 Element。
  * - 'error': 解析错误时触发，传递 Error 对象。
+ * - 'streamStart': 收到对端流头（<stream:stream ...>）时触发，传递流头元素。
+ * - 'streamEnd': 解析到流结束标记（</stream:stream>）时触发，对端关闭流的信号。
  * - 'startElement': 遇到开始标签时触发，传递标签名和属性。
  * - 'endElement': 遇到结束标签时触发，传递标签名和是否自闭合。
  */
@@ -40,6 +46,8 @@ export class Parser extends EventEmitter {
   public error: Error | null = null;
   private parser?: LtxParser;
   private currentElement: XMPPElement | null = null;
+  /** 流头元素：不进树，仅作为顶层元素的 xmlns 解析上下文 */
+  private streamRoot: XMPPElement | null = null;
 
   constructor() {
     super();
@@ -56,15 +64,14 @@ export class Parser extends EventEmitter {
     // startElement: 当遇到开始标签时创建一个新的 Element 实例
     this.parser.on("startElement", (name: string, attrs: Record<string, string>) => {
       this.emit("startElement", name, attrs);
-      // 【XMPP流式处理】忽略顶层流头，使其不成为 Element 树的根节点。
-      // 这样，后续的 Stanza (如 <features>) 将成为新的根节点，并在闭合时触发 'tree' 事件。
-      if (!this.currentElement && name === "stream:stream") {
-        return;
-      }
       // 创建节点
-      const child = XMPPElement.createElement(name);
-      for (const k in attrs) {
-        child.setAttribute(k, attrs[k]);
+      const child = XMPPElement.createElement(name, attrs);
+      // 【XMPP流式处理】流头不进树：后续 Stanza 因此各自成为顶层元素，闭合时触发 'tree'。
+      // 但必须保留它作为顶层元素的 xmlns 解析上下文，否则继承自流头的命名空间解析不出来。
+      if (!this.currentElement && name === "stream:stream") {
+        this.streamRoot = child;
+        this.emit("streamStart", child);
+        return;
       }
       // 如果当前没有根节点，则 child 成为根；否则将 child 连接为当前节点的子节点
       this.currentElement = this.currentElement ? this.currentElement.appendChild(child) : child;
@@ -73,6 +80,12 @@ export class Parser extends EventEmitter {
     // endElement: 当遇到结束标签时，按层级回退或完成整棵树
     this.parser.on("endElement", (name: string, selfClosing: boolean) => {
       if (!this.currentElement) {
+        // 【XMPP流式处理】闭合的流头（</stream:stream>）是流结束标记：
+        // 上报 streamEnd 供连接层完成关闭，不能静默吞掉（流尾负责关闭）
+        if (name === "stream:stream") {
+          this.emit("streamEnd");
+          return;
+        }
         // 无当前元素但收到了结束标签（不一致的文档）
         this.error = new Error(`Unexpected end tag: ${name}`);
         this.emit("error", this.error);
@@ -86,7 +99,8 @@ export class Parser extends EventEmitter {
         } else {
           // 根节点完全闭合，保存为最终树并清空当前节点
           this.tree = this.currentElement;
-          
+          // 挂上流头作为 xmlns 上下文（顶层元素本身不进流头的 childNodes）
+          this.currentElement._setParentNode(this.streamRoot);
           this.emit("tree", this.tree);
           this.currentElement = null;
         }
@@ -120,6 +134,8 @@ export class Parser extends EventEmitter {
     this.tree = null;
     this.error = null;
     this.currentElement = null;
+    // 流重启后会有新的流头，旧的命名空间上下文必须丢弃
+    this.streamRoot = null;
     // 移除旧解析器的所有监听器，并创建一个新的 LtxParser 实例
     this.parser!.removeAllListeners();
     this._setupParser();
@@ -161,6 +177,7 @@ export class Parser extends EventEmitter {
   public static parse(data: string | Buffer): XMPPElement {
     // 允许传入一个自定义的 Parser 构造函数作为 options
     const p = new Parser();
+    // 两者只在下面的回调里赋值，初始化器用于消除「使用前未赋值」检查
     let result: XMPPElement | null = null;
     let error: Error | null = null;
 
@@ -174,8 +191,9 @@ export class Parser extends EventEmitter {
     p.write(data);
     p.end();
 
-    if (error) {
-      throw error;
+    if (error != null) {
+      // TS 把 error 收窄成 null（闭包内赋值不可见），此处断言回声明的 Error 类型
+      throw error as Error;
     } else if (result) {
       return result;
     } else {

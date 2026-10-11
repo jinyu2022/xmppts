@@ -4,6 +4,7 @@ import type { Message } from "@/stanza";
 import type { Plugin } from "../types";
 import { Moderation } from "./moderation";
 import { Iq } from "@/stanza";
+import { XMPPError } from "@/errors";
 
 /**
  * XEP-0425: Moderated Message Retraction
@@ -29,6 +30,8 @@ export class XEP0425 extends Moderation implements Plugin {
         // this.connection.XEP0030!.addFeature(Moderation.NS);
 
         // 注册 stanza 插件
+        // 审核标记 <moderated/> 的载体是 XEP0424 的 <retract/> / <retracted/>，
+        // 由 XEP0424 的转换器原样转交后才会到达这里
         this.connection.registerStanzaPlugin(Moderation.NS, Moderation.parseModeration);
 
         // 注册消息审核事件
@@ -71,7 +74,11 @@ export class XEP0425 extends Moderation implements Plugin {
     async moderateAsync(to: string | JID, id: string, reason?: string) {
         const iq = Iq.createIq("set", to);
         iq.appendChild(Moderation.createModerationEl(id, reason));
-        return this.connection.sendAsync(iq);
+        const res = await this.connection.sendAsync(iq);
+        if (res.getAttribute("type") === "error") {
+            throw new XMPPError(res, "审核消息失败");
+        }
+        return res;
     }
 }
 

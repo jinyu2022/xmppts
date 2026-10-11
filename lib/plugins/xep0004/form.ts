@@ -3,19 +3,23 @@ import { XMPPElement } from "@/ltx";
 // 表单类型定义
 type FormType = "cancel" | "form" | "result" | "submit";
 
-// 字段类型定义
-export type FieldType =
-    | "boolean"
-    | "fixed"
-    | "hidden"
-    | "jid-multi"
-    | "jid-single"
-    | "list-multi"
-    | "list-single"
-    | "text-multi"
-    | "text-private"
-    | "text-single";
 
+/** 合法字段类型白名单（XEP-0004 §3.3） */
+const FIELD_TYPES = [
+    "boolean",
+    "fixed",
+    "hidden",
+    "jid-multi",
+    "jid-single",
+    "list-multi",
+    "list-single",
+    "text-multi",
+    "text-private",
+    "text-single",
+] as const;
+
+// 字段类型定义
+type FieldType = typeof FIELD_TYPES[number];
 export interface Field<T extends FieldType = FieldType> {
     type?: T;
     var?: string;
@@ -85,7 +89,7 @@ export class Form {
             parentEl.appendChild(parent);
             parent = parentEl;
         }
-        return Array.from(Form.getDirectChildren(parent, "field")).map((field) => {
+        return Array.from(parent.querySelectorAll(":scope > field")).map((field) => {
             const options = Array.from(field.getElementsByTagName("option")).map(
                 (option) => ({
                     label: option.getAttribute("label") ?? void 0,
@@ -93,7 +97,12 @@ export class Form {
                 })
             );
 
-            const fieldType = field.getAttribute("type") as FieldType;
+            // XEP-0004 §3.3：type 缺失或不可识别时 MUST 视为 text-single
+            const rawFieldType = field.getAttribute("type");
+            const fieldType =
+                rawFieldType && FIELD_TYPES.includes(rawFieldType as FieldType)
+                    ? (rawFieldType as FieldType)
+                    : "text-single";
 
             const result: Field = {
                 type: fieldType,
@@ -101,9 +110,8 @@ export class Form {
                 label: field.getAttribute("label") ?? void 0,
                 desc: field.getElementsByTagName("desc")[0]?.textContent ?? void 0,
                 required: field.getElementsByTagName("required").length > 0,
-                values: Form.getDirectChildren(field, "value")
-                    .map((el) => el.textContent)
-                    .filter(Boolean),
+                values: Array.from(field.querySelectorAll(":scope > value"))
+                    .map((el) => el.textContent),
             };
 
             if (options.length > 0 && (fieldType === "list-single" || fieldType === "list-multi")) {
@@ -112,15 +120,6 @@ export class Form {
 
             return result;
         });
-    }
-
-    private static getDirectChildren(
-        parent: XMPPElement,
-        tagName: string
-    ): XMPPElement[] {
-        return Array.from(parent.children).filter(
-            node => node.tagName === tagName
-        );
     }
 
     private static createFieldEl(field: Field) {
@@ -154,17 +153,22 @@ export class Form {
     }
 
     static createFormEl(data: DataForm) {
-        const formEl = XMPPElement.createElementNS(Form.NS, "x");
-        formEl.setAttribute("type", data.type);
+        const formEl = XMPPElement.createElementNS(Form.NS, "x", {
+            type: data.type,
+        });
+        // XEP-0004 §10 schema 顺序：instructions, title, field*, reported?, item*
+        if (data.instructions) {
+            const instructions = XMPPElement.createElement("instructions");
+            instructions.textContent = data.instructions;
+            formEl.appendChild(instructions);
+        }
         if (data.title) {
             const title = XMPPElement.createElement("title");
             title.textContent = data.title;
             formEl.appendChild(title);
         }
-        if (data.instructions) {
-            const instructions = XMPPElement.createElement("instructions");
-            instructions.textContent = data.instructions;
-            formEl.appendChild(instructions);
+        for (const field of data.fields) {
+            formEl.appendChild(Form.createFieldEl(field));
         }
         if (data.reported) {
             const reported = XMPPElement.createElement("reported");
@@ -179,9 +183,6 @@ export class Form {
                 itemEl.appendChild(Form.createFieldEl(field));
             }
             formEl.appendChild(itemEl);
-        }
-        for (const field of data.fields) {
-            formEl.appendChild(Form.createFieldEl(field));
         }
         return formEl;
     }

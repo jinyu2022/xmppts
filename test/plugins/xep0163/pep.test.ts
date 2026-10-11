@@ -5,69 +5,76 @@ import { XMPPElement } from "../../../lib/ltx/Element";
 /**
  * XEP-0163: Personal Eventing Protocol
  * @see https://xmpp.org/extensions/xep-0163.html
- * @version 1.3.0 (2023-06-20)
+ * @version 1.2.2 (2022-02-16)
  *
- * 根据 XEP-0163 规范，PEP 是 Pubsub (XEP-0060) 的一个简化子集，
- * 自动在用户的裸 JID 上创建节点。提供三个核心操作:
- * - createRetrieveItemsIq: 检索项目
- * - createPublishIq: 发布项目
- * - createRetractIq: 撤回项目
+ * 用例取自 §1.2/§3：Example 1（发布 tune 事件）测构造，Example 3/4 的节点作为补充。
  */
 describe("PEP", () => {
+  const TUNE_NS = "http://jabber.org/protocol/tune";
+
   describe("createRetrieveItemsIq", () => {
-    it("should create a get IQ to retrieve PEP items", () => {
-      const iq = PEP.createRetrieveItemsIq(
-        "romeo@example.net",
-        "urn:xmpp:avatar:metadata"
-      );
+    it("生成检索 PEP 项目的 get IQ（无 max）", () => {
+      const iq = PEP.createRetrieveItemsIq("juliet@capulet.lit", TUNE_NS);
       expect(iq.getAttribute("type")).toBe("get");
-      expect(iq.getAttribute("to")).toBe("romeo@example.net");
+      expect(iq.getAttribute("to")).toBe("juliet@capulet.lit");
+      const items = iq.getElementsByTagName("items")[0];
+      expect(items.getAttribute("node")).toBe(TUNE_NS);
+      expect(items.getElementsByTagName("item")).toHaveLength(0);
     });
 
-    it("should include max attribute when specified", () => {
-      const iq = PEP.createRetrieveItemsIq(
-        "romeo@example.net",
-        "urn:xmpp:avatar:metadata",
-        1
-      );
-      expect(iq.getAttribute("type")).toBe("get");
+    it("指定 max 时输出 max_items", () => {
+      const iq = PEP.createRetrieveItemsIq("juliet@capulet.lit", TUNE_NS, 1);
+      expect(iq.getElementsByTagName("items")[0].getAttribute("max_items")).toBe("1");
+    });
+
+    it("按 ItemID 检索时每个 ItemID 各写一个空 item（§6.5.6 支持多项）", () => {
+      const iq = PEP.createRetrieveItemsIq("juliet@capulet.lit", TUNE_NS, 1, [
+        "tunefoo1",
+        "tunefoo2",
+      ]);
+      const itemEls = iq.getElementsByTagName("items")[0].getElementsByTagName("item");
+      expect(itemEls).toHaveLength(2);
+      expect(itemEls[0].getAttribute("id")).toBe("tunefoo1");
+      expect(itemEls[1].getAttribute("id")).toBe("tunefoo2");
     });
   });
 
   describe("createPublishIq", () => {
-    it("should create a set IQ to publish PEP items", () => {
+    it("Example 1：生成发布 tune 事件的 set IQ", () => {
+      const publish = XMPPElement.createElement("publish", { node: TUNE_NS });
       const item = XMPPElement.createElement("item");
-      item.setAttribute("id", "test-item");
-      const publish = XMPPElement.createElement("publish");
-      publish.setAttribute("node", "urn:xmpp:test");
+      const tune = XMPPElement.createElementNS(TUNE_NS, "tune");
+      const artist = XMPPElement.createElement("artist");
+      artist.textContent = "Gerald Finzi";
+      tune.appendChild(artist);
+      item.appendChild(tune);
       publish.appendChild(item);
+
       const iq = PEP.createPublishIq(publish);
       expect(iq.getAttribute("type")).toBe("set");
-      const pubEl = iq.getElementsByTagName("publish")[0];
-      expect(pubEl).toBeDefined();
+      expect(iq.getElementsByTagName("publish")).toHaveLength(1);
+      expect(iq.getElementsByTagName("artist")[0].textContent).toBe("Gerald Finzi");
     });
 
-    it("should include publish options when provided", () => {
-      const item = XMPPElement.createElement("item");
-      const publish = XMPPElement.createElement("publish");
-      publish.setAttribute("node", "urn:xmpp:test");
-      publish.appendChild(item);
+    it("提供 options 时包含 publish-options（§5 推荐支持）", () => {
+      const publish = XMPPElement.createElement("publish", { node: TUNE_NS });
+      publish.appendChild(XMPPElement.createElement("item"));
       const options = XMPPElement.createElement("publish-options");
       const iq = PEP.createPublishIq(publish, options);
-      const opts = iq.getElementsByTagName("publish-options")[0];
-      expect(opts).toBeDefined();
+      expect(iq.getElementsByTagName("publish-options")).toHaveLength(1);
     });
   });
 
   describe("createRetractIq", () => {
-    it("should create a set IQ to retract PEP items", () => {
-      const iq = PEP.createRetractIq("urn:xmpp:bookmarks:1", "room@conference.example.net");
-      expect(iq.getAttribute("type")).toBe("set");
-    });
-
-    it("should include notify attribute when specified", () => {
-      const iq = PEP.createRetractIq("urn:xmpp:bookmarks:1", "room@conference.example.net", true);
-      expect(iq.getAttribute("type")).toBe("set");
-    });
+    it.each([{ notify: undefined }, { notify: true }])(
+      "生成撤回 PEP 项目的 set IQ（notify=$notify）",
+      ({ notify }) => {
+        const iq = PEP.createRetractIq(TUNE_NS, "tunefoo1", notify);
+        expect(iq.getAttribute("type")).toBe("set");
+        const retract = iq.getElementsByTagName("retract")[0];
+        expect(retract.getAttribute("node")).toBe(TUNE_NS);
+        expect(retract.getElementsByTagName("item")[0].getAttribute("id")).toBe("tunefoo1");
+      },
+    );
   });
 });

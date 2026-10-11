@@ -2,90 +2,78 @@ import { describe, it, expect } from "vitest";
 import { Correction } from "../../../lib/plugins/xep0308/correction";
 import { XMPPElement } from "../../../lib/ltx/Element";
 import { Parser } from "../../../lib/ltx/Parser";
+import type { Message } from "../../../lib/stanza";
 
 /**
  * XEP-0308: Last Message Correction
  * @see https://xmpp.org/extensions/xep-0308.html
  * @version 1.2.1 (2022-05-17)
  *
- * 根据 XEP-0308 规范，消息更正通过 <replace/> 元素实现:
- * - <replace/> 元素包含在消息中，指向被更正的原消息 ID
- * - 命名空间: urn:xmpp:message-correct:0
- * - corrected 消息仍包含原始 body，但语义上替换了原消息
+ * 用例取自 §3 Use Case 的规范示例：客户端发出的更正消息（Example 4）测构造，
+ * 收到的更正消息（Example 4）测解析；无示例分支按 §8 XML Schema 补充。
  */
 describe("Correction", () => {
-  describe("NS", () => {
-    it("should have correct namespace", () => {
-      expect(Correction.NS).toBe("urn:xmpp:message-correct:0");
-    });
-  });
+  const NS = "urn:xmpp:message-correct:0";
 
   describe("createReplaceEl", () => {
-    it("should create a replace element with id attribute", () => {
-      const el = Correction.createReplaceEl("msg-123");
+    it("Example 4：生成带 id 属性的 replace 元素", () => {
+      const el = Correction.createReplaceEl("bad1");
       expect(el.tagName).toBe("replace");
       expect(el.namespaceURI).toBe(Correction.NS);
-      expect(el.getAttribute("id")).toBe("msg-123");
+      expect(el.getAttribute("id")).toBe("bad1");
     });
   });
 
   describe("parseReplaceEl", () => {
-    it("should parse a valid replace element", () => {
-      const el = XMPPElement.createElementNS(Correction.NS, "replace");
-      el.setAttribute("id", "msg-456");
-      const result = Correction.parseReplaceEl(el);
-      expect(result.replace.id).toBe("msg-456");
+    it("Example 4：解析合法的 replace 元素", () => {
+      const el = Parser.parse(`<replace xmlns="${NS}" id="bad1"/>`);
+      expect(Correction.parseReplaceEl(el)).toEqual({ replace: { id: "bad1" } });
     });
 
-    it("should throw when namespace is invalid", () => {
+    it("命名空间非法时抛错", () => {
       const el = XMPPElement.createElementNS("urn:invalid", "replace");
-      el.setAttribute("id", "msg-789");
-      expect(() => Correction.parseReplaceEl(el)).toThrow(
-        "非法命名空间的消息更正元素"
-      );
+      el.setAttribute("id", "bad1");
+      expect(() => Correction.parseReplaceEl(el)).toThrow("非法命名空间的消息更正元素");
     });
 
-    it("should throw when id attribute is missing", () => {
+    it("缺少 id 属性时抛错（§8 要求 id 必填）", () => {
       const el = XMPPElement.createElementNS(Correction.NS, "replace");
-      expect(() => Correction.parseReplaceEl(el)).toThrow(
-        "消息更正元素缺少 id"
-      );
+      expect(() => Correction.parseReplaceEl(el)).toThrow("消息更正元素缺少 id");
     });
   });
 
   describe("createCorrectionMessageEl", () => {
-    it("should create a chat message with body and replace child", () => {
+    it("Example 4：生成带 body 与 replace 的 chat 消息", () => {
       const msg = Correction.createCorrectionMessageEl(
-        "juliet@example.net",
-        "orig-1",
-        "Corrected message"
+        "juliet@capulet.net/balcony",
+        "bad1",
+        "But soft, what light through yonder window breaks?"
       );
       expect(msg.tagName).toBe("message");
-      expect(msg.getAttribute("to")).toBe("juliet@example.net");
+      expect(msg.getAttribute("to")).toBe("juliet@capulet.net/balcony");
       expect(msg.getAttribute("type")).toBe("chat");
       expect(msg.getElementsByTagName("body")[0]?.textContent).toBe(
-        "Corrected message"
+        "But soft, what light through yonder window breaks?"
       );
       const replaceEl = msg.getElementsByTagName("replace")[0];
-      expect(replaceEl).toBeDefined();
-      expect(replaceEl!.getAttribute("id")).toBe("orig-1");
+      expect(replaceEl.namespaceURI).toBe(Correction.NS);
+      expect(replaceEl.getAttribute("id")).toBe("bad1");
     });
 
-    it("should create a groupchat message with replace element", () => {
+    it("生成带 replace 元素的 groupchat 消息", () => {
       const msg = Correction.createCorrectionMessageEl(
-        "room@conference.example.net",
+        "room@muc.example.com",
         "orig-2",
         "Corrected group message",
         "groupchat"
       );
       expect(msg.getAttribute("type")).toBe("groupchat");
-      const replaceEl = msg.getElementsByTagName("replace")[0];
-      expect(replaceEl!.getAttribute("id")).toBe("orig-2");
+      expect(msg.getElementsByTagName("replace")[0].getAttribute("id")).toBe("orig-2");
     });
 
-    it("should create message without body when newBody is empty", () => {
+    it("newBody 为空时不生成 body", () => {
       const msg = Correction.createCorrectionMessageEl(
-        "romeo@example.net",
+        "romeo@montague.net",
         "orig-3",
         "",
         "chat"
@@ -95,50 +83,27 @@ describe("Correction", () => {
   });
 
   describe("isCorrection", () => {
-    it("should return true for message with replace property", () => {
-      const msg = new Proxy(
-        { replace: { id: "test-123" } } as any,
-        { get: (target, prop) => (prop in target ? (target as any)[prop] : undefined) }
-      );
+    it("含 replace 属性时返回 true", () => {
+      const msg = { replace: { id: "bad1" } } as unknown as Message;
       expect(Correction.isCorrection(msg)).toBe(true);
     });
 
-    it("should return false for message without replace property", () => {
-      const msg = {} as any;
+    it("不含 replace 属性时返回 false", () => {
+      const msg = {} as unknown as Message;
       expect(Correction.isCorrection(msg)).toBe(false);
     });
   });
 
-  describe("XEP-0308 example from spec", () => {
-    it("should produce correct XML structure matching XEP-0308 Example 2", () => {
-      // 对应 XEP-0308 示例 2: 发送消息更正
-      const msg = Correction.createCorrectionMessageEl(
-        "juliet@example.net",
-        "bad1-7497-214",
-        "She says: 'I am the tallest!'"
-      );
-      expect(msg.getAttribute("to")).toBe("juliet@example.net");
-      expect(msg.getAttribute("type")).toBe("chat");
-      expect(msg.getElementsByTagName("body")[0]?.textContent).toBe(
-        "She says: 'I am the tallest!'"
-      );
-      const replaceEl = msg.getElementsByTagName("replace")[0];
-      expect(replaceEl).toBeDefined();
-      expect(replaceEl!.namespaceURI).toBe(Correction.NS);
-      expect(replaceEl!.getAttribute("id")).toBe("bad1-7497-214");
-    });
-
-    it("should parse replace element from XEP-0308 Example 3", () => {
-      // 对应 XEP-0308 示例 3: 接收消息更正
+  describe("Example 4：收到的更正消息可解析出 replace", () => {
+    it("从消息中取出 replace 并解析", () => {
       const xml = Parser.parse(`
-        <message xmlns='jabber:client' to='romeo@example.net' from='juliet@example.net' type='chat' id='good1-8235-217'>
-          <body>She says: 'I am the tallest!'</body>
-          <replace xmlns='urn:xmpp:message-correct:0' id='bad1-7497-214'/>
+        <message xmlns="jabber:client" to="juliet@capulet.net/balcony" id="good1">
+          <body>But soft, what light through yonder window breaks?</body>
+          <replace id="bad1" xmlns="${NS}"/>
         </message>
       `);
-      const replaceEl = xml.getElementsByTagName("replace")[0];
-      const result = Correction.parseReplaceEl(replaceEl);
-      expect(result.replace.id).toBe("bad1-7497-214");
+      const result = Correction.parseReplaceEl(xml.getElementsByTagName("replace")[0]);
+      expect(result.replace.id).toBe("bad1");
     });
   });
 });

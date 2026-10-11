@@ -1,16 +1,16 @@
 import type { JID } from "@/JID";
-import { XMPPError } from "@/errors";
 import { XMPPElement } from "@/ltx/Element";
-import { Message } from "@/stanza";
+import { Message, type MsgType } from "@/stanza";
 import { XMPPDateTime } from "../xep0082/dateTime";
 
 /**
- * XMPP 消息类型定义
+ * XMPP 消息类型定义（复用 `@/stanza` 的 MsgType，避免重复维护）
  * - "normal": 普通消息
  * - "chat": 一对一聊天消息
  * - "groupchat": 群组聊天消息
+ * - "error": 错误消息
  */
-export type MessageType = "normal" | "chat" | "groupchat";
+export type MessageType = MsgType;
 
 /**
  * XEP-0424: 消息撤回
@@ -31,37 +31,66 @@ export class Retraction {
      * - "retracted": 撤回标记元素
      * 
      * @param retractEl - 要解析的撤回 XML 元素
-     * @throws {XMPPError} 当元素命名空间不合法或缺少必要属性时抛出错误
+     * @throws {Error} 当元素命名空间不合法或缺少必要属性时抛出错误
      */
     static parseRetractionEl(retractEl: XMPPElement) {
         if (retractEl.namespaceURI !== Retraction.NS) {
-            throw new XMPPError(retractEl, "非法命名空间的消息撤回元素");
+            throw new Error(`非法命名空间的消息撤回元素: ${retractEl.toXMLString()}`);
         }
 
         const id = retractEl.getAttribute("id");
         if (!id) {
-            throw new XMPPError(retractEl, "消息撤回元素缺少 id");
+            throw new Error(`消息撤回元素缺少 id: ${retractEl.toXMLString()}`);
+        }
+
+        /** `<reason/>` 文本；该子元素不在 XEP0424 的 schema/正文里，是 XEP0425 §3.1/§4 通知的实际做法 */
+        let reason: string | undefined;
+        /** 其它命名空间的直接子元素（如 XEP0425 的 `<moderated/>`）：本插件不认识，原样保留并转交 */
+        const extensions: Record<string, XMPPElement> = {};
+        for (const child of retractEl.children) {
+            if (child.localName === "reason") {
+                reason ??= child.textContent;
+            } else if (child.namespaceURI && child.namespaceURI !== Retraction.NS) {
+                extensions[child.localName] = child;
+            }
         }
 
         // 处理 retract 元素：撤回请求
         if (retractEl.tagName === "retract") {
             return {
-                retract: { id },
+                retract: { id, reason },
+                ...extensions,
             };
         }
 
         // 处理 retracted 元素：撤回标记
         if (retractEl.tagName === "retracted") {
             const stamp = retractEl.getAttribute("stamp");
+            let stampDate: Date | undefined;
+            if (stamp) {
+                // parseDateTime 对非法格式抛错，转成带元素上下文的 Error
+                try {
+                    stampDate = XMPPDateTime.parseDateTime(stamp);
+                } catch (error) {
+                    throw new Error(
+                        `retracted 的 stamp 不是合法的 dateTime：${(error as Error).message}: ${retractEl.toXMLString()}`,
+                        { cause: error }
+                    );
+                }
+            }
             return {
                 retracted: {
                     id,
-                    stamp: stamp ? XMPPDateTime.parseDateTime(stamp) ?? void 0 : void 0,
+                    stamp: stampDate,
+                    // §9 schema 中的可选属性，正文未说明语义，按原值保留
+                    by: retractEl.getAttribute("by") ?? void 0,
+                    reason,
                 },
+                ...extensions,
             };
         }
 
-        throw new XMPPError(retractEl, "未知的消息撤回元素标签");
+        throw new Error(`未知的消息撤回元素标签: ${retractEl.toXMLString()}`);
     }
 
     /**
@@ -73,8 +102,9 @@ export class Retraction {
      * @returns 返回创建的撤回请求 XML 元素
      */
     static createRetractionEl(id: string) {
-        const retract = XMPPElement.createElementNS(Retraction.NS, "retract");
-        retract.setAttribute("id", id);
+        const retract = XMPPElement.createElementNS(Retraction.NS, "retract", {
+            id,
+        });
         return retract;
     }
 
@@ -98,6 +128,8 @@ export class Retraction {
     ) {
         const message = Message.createMessage(to, fallbackText, type);
         message.appendChild(Retraction.createRetractionEl(id));
+        // TODO: 追加 XEP-0428 <fallback/>（有回退文本时）与 XEP-0334 <store/> 提示，
+        // 待对应的 XEP-0428 / XEP-0334 插件建立后由它们提供。
         return message;
     }
 }

@@ -1,6 +1,6 @@
 import Connection from "./connection";
 import { JID } from "./JID";
-import { plugins } from "./plugins";
+import { pluginLoaders } from "./plugins";
 import { Options } from "./types";
 import { Message, MsgType } from "@/stanza";
 import { TimeoutError } from "./errors";
@@ -14,8 +14,8 @@ export class Client extends Connection {
    * 注册默认插件
    */
   registerDefaultPlugins() {
-    for (const plugin of Object.keys(plugins)) {
-      super.registerPlugin(plugin as keyof typeof plugins);
+    for (const plugin of Object.keys(pluginLoaders)) {
+      super.registerPlugin(plugin as keyof typeof pluginLoaders);
     }
   }
 
@@ -41,7 +41,7 @@ export class Client extends Connection {
   async postMsg(to: JID | string, body: string, type: MsgType = "normal") {
     const msg = Message.createMessage(to, body, type);
     try {
-      return await this.sendAsync(msg, 100);
+      return await this.sendAsync(msg, 1000);
     } catch (e) {
       if (e instanceof TimeoutError) return;
       throw e;

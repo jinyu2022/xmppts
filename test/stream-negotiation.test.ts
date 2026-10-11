@@ -32,20 +32,20 @@ function saslFeatures(...mechanisms: string[]): XMPPElement {
   );
 }
 
-describe("stream negotiation helpers", () => {
-  it("prefers SCRAM-SHA-1", () => {
+describe("流协商辅助函数", () => {
+  it("优先选择 SCRAM-SHA-1", () => {
     expect(selectSaslMechanism(saslFeatures("PLAIN", "SCRAM-SHA-1"))).toBe(
       "SCRAM-SHA-1",
     );
   });
 
-  it("rejects unsupported SASL mechanisms", () => {
+  it("拒绝不受支持的 SASL 机制", () => {
     expect(() => selectSaslMechanism(saslFeatures("EXTERNAL"))).toThrow(
       "不受支持的认证机制",
     );
   });
 
-  it("encodes non-ASCII text as UTF-8 Base64", () => {
+  it("把非 ASCII 文本编码为 UTF-8 Base64", () => {
     const text = "päss";
     const binary = atob(utf8ToBase64(text));
     const bytes = Uint8Array.from(binary, (character) =>
@@ -54,7 +54,7 @@ describe("stream negotiation helpers", () => {
     expect(new TextDecoder().decode(bytes)).toBe(text);
   });
 
-  it("parses SASL attributes", () => {
+  it("解析 SASL 属性", () => {
     expect(parseSaslAttributes("e=extra,v=abc123,x=1")).toEqual({
       e: "extra",
       v: "abc123",
@@ -62,7 +62,7 @@ describe("stream negotiation helpers", () => {
     });
   });
 
-  it("detects stream features and errors", () => {
+  it("识别 stream features 与 stream error", () => {
     const features = parse(
       `<stream:features xmlns:stream="${STREAM_NS}"><bind xmlns="${BIND_NS}"/></stream:features>`,
     );
@@ -77,7 +77,7 @@ describe("stream negotiation helpers", () => {
     expect(getStreamErrorCondition(error)).toBe("policy-violation");
   });
 
-  it("collects advertised feature namespaces", () => {
+  it("收集宣告的 feature 命名空间", () => {
     const features = parse(
       `<stream:features xmlns:stream="${STREAM_NS}">
         <bind xmlns="${BIND_NS}"/>
@@ -90,7 +90,7 @@ describe("stream negotiation helpers", () => {
     );
   });
 
-  it("reads a SASL failure condition", () => {
+  it("读取 SASL failure 条件", () => {
     const failure = parse(
       `<failure xmlns="${SASL_NS}"><not-authorized/><text>nope</text></failure>`,
     );
@@ -99,9 +99,9 @@ describe("stream negotiation helpers", () => {
 });
 
 describe("SaslClient", () => {
-  it("builds a UTF-8 PLAIN authentication request", () => {
-    const client = new SaslClient(new JID("用户@example.com/client"), "密码");
-    const auth = parse(client.start(saslFeatures("PLAIN")));
+  it("构造 UTF-8 的 PLAIN 认证请求", () => {
+    const client = new SaslClient(new JID("用户@capulet.lit/client"));
+    const auth = parse(client.start(saslFeatures("PLAIN"), "密码"));
     const decoded = new TextDecoder().decode(
       Uint8Array.from(atob(auth.textContent), (character) =>
         character.charCodeAt(0),
@@ -114,31 +114,32 @@ describe("SaslClient", () => {
     expect(decoded).toBe("\0用户\0密码");
   });
 
-  it("accepts PLAIN success", async () => {
-    const client = new SaslClient(new JID("user@example.com/client"), "pass");
-    client.start(saslFeatures("PLAIN"));
+  it("接受 PLAIN 成功", async () => {
+    const client = new SaslClient(new JID("juliet@capulet.lit/balcony"));
+    client.start(saslFeatures("PLAIN"), "pass");
 
     await expect(
-      client.process(parse(`<success xmlns="${SASL_NS}"/>`)),
+      client.process(parse(`<success xmlns="${SASL_NS}"/>`), "pass"),
     ).resolves.toEqual({ type: "success" });
   });
 
-  it("surfaces a PLAIN failure condition", async () => {
-    const client = new SaslClient(new JID("user@example.com/client"), "pass");
-    client.start(saslFeatures("PLAIN"));
+  it("暴露 PLAIN failure 条件", async () => {
+    const client = new SaslClient(new JID("juliet@capulet.lit/balcony"));
+    client.start(saslFeatures("PLAIN"), "pass");
 
     await expect(
       client.process(
         parse(
           `<failure xmlns="${SASL_NS}"><not-authorized/></failure>`,
         ),
+        "pass",
       ),
     ).rejects.toThrow("认证失败: not-authorized");
   });
 });
 
-describe("resource binding helpers", () => {
-  it("builds an escaped bind request with a unique id", () => {
+describe("资源绑定辅助函数", () => {
+  it("构造带唯一 id 且已转义的 bind 请求", () => {
     const request = buildBindRequest("bad</resource><x/>");
     const iq = parse(request.data);
 
@@ -150,21 +151,21 @@ describe("resource binding helpers", () => {
     expect(iq.getElementsByTagName("bind")[0]?.namespaceURI).toBe(BIND_NS);
   });
 
-  it("accepts a server-rewritten resource", () => {
+  it("接受服务端改写的资源", () => {
     const response = parse(
       `<iq type="result" id="bind-x">
         <bind xmlns="${BIND_NS}">
-          <jid>user@example.com/server-rewritten</jid>
+          <jid>juliet@capulet.lit/server-rewritten</jid>
         </bind>
       </iq>`,
     );
 
-    expect(parseBindResult(response, "user@example.com").toString()).toBe(
-      "user@example.com/server-rewritten",
+    expect(parseBindResult(response, "juliet@capulet.lit").toString()).toBe(
+      "juliet@capulet.lit/server-rewritten",
     );
   });
 
-  it("surfaces a bind IQ error", () => {
+  it("暴露 bind IQ 错误", () => {
     const response = parse(
       `<iq type="error" id="bind-x">
         <error type="cancel">
@@ -173,19 +174,19 @@ describe("resource binding helpers", () => {
       </iq>`,
     );
 
-    expect(() => parseBindResult(response, "user@example.com")).toThrow(
+    expect(() => parseBindResult(response, "juliet@capulet.lit")).toThrow(
       "资源绑定失败: conflict",
     );
   });
 
-  it("rejects a mismatched bare JID", () => {
+  it("拒绝不一致的 bare JID", () => {
     const response = parse(
       `<iq type="result" id="bind-x">
-        <bind xmlns="${BIND_NS}"><jid>other@example.com/r</jid></bind>
+        <bind xmlns="${BIND_NS}"><jid>romeo@montague.lit/r</jid></bind>
       </iq>`,
     );
 
-    expect(() => parseBindResult(response, "user@example.com")).toThrow(
+    expect(() => parseBindResult(response, "juliet@capulet.lit")).toThrow(
       "不一致",
     );
   });

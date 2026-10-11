@@ -1,38 +1,68 @@
 # XEP-0199 — XMPP Ping / Keep-Alive
 
-## 自动行为
+XMPP 层心跳：响应他人的 ping，并向服务器发送周期性 ping 以维持连接。
 
-加载此插件后，Connection 会自动：
+- **依赖**：XEP-0030（服务发现）
+- **实例访问**：`connection.XEP0199`
 
-1. **注册 disco 特性** — 向 XEP-0030 注册 `urn:xmpp:ping`
-2. **自动响应 ping** — 收到 `type='get'` 含 `<ping>` 的 IQ 时，自动回复 `type='result'`
-3. **Keep-Alive 心跳** — 服务器支持时，自动启动周期性 ping（默认 5 分钟间隔）
-4. **检查服务器支持** — 检查服务器 disco 特性后才启动 Keep-Alive
+## 可配置项
 
-## Stanza 字段扩展
+通过 `registerPlugin()` 的第二个参数传入（`XEP0199Options`），省略的字段取默认值：
 
-不直接扩展 stanza 接口。
+| 选项 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `keepalive` | `boolean` | `true` | 是否启用周期性 Keep-Alive ping |
+| `interval` | `number` | `300_000`（5 分钟） | Keep-Alive 间隔（ms） |
+| `timeout` | `number` | `30_000`（30 秒） | 单次 ping 的超时（ms） |
+
+```typescript
+connection.registerPlugin("XEP0199", {
+  // keepalive: false,  // 禁用 Keep-Alive（默认 true）
+  // interval: 60_000,  // 心跳间隔 ms（默认 300_000）
+  // timeout: 10_000,   // ping 超时 ms（默认 30_000）
+});
+```
+
+> **约束**：`interval` 必须 ≥ `timeout`。否则打印 warn，但仍按传入值覆盖（未传的项保留默认值）。
+
+## 注册后行为
+
+`init()` 执行以下动作：
+
+1. **响应 ping** — 监听 `iq` 事件，对 `type='get'` 且含 `urn:xmpp:ping` 的 IQ 自动回复 `type='result'`。
+2. **注册 disco 特性** — 向 XEP-0030 添加 `urn:xmpp:ping`。
+3. **启动 Keep-Alive** — 会话开始后通过 `getServerFeatures()` 查询服务器特性，仅当服务器支持 ping 且 `keepalive` 为真时调用 `keepAlivePing()`；获取失败时打印 warn。
+
+## 扩展字段
+
+不扩展 stanza 接口。
 
 ## 可监听事件
 
 无专门事件。
 
-## API
+## 公开 API
 
 | 方法 | 说明 |
 |------|------|
-| `ping(to, timeout?)` | 向指定实体发送 ping → `Promise<latency_ms>` |
+| `ping(to, timeout?)` | 向指定实体发送 ping → `Promise<number>`（往返耗时 ms）；超时抛 `TimeoutError`，错误应答抛 `XMPPError` |
+| `keepAlivePing()` | 立即启动/重排 Keep-Alive 定时器（已存在则先清除）；通常无需手动调用 |
+| `XEP0199.NS`（静态） | `"urn:xmpp:ping"` |
+| `XEP0199.createSendPingIq(to)`（静态） | 构造 ping 请求 IQ（get） |
+| `XEP0199.createPingResultIq(from, to, id)`（静态） | 构造 ping 应答 IQ（result） |
 
-## 配置
+## 使用示例
+
+Keep-Alive 自动运行，通常只需按需手动 ping：
 
 ```typescript
-XEP0199.config.keepalive = false;    // 禁用 Keep-Alive（默认 true）
-XEP0199.config.interval = 60_000;    // 心跳间隔 ms（默认 300_000）
-XEP0199.config.timeout = 10_000;     // ping 超时 ms（默认 30_000）
+// → Promise<number>（往返耗时 ms）；超时抛 TimeoutError，错误应答抛 XMPPError
+const rtt = await client.XEP0199!.ping("example.com");
+console.log(`RTT ${rtt}ms`);
 ```
 
 ## 注意事项
 
-- Keep-Alive 仅在服务器支持 ping 时启用
-- 服务器不支持时打印 error 日志，不会禁用插件
-- `ping()` 返回的是往返耗时（毫秒），超时抛出 `TimeoutError`
+- Keep-Alive 仅在服务器支持 ping 时启动；服务器不支持时打印 info 日志，插件不会被卸载。
+- 定时器回调在连接为 `DISCONNECTED` 时跳过本次 ping。
+- 定时器调用 `unref()`，不会阻止 Node.js 进程退出。

@@ -1,4 +1,3 @@
-import { XMPPError } from "@/errors";
 import { arrayBufToBase64 } from "@/auth/scram";
 import { XMPPElement } from "@/ltx/Element";
 import type { Identity } from "../xep0030/disco";
@@ -19,7 +18,7 @@ export class EntityCaps {
 
   static parseCaps(caps: XMPPElement): { cap: Capabilities } {
     if (caps.namespaceURI !== EntityCaps.NS)
-      throw new XMPPError(caps, "不是实体能力命名空间");
+      throw new Error(`不是实体能力命名空间: ${caps.toXMLString()}`);
     const node = caps.getAttribute("node")!;
     const ver = caps.getAttribute("ver")!;
     const hash = caps.getAttribute("hash")!;
@@ -38,7 +37,7 @@ export class EntityCaps {
   static async generateCapsVerification(
     identities: Identity[],
     features: Array<string>,
-    dataForm?: DataForm
+    dataForm?: DataForm,
   ): Promise<string> {
     // 1. 初始化空字符串 S
     let S = "";
@@ -58,13 +57,13 @@ export class EntityCaps {
       }
       const nameA = a.name ?? "";
       const nameB = b.name ?? "";
-      return nameA < nameB ? -1 : 1;
+      return nameA < nameB ? -1 : nameA > nameB ? 1 : 0;
     });
 
     // 3. 构建 identities 部分的字符串
     S += sortedIdentities
       .map(
-        (id) => `${id.category}/${id.type}/${id.lang ?? ""}/${id.name ?? ""}<`
+        (id) => `${id.category}/${id.type}/${id.lang ?? ""}/${id.name ?? ""}<`,
       )
       .join("");
 
@@ -78,7 +77,7 @@ export class EntityCaps {
     if (dataForm?.fields) {
       // 6.1. 查找并追加 FORM_TYPE
       const formTypeField = dataForm.fields.find(
-        (field) => field.var === "FORM_TYPE"
+        (field) => field.var === "FORM_TYPE",
       );
       if (formTypeField && formTypeField.values.length > 0) {
         S += `${formTypeField.values[0]}<`;
@@ -107,11 +106,12 @@ export class EntityCaps {
     return arrayBufToBase64(hashBuffer);
   }
 
-  static createCapsElement(cpas: Capabilities) {
-    const c = XMPPElement.createElementNS(EntityCaps.NS, "c");
-    c.setAttribute("hash", cpas.hash);
-    c.setAttribute("ver", cpas.ver);
-    c.setAttribute("node", cpas.node);
+  static createCapsElement(caps: Capabilities) {
+    const c = XMPPElement.createElementNS(EntityCaps.NS, "c", {
+      hash: caps.hash,
+      ver: caps.ver,
+      node: caps.node,
+    });
     return c;
   }
 }
