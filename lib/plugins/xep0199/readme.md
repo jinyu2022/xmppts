@@ -23,7 +23,7 @@ connection.registerPlugin("XEP0199", {
 });
 ```
 
-> **约束**：`interval` 必须 ≥ `timeout`。否则打印 warn，但仍按传入值覆盖（未传的项保留默认值）。
+> **约束**：`interval` 必须 ≥ `timeout`。违反时打印 warn，并改用默认的 `interval` / `timeout`（仅 `keepalive` 仍按传入值覆盖）。
 
 ## 注册后行为
 

@@ -81,7 +81,10 @@
 | `connect` | 网络连接建立（`open` 转发） | 日志记录连接耗时 |
 | `session:start` | 资源绑定成功，会话完全就绪 | **业务入口**，在此发送在线状态 |
 | `session:end` | XMPP 流关闭（`stream:end` 转发） | 清理会话资源 |
-| `disconnect` | 物理连接断开（`close` 转发） | 触发自动重连逻辑 |
+| `connection:lost` | 物理连接断开且将进入自动重连（同一次断线只发一次） | 提示不可用的断线 |
+| `reconnecting` | 每次自动重连尝试前 | 重连进度提示 |
+| `reconnected` | 自动重连成功（会话此前已建立，不再发 `session:start`） | 会话恢复后同步状态 |
+| `disconnect` | 物理连接彻底关闭（未启用自动重连，或重连次数耗尽） | 清理会话资源 |
 | `message/iq/presence/others` | 经过解析和插件转换后的业务数据 | 处理聊天消息、回复请求 |
 
 ## 4. 错误处理

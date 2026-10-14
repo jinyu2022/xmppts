@@ -22,7 +22,7 @@ MUC 审核员撤回房间内其他用户的消息。
 
 ```typescript
 interface Message {
-  moderated?: { by?: string };   // reason 由 XEP0424 解析，见 message.retract.reason
+  moderated?: { by?: string; reason?: string };   // reason 运行时由 XEP0424 的 <retract/> 提供，见 message.retract.reason
 }
 ```
 
@@ -30,7 +30,7 @@ interface Message {
 
 | 事件 | 触发条件 | 回调参数 |
 |------|---------|----------|
-| `message:moderated` | 消息被审核员撤回 | `Message & { moderated: { by? } }` |
+| `message:moderated` | 消息被审核员撤回 | `Message & { moderated: { by?; reason? } }` |
 
 ## 公开 API
 

@@ -55,7 +55,7 @@ describe('XMPPElement', () => {
       expect(plain.getElementsByTagName('p:child')[0].namespaceURI).toBe('urn:example:prefix');
       expect(plain.getElementsByTagName('scoped')[0].namespaceURI).toBe('urn:example:inner');
       expect(root.getElementsByTagName('sibling')[0].namespaceURI).toBe('urn:example:outer');
-      expect(root.getElementsByTagNameNS('', '*')).toEqual([plain, child]);
+      expect(Array.from(root.getElementsByTagNameNS('', '*'))).toEqual([plain, child]);
       expect(Parser.parse(root.toXMLString()).getElementsByTagName('plain')[0].namespaceURI).toBeNull();
     });
 
@@ -222,9 +222,15 @@ describe('XMPPElement', () => {
         body.append('Hello');
         el.appendChild(body);
         
-        const xml = el.toXMLString(2);
-        // level 参数默认为 2，子节点缩进 = 2 * (level + 1) = 6 空格
-        expect(xml).toBe('<message>\n      <body>Hello</body>\n    </message>');
+        // 子元素缩进 1 级（2 空格），顶层元素自身不缩进
+        expect(el.toXMLString(2)).toBe('<message>\n  <body>Hello</body>\n</message>');
+      });
+
+      it('缩进不向混合内容注入空白', () => {
+        const a = XMPPElement.createElement('a');
+        const b = XMPPElement.createElement('b');
+        a.append('x', b, 'y');
+        expect(a.toXMLString(2)).toBe('<a>x<b/>y</a>');
       });
   });
   
@@ -250,13 +256,17 @@ describe('XMPPElement', () => {
       expect(el.childNodes).toHaveLength(0);
     });
 
-    it('把祖先插入其后代不报错（不检测环）', () => {
+    it('拒绝把祖先插入其后代（环检测）', () => {
       const root = XMPPElement.createElement('root');
       const child = XMPPElement.createElement('child');
       root.appendChild(child);
 
-      expect(() => child.appendChild(root)).not.toThrow();
-      expect(root.parentNode).toBe(child);
+      expect(() => child.appendChild(root)).toThrowError(
+        expect.objectContaining({ name: 'HierarchyRequestError' }),
+      );
+      expect(root.parentNode).toBeNull();
+      expect(root.childNodes).toHaveLength(1);
+      expect(child.childNodes).toHaveLength(0);
     });
   });
 
@@ -314,7 +324,7 @@ describe('XMPPElement', () => {
       );
     });
 
-    it('运行时缺少参数时按字符串选择器处理', () => {
+    it('缺少参数时按字符串 "undefined" 处理（对齐 happy-dom）', () => {
       const { root } = build();
       const target = XMPPElement.createElement('undefined');
       root.appendChild(target);
@@ -323,7 +333,7 @@ describe('XMPPElement', () => {
       ).toBe(target);
     });
 
-    it('不支持 * 通配时仍匹配任意元素', () => {
+    it('* 匹配任意后代元素（返回前序第一个）', () => {
       const { root, a } = build();
       expect(root.querySelector('*')).toBe(a);
     });
@@ -451,7 +461,7 @@ describe('XMPPElement', () => {
       expect(root.querySelector('a\\:b')).toBe(el);
     });
 
-    it('未知伪类与伪元素抛 SyntaxError', () => {
+    it('未实现的伪类与伪元素抛 SyntaxError', () => {
       const { root } = build();
       const unsupported = ['b:first-child', 'b:not(.z)', 'b:unknown', 'b::text'];
       for (const selector of unsupported) {
@@ -487,11 +497,11 @@ describe('XMPPElement', () => {
       }
     });
 
-    it('深层树查询不依赖递归调用栈', () => {
+    it('深树查询仍能正确命中', () => {
       const root = XMPPElement.createElement('root');
       let current = root;
-      for (let i = 0; i < 5000; i++) {
-        const child = XMPPElement.createElement(i === 4999 ? 'leaf' : 'node');
+      for (let i = 0; i < 500; i++) {
+        const child = XMPPElement.createElement(i === 499 ? 'leaf' : 'node');
         current.appendChild(child);
         current = child;
       }

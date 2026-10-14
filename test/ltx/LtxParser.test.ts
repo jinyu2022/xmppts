@@ -125,6 +125,39 @@ describe("LtxParser", () => {
     expect(events).toEqual(expected);
   });
 
+  it("Buffer 分片不切断多字节 UTF-8 字符", () => {
+    const parser = new LtxParser();
+    const texts: string[] = [];
+    parser.on("text", (text) => texts.push(text));
+    const bytes = Buffer.from(`<a>中文😀</a>`, "utf8");
+    // 每 1 字节写入一次，多字节字符必然被切开
+    for (const byte of bytes) {
+      parser.write(Buffer.from([byte]));
+    }
+    parser.end();
+    expect(texts).toEqual(["中文😀"]);
+  });
+
+  it("end() 输出解码器残留的不完整字节", () => {
+    const parser = new LtxParser();
+    const texts: string[] = [];
+    parser.on("text", (text) => texts.push(text));
+    // 「中」为 3 字节，此处只写入前 2 字节，残留部分在 end() 时按替换字符输出
+    const partial = Buffer.from("中", "utf8").subarray(0, 2);
+    parser.write(Buffer.concat([Buffer.from("<a>", "utf8"), partial]));
+    parser.end();
+    expect(texts.join("")).toContain("\uFFFD");
+  });
+
+  it("CDATA 结束标记之后的同块文本不丢失", () => {
+    expect(collect(`<a><![CDATA[x < y]]>tail</a>`)).toEqual([
+      { type: "start", tag: "a", attrs: {} },
+      { type: "text", text: "x < y" },
+      { type: "text", text: "tail" },
+      { type: "end", tag: "a", selfClosing: false },
+    ]);
+  });
+
   it("忽略注释与处理指令", () => {
     expect(collect(`<a><!-- comment --><?pi data?><b/></a>`)).toEqual([
       { type: "start", tag: "a", attrs: {} },
@@ -150,7 +183,7 @@ describe("LtxParser", () => {
     ]);
   });
 
-  it("end() 之后 write 不再产生事件", () => {
+  it("end() 之后再 write 抛错", () => {
     const parser = new LtxParser();
     const onStart = vi.fn();
     parser.on("startElement", onStart);
@@ -158,8 +191,7 @@ describe("LtxParser", () => {
     parser.end();
     expect(onStart).toHaveBeenCalledTimes(1);
 
-    parser.write(`<b/>`);
-    expect(onStart).toHaveBeenCalledTimes(1);
+    expect(() => parser.write(`<b/>`)).toThrowError();
   });
 
   it("end(data) 先写入剩余数据再收尾", () => {

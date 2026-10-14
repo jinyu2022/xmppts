@@ -42,6 +42,8 @@ export default class XEP0077 extends Register {
   // 设置监听器
   setListener() {
     const socket = this.socket!;
+    // XMPP 强制 UTF-8（RFC 6120 §11.6）：由 socket 层用 StringDecoder 拼接跨 chunk 的多字节字符
+    socket.setEncoding("utf8");
 
     // direct TLS 需等握手完成（secureConnect）再发流头
     socket.once(this.protocol === "xmpps" ? "secureConnect" : "connect", () => {
@@ -68,7 +70,8 @@ export default class XEP0077 extends Register {
       }
       this.pending.clear();
     });
-    socket.on("data", (data) => this.parser.write(data.toString()));
+    // socket 层已完成解码（data 为 string）；解析器自身也支持 Buffer，两层各自独立可用
+    socket.on("data", (data) => this.parser.write(data));
   }
 
   async connectSocket(domain: string, protocol: "xmpps" | "ws") {

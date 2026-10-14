@@ -117,7 +117,7 @@ interface Conference {
 | `deleteBookmark` | `(jid: string) => Promise<void>` | 撤回由 `jid` 标识的项目；失败抛 `XMPPError`。成功后从 `this.bookmarks` 中移除 |
 | `configureBookmarkNode` | `() => Promise<void>` | 向自己的 bare JID 提交 `#node_config` 表单，把书签节点配置为白名单访问且持久化；失败抛 `XMPPError`。不自动重发书签 |
 
-以上方法经 `connection.sendAsync()` 发送 IQ，须在会话建立后调用；`session:start` 之前发送会被静默丢弃或挂到超时。
+以上方法经 `connection.sendAsync()` 发送 IQ，须在会话建立后调用；`session:start` 之前调用会 reject（`send()` 抛 `Error`，`sendAsync` 随之 reject）。
 
 ## 使用示例
 

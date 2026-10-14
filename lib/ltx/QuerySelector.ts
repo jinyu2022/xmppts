@@ -1,25 +1,27 @@
 import { XMPPElement } from "./Element.js";
 
-/** 单个属性选择器：[name] 或 [name op value] */
+/** 组合符：该复合选择器与前一个的关系 */
+type Combinator = " " | ">" | "+" | "~";
+
+/** 单个属性选择器：[name] 或 [name op value]（解析期预编译匹配方式） */
 interface AttributeSelector {
   name: string;
   operator?: "=" | "~=" | "|=" | "^=" | "$=" | "*=";
   value?: string;
+  /** `~=`/`|=`/`^=`/`$=`/`*=` 预编译的正则；`=` 与仅存在性检查为 undefined */
+  regExp?: RegExp;
+  /** 规范：非 `=` 操作符的期望值为空串时，该选择器不代表任何元素 */
+  never?: boolean;
 }
 
-/** 单个复合选择器（如 `ns#id.cls[attr]` 中的一段，不含组合符） */
-interface CompoundSelector {
+/** 单个复合选择器（解析期预编译；combinator 表示与上一个的关系） */
+interface SelectorItem {
   tag: string | null;
   id: string | null;
   classes: string[];
   attributes: AttributeSelector[];
   scope: boolean;
-}
-
-/** 选择器链上的一步：combinator 表示与前一步的关系 */
-interface SelectorStep {
-  combinator: " " | ">" | "+" | "~";
-  compound: CompoundSelector;
+  combinator: Combinator;
 }
 
 /**
@@ -38,7 +40,7 @@ interface SelectorStep {
  */
 export default class QuerySelector {
   /** selector 文本 → 解析结果缓存（仅语法层，无失效问题；键来自代码，量级有限） */
-  private static readonly parseCache = new Map<string, SelectorStep[][]>();
+  private static readonly parseCache = new Map<string, SelectorItem[][]>();
 
   /**
    * 查找与选择器匹配的第一个后代元素（前序，不含 node 自身）。
@@ -50,7 +52,7 @@ export default class QuerySelector {
     node: XMPPElement,
     selector: string,
   ): XMPPElement | null {
-    return this.findFirst(node, this.parse(selector, "querySelector"));
+    return this.querySelectorAll(node, selector)[0] ?? null;
   }
 
   /**
@@ -64,12 +66,21 @@ export default class QuerySelector {
     selector: string,
   ): XMPPElement[] {
     const groups = this.parse(selector, "querySelectorAll");
+    const found = new Set<XMPPElement>();
+    for (const group of groups) {
+      // 起点自身也参与匹配（`:scope` 与组合符需要），输出时再排除
+      this.findAll([node], node, group, 0, found);
+    }
+    if (found.size === 0) {
+      return [];
+    }
+    // 按文档序输出
     const result: XMPPElement[] = [];
     const stack: XMPPElement[] = [];
     this.pushChildren(stack, node);
     while (stack.length > 0) {
       const current = stack.pop()!;
-      if (groups.some((group) => this.matchesSelector(current, group, node))) {
+      if (found.has(current)) {
         result.push(current);
       }
       this.pushChildren(stack, current);
@@ -85,11 +96,13 @@ export default class QuerySelector {
    */
   public static matches(element: XMPPElement, selector: string): boolean {
     const groups = this.parse(selector, "matches");
-    return groups.some((group) => this.matchesSelector(element, group, element));
+    return groups.some((group) =>
+      this.matchesSelector(element, group, element, group.length - 1),
+    );
   }
 
   /** 校验并解析选择器为选择器组列表（命中缓存则跳过解析） */
-  private static parse(selector: string, method: string): SelectorStep[][] {
+  private static parse(selector: string, method: string): SelectorItem[][] {
     const value = String(selector);
     if (!value.trim()) {
       throw new DOMException(
@@ -109,21 +122,71 @@ export default class QuerySelector {
     return groups;
   }
 
-  /** 前序查找第一个匹配元素 */
-  private static findFirst(
-    node: XMPPElement,
-    groups: SelectorStep[][],
-  ): XMPPElement | null {
-    const stack: XMPPElement[] = [];
-    this.pushChildren(stack, node);
-    while (stack.length > 0) {
-      const current = stack.pop()!;
-      if (groups.some((group) => this.matchesSelector(current, group, node))) {
-        return current;
+  /**
+   * 正向推进收集（对齐 happy-dom 的 findAll）：只有命中当前步的元素才进入下一步，
+   * 失配的前缀不会展开，因此不产生后代组合符的组合爆炸。
+   * @param nodes 本层待扫描的子节点原始列表（文本节点会被跳过）
+   * @param root 查询起点（结果排除其自身，亦作为 `:scope` 锚点）
+   * @param items 选择器组（自左向右）
+   * @param itemIndex 本层对应 items 的下标（递归时 +1，避免切片分配）
+   * @param found 结果集合（天然去重）
+   */
+  private static findAll(
+    nodes: readonly (XMPPElement | string)[],
+    root: XMPPElement,
+    items: readonly SelectorItem[],
+    itemIndex: number,
+    found: Set<XMPPElement>,
+  ): void {
+    const item = items[itemIndex];
+    const next = items[itemIndex + 1];
+    for (let i = 0; i < nodes.length; i++) {
+      const child = nodes[i];
+      if (!(child instanceof XMPPElement)) {
+        continue;
       }
-      this.pushChildren(stack, current);
+      if (this.matchesItem(child, item, root)) {
+        if (!next) {
+          if (child !== root) {
+            found.add(child);
+          }
+        } else {
+          switch (next.combinator) {
+            case "+": {
+              const sibling = child.nextElementSibling;
+              if (sibling) {
+                this.findAll([sibling], root, items, itemIndex + 1, found);
+              }
+              break;
+            }
+            case "~": {
+              const siblings: XMPPElement[] = [];
+              for (
+                let sibling = child.nextElementSibling;
+                sibling;
+                sibling = sibling.nextElementSibling
+              ) {
+                siblings.push(sibling);
+              }
+              if (siblings.length > 0) {
+                this.findAll(siblings, root, items, itemIndex + 1, found);
+              }
+              break;
+            }
+            default:
+              // 后代（空格）与子代（`>`）的下一步都在直接子节点里找
+              this.findAll(child.childNodes, root, items, itemIndex + 1, found);
+          }
+        }
+      }
+      // 后代轴续探：当前项与更浅层是后代关系（或无组合符）时，同一步可继续向深层匹配
+      if (item.combinator === " ") {
+        const descendants = child.childNodes;
+        if (descendants.length > 0) {
+          this.findAll(descendants, root, items, itemIndex, found);
+        }
+      }
     }
-    return null;
   }
 
   /** 按文档顺序将元素子节点倒序压栈 */
@@ -165,15 +228,15 @@ export default class QuerySelector {
 
   /**
    * 扫描选择器文本：组合符 / 逗号仅在方括号 / 括号 / 引号之外生效，
-   * 按记号切出片段交给 parseCompoundSelector 解析。
+   * 按记号切出片段交给 parseItem 解析。
    */
   private static parseSelectorList(
     selector: string,
     method: string,
-  ): SelectorStep[][] {
-    const groups: SelectorStep[][] = [];
-    let steps: SelectorStep[] = [];
-    let combinator: SelectorStep["combinator"] = " ";
+  ): SelectorItem[][] {
+    const groups: SelectorItem[][] = [];
+    let steps: SelectorItem[] = [];
+    let combinator: Combinator = " ";
     let lastIndex = 0;
     let brackets = 0;
     let parens = 0;
@@ -190,10 +253,7 @@ export default class QuerySelector {
       if (steps.length === 0 && combinator !== " ") {
         throw this.invalidSelector(method, selector);
       }
-      steps.push({
-        combinator,
-        compound: this.parseCompoundSelector(source, method, selector),
-      });
+      steps.push(this.parseItem(source, combinator, method, selector));
       combinator = " ";
     };
 
@@ -270,7 +330,7 @@ export default class QuerySelector {
             throw this.invalidSelector(method, selector);
           }
           flush(i);
-          combinator = char as SelectorStep["combinator"];
+          combinator = char as Combinator;
           lastIndex = ++i;
           continue;
         }
@@ -294,17 +354,19 @@ export default class QuerySelector {
   }
 
   /** 解析单个复合选择器（类型 / `*` / `#id` / `.class` / `[attr...]` / 伪类） */
-  private static parseCompoundSelector(
+  private static parseItem(
     source: string,
+    combinator: Combinator,
     method: string,
     selector: string,
-  ): CompoundSelector {
-    const compound: CompoundSelector = {
+  ): SelectorItem {
+    const compound: SelectorItem = {
       tag: null,
       id: null,
       classes: [],
       attributes: [],
       scope: false,
+      combinator,
     };
     let i = 0;
     let hasTypeSelector = false;
@@ -414,7 +476,7 @@ export default class QuerySelector {
   private static parseAttributeSelector(
     source: string,
     start: number,
-    compound: CompoundSelector,
+    compound: SelectorItem,
     method: string,
     selector: string,
   ): number {
@@ -516,76 +578,97 @@ export default class QuerySelector {
     if (source[i] !== "]") {
       throw this.invalidSelector(method, selector);
     }
-    compound.attributes.push({ name, operator, value });
+    // 非 `=` 操作符的期望值为空串时，规范规定其不代表任何元素
+    const never = operator !== undefined && operator !== "=" && value === "";
+    compound.attributes.push({
+      name,
+      operator,
+      value,
+      regExp:
+        operator && value ? this.buildAttributeRegExp(operator, value) : undefined,
+      never,
+    });
     return i + 1;
   }
 
+  /** 把属性操作符编译为正则（`=` 走严格相等，不建正则） */
+  private static buildAttributeRegExp(
+    operator: AttributeSelector["operator"],
+    value: string,
+  ): RegExp | undefined {
+    // 转义正则特殊字符，值按字面量匹配
+    const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    switch (operator) {
+      case "~=":
+        return new RegExp(`(^|\\s)${escaped}(\\s|$)`);
+      case "|=":
+        return new RegExp(`^${escaped}(-|$)`);
+      case "^=":
+        return new RegExp(`^${escaped}`);
+      case "$=":
+        return new RegExp(`${escaped}$`);
+      case "*=":
+        return new RegExp(escaped);
+      default:
+        return undefined;
+    }
+  }
+
   /** 元素是否匹配单个复合选择器 */
-  private static matchesCompound(
+  private static matchesItem(
     el: XMPPElement,
-    compound: CompoundSelector,
+    item: SelectorItem,
     scope: XMPPElement,
   ): boolean {
-    if (compound.scope && el !== scope) {
+    if (item.scope && el !== scope) {
       return false;
     }
-    if (compound.tag && compound.tag !== "*") {
+    if (item.tag && item.tag !== "*") {
       // `ns|*` 按前缀匹配，含 `:` 按 tagName，其余按 localName
       let matched: boolean;
-      if (compound.tag.endsWith(":*")) {
-        matched = el.tagName.startsWith(compound.tag.slice(0, -1));
-      } else if (compound.tag.includes(":")) {
-        matched = el.tagName === compound.tag;
+      if (item.tag.endsWith(":*")) {
+        matched = el.tagName.startsWith(item.tag.slice(0, -1));
+      } else if (item.tag.includes(":")) {
+        matched = el.tagName === item.tag;
       } else {
-        matched = el.localName === compound.tag;
+        matched = el.localName === item.tag;
       }
       if (!matched) {
         return false;
       }
     }
-    if (compound.id !== null && el.getAttribute("id") !== compound.id) {
+    if (item.id !== null && el.getAttribute("id") !== item.id) {
       return false;
     }
-    if (compound.classes.length > 0) {
+    if (item.classes.length > 0) {
       const classAttr = el.getAttribute("class");
       if (!classAttr) {
         return false;
       }
-      const classNames = new Set(classAttr.split(/\s+/));
-      for (const className of compound.classes) {
-        if (!classNames.has(className)) {
+      const classNames = classAttr.split(/\s+/);
+      for (const className of item.classes) {
+        if (!classNames.includes(className)) {
           return false;
         }
       }
     }
-    for (const attr of compound.attributes) {
+    for (const attr of item.attributes) {
       const value = el.getAttribute(attr.name);
-      if (value === null) return false;
-      if (!attr.operator) continue;
-      const expected = attr.value ?? "";
-      switch (attr.operator) {
-        case "=":
-          if (value !== expected) return false;
-          break;
-        case "~=":
-          // 规范：期望值为空串时永不匹配
-          if (expected === "" || !value.split(/\s+/).includes(expected)) {
-            return false;
-          }
-          break;
-        case "|=":
-          if (value !== expected && !value.startsWith(`${expected}-`))
-            return false;
-          break;
-        case "^=":
-          if (!value.startsWith(expected)) return false;
-          break;
-        case "$=":
-          if (!value.endsWith(expected)) return false;
-          break;
-        case "*=":
-          if (!value.includes(expected)) return false;
-          break;
+      if (value === null) {
+        return false;
+      }
+      if (!attr.operator) {
+        continue;
+      }
+      if (attr.never) {
+        return false;
+      }
+      if (attr.regExp) {
+        if (!attr.regExp.test(value)) {
+          return false;
+        }
+      } else if (value !== (attr.value ?? "")) {
+        return false;
       }
     }
     return true;
@@ -594,48 +677,37 @@ export default class QuerySelector {
   /** 自右向左匹配选择器链的第 index 步 */
   private static matchesSelector(
     el: XMPPElement,
-    steps: SelectorStep[],
+    items: readonly SelectorItem[],
     scope: XMPPElement,
-    index: number = steps.length - 1,
+    index: number,
   ): boolean {
-    const step = steps[index];
-    if (!step || !this.matchesCompound(el, step.compound, scope)) {
+    const item = items[index];
+    if (!item || !this.matchesItem(el, item, scope)) {
       return false;
     }
     if (index === 0) {
       return true;
     }
-    switch (step.combinator) {
+    switch (item.combinator) {
       case ">": {
         const parent = el.parentElement;
         return parent
-          ? this.matchesSelector(parent, steps, scope, index - 1)
+          ? this.matchesSelector(parent, items, scope, index - 1)
           : false;
       }
       case "+": {
-        const siblings = el.parentElement?.childNodes;
-        if (!siblings) {
-          return false;
-        }
-        for (let i = siblings.indexOf(el) - 1; i >= 0; i--) {
-          const previous = siblings[i];
-          if (previous instanceof XMPPElement) {
-            return this.matchesSelector(previous, steps, scope, index - 1);
-          }
-        }
-        return false;
+        const previous = el.previousElementSibling;
+        return previous
+          ? this.matchesSelector(previous, items, scope, index - 1)
+          : false;
       }
       case "~": {
-        const siblings = el.parentElement?.childNodes;
-        if (!siblings) {
-          return false;
-        }
-        for (let i = siblings.indexOf(el) - 1; i >= 0; i--) {
-          const previous = siblings[i];
-          if (
-            previous instanceof XMPPElement &&
-            this.matchesSelector(previous, steps, scope, index - 1)
-          ) {
+        for (
+          let previous = el.previousElementSibling;
+          previous;
+          previous = previous.previousElementSibling
+        ) {
+          if (this.matchesSelector(previous, items, scope, index - 1)) {
             return true;
           }
         }
@@ -644,7 +716,7 @@ export default class QuerySelector {
       default: {
         let ancestor = el.parentElement;
         while (ancestor) {
-          if (this.matchesSelector(ancestor, steps, scope, index - 1)) {
+          if (this.matchesSelector(ancestor, items, scope, index - 1)) {
             return true;
           }
           ancestor = ancestor.parentElement;

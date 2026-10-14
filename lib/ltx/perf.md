@@ -419,6 +419,274 @@ w ×4 时 `+`/`~` 约 ×5.9、纯 `item` 仅 ×1.4 → 超线性成分确认，�
 [P8] unescapeXML entities 1MB: 18.42ms (56 MB/s)
 ```
 
+---
+
+## 逐 API 基线（2026-10-14，含上游对照）
+
+基准文件：[test/ltx/bench.test.ts](../../test/ltx/bench.test.ts)。
+
+```
+npx vitest run test/ltx/bench.test.ts --disable-console-intercept                            # 轻量档
+$env:LTX_BENCH="full"; npx vitest run test/ltx/bench.test.ts --disable-console-intercept     # 完整档（下表数据）
+```
+
+方法：同一文件内同时加载本项目（`lib/ltx/*.ts`）与上游（`ltx-main/src/*.js`），同 harness 内 **A/B 交替轮次**（奇偶轮互换执行顺序），各取自身最小值换算 ns/op；上游无对应 API 的项只报绝对值（`solo`）。环境：node v22.23.2 / i5-11400H / win32。完整档：目标单轮 20ms、9 轮（下表 CV 多为 1%~5%）。
+
+> **读数口径**：这只是**一个混合负载文件**里的单次运行。同一 API 在"精简负载文件"里的比值可能不同（见文末「与早先测量的差异」）。判断某项改动的效果，必须在**同一文件内**跑 A/B——绝对值与比值都会随 JIT/IC 状态和前面的用例漂移。
+
+### 表 A · 有上游对照（按 ts/up 从慢到快）
+
+| 用例 | 上游 | 本项目 | ts/up | 说明 |
+| --- | ---: | ---: | ---: | --- |
+| querySelector 直接子 / `getChild` | 36.8 ns | **873.2 ns** | **23.72×** | 选择器引擎固有成本 + 文档序重排遍历 |
+| 集合下标 `coll[0]` / 数组下标 | 8.0 ns | **173.4 ns** | **21.80×** | `XMPPElementCollection` 的 Proxy 陷阱 |
+| 集合 `length` / 数组 `length` | 3.5 ns | 20.5 ns | 5.93× | 同上 |
+| `setAttribute` 覆盖 / `attr()` | 3.5 ns | 20.8 ns | 5.93× | `_ensureAttrs` 判定 + 两次 `String()` |
+| 宽树 `getElementsByTagName` / `getChildrenByFilter` | 338.3 ns | 1 166.1 ns | 3.45× | 递归全树 + 每次构造集合 |
+| `createElement` 4 属性 / `new Element` | 71.7 ns | 210.1 ns | 2.93× | null-proto 逐键写入（安全设计的固有代价） |
+| 创建+挂载 / 上游 `c()` | 97.6 ns | 262.8 ns | 2.69× | 上一行 + `appendChild` |
+| 集合迭代 / 数组 `for-of` | 51.4 ns | 131.8 ns | 2.56× | 迭代器走 Proxy |
+| 集合 `forEach` / 数组 `forEach` | 79.6 ns | 173.8 ns | 2.18× | 同上 |
+| `getAttribute` 命中 / `getAttr` | 7.3 ns | 15.1 ns | 2.05× | `String(name)` + `?? null` |
+| `namespaceURI` 深度 21 / `getNS` | 136.2 ns | 270.4 ns | 1.99× | 递归 + 每层 `prefix` 的 `indexOf`+`slice` |
+| `removeAttribute` / `delete attrs[k]` | 57.2 ns | 96.4 ns | 1.69× | `in` 探测 + `_ensureAttrs` |
+| 全树按名查找 / `getChildren()` | 732.3 ns | 1 233.5 ns | 1.68× | |
+| `write(writer)` 单条 | 1 207.8 ns | 1 903.6 ns | 1.58× | |
+| Buffer 输入 单条 | 2 711.2 ns | 4 245.0 ns | 1.57× | 本项目走流式 `TextDecoder`，上游先 `toString()` |
+| `append` 文本 / `t()` | 23.4 ns | 36.5 ns | 1.56× | |
+| `namespaceURI` 深度 5 / `getNS` | 15.4 ns | 23.6 ns | 1.54× | |
+| `toString` / `toXMLString` 单条 | 1 548.6 ns | 2 319.0 ns | 1.50× | 每层模板串拼接 + 父层 `+=` |
+| 序列化 宽元素(50 子) | 17 708.9 ns | 31 962.9 ns | 1.81× | |
+| `new SaxLtx` / `new LtxParser` | 60.3 ns | 79.0 ns | 1.31× | 构造含 `TextDecoder` 与 `write` 绑定 |
+| SAX 单条 | 2 447.6 ns | 2 881.2 ns | 1.18× | |
+| 60 条会话流 16KB 分块 SAX | 146 464.6 ns | 170 790.6 ns | 1.17× | |
+| 60 条会话流 16KB 分块 建树 | 173 081.2 ns | 199 915.6 ns | 1.16× | |
+| 建树 单条 / `parse` | 3 587.1 ns | 3 959.5 ns | 1.10× | |
+| `getAttribute` 缺失 | 11.4 ns | 12.5 ns | 1.10× | |
+| `unescapeXMLText` 数字实体 | 717.2 ns | 780.7 ns | 1.09× | 多一次数字实体正则校验 |
+| 子节点数 / `children.length` | 3.4 ns | 3.4 ns | 1.02× | |
+| `new Parser` / `new UpParser` | 371.5 ns | 376.1 ns | 1.01× | |
+| `escapeXML` 含特殊字符 | 1 496.4 ns | 1 498.8 ns | 1.00× | |
+| `escapeXMLText` 普通文本 | 150.5 ns | 149.4 ns | 0.99× | |
+| `unescapeXML` 无实体（短路） | 26.3 ns | 25.6 ns | 0.97× | |
+| `escapeXML` 普通属性值 | 102.8 ns | 97.8 ns | 0.95× | |
+| `localName` / `getName` | 15.8 ns | 14.7 ns | 0.93× | |
+| `unescapeXML` 命名实体 | 1 194.0 ns | 1 107.4 ns | 0.93× | |
+| `textContent` 读 / `getText` | 10.1 ns | 9.4 ns | 0.93× | |
+| `createElement` 无属性 | 22.2 ns | 20.3 ns | 0.92× | 共享冻结空表 |
+| `appendChild` / `cnode` | 51.8 ns | 44.9 ns | 0.87× | |
+| `removeChild`+复原 / `remove`+复原 | 40.6 ns | 31.0 ns | 0.76× | |
+| `textContent` 写（替换） | 58.8 ns | 14.4 ns | **0.25×** | 上游要先清空 `children` 再 `t()` |
+
+### 表 B · 上游无对应 API（绝对值）
+
+| 用例 | 本项目 |
+| --- | ---: |
+| `createElementNS` 无属性 | 50.4 ns |
+| `createElementNS` 4 属性 | 251.6 ns |
+| `tagName` | 3.8 ns |
+| `prefix` 无前缀 / 带前缀 | 11.0 ns / 85.1 ns |
+| `childNodes` getter | 3.4 ns |
+| `children` getter（集合构造） | 76.3 ns |
+| `firstElementChild` / `lastElementChild` | 5.6 ns / 5.3 ns |
+| `childElementCount` | 6.7 ns |
+| `previousElementSibling` / `nextElementSibling` | 7.4 ns / 11.9 ns |
+| `parentNode` / `parentElement` | 4.0 ns / 4.0 ns |
+| `contains` | 5.0 ns |
+| `insertBefore`（插入+移除） | 78.0 ns |
+| `remove` 自身 | 48.6 ns |
+| `matches` | 58.9 ns |
+| `getElementsByTagNameNS`（50 元素树） | **9 008.1 ns** |
+| `querySelectorAll`（50 元素树） | **23 671.4 ns** |
+| `toXMLString(2)` 缩进 | 2 310.6 ns（与无缩进 2 319.0 ns 基本持平） |
+| `Parser.reset()` | 4 226.0 ns |
+| 集合 `item(0)` | 80.0 ns |
+| 解析产物首次 `setAttribute`（COW 复制冻结表） | **1 554.9 ns** |
+
+### 判读
+
+- **最该动的仍是查询与集合**：`querySelector(":scope > x")` 23.7×、集合下标 21.8×、`getElementsByTagNameNS` 9.0 µs（50 元素树，每元素都要算一次 `namespaceURI`）、`querySelectorAll` 23.7 µs。这些是插件解析 stanza 时的实际路径（`xep0030/0004/0054/0060/0199` 都在用 `:scope > …`）。
+- **`setAttribute` 5.93× 与 COW 1 554.9 ns 同源**：COW 复制目前仍用 `Object.assign` 复制 null-proto 的 dictionary 表，实测 1 421 ns（同长度的 `for…in` 复制为 398 ns，见 2026-10-13 的一次性基准）。`_ensureAttrs` 的 `EMPTY_ATTRS` 快路径已落地（`createElement` 4 属性回到 210 ns，与改动前的 204.6 ns 持平），但复制方式这半边还没换。
+- **`createElement` 4 属性 2.93×** 是 null-proto 逐键写入的固有代价（安全设计换取 `__proto__`/`constructor` 属性名安全），解析路径已通过"接管 SAX 产出的冻结表"绕过，**构造路径（出站）仍付这笔钱**。
+- **序列化 1.5×~1.8×**：`toXMLString` 每层返回新串、父层再 `+=`；`write(writer)` 与它同量级（1 903.6 ns）。缩进版本与无缩进版本耗时持平，说明 `every()` 预扫描不是瓶颈。
+
+### 与早先测量的差异（重要）
+
+同一批 API 的比值在**不同基准文件**里会明显不同，例：
+
+| 用例 | 精简负载文件（2026-10-13） | 本文件（2026-10-14） |
+| --- | ---: | ---: |
+| SAX 单条 | 1.10×（本项目更快） | 1.18×（本项目更慢） |
+| 建树 单条 | 0.81×~0.91× | 1.10× |
+| 序列化 单条 | 0.66× | 1.50× |
+
+两次用的是同一条语料形态、同一个上游实现。差异只能归因于**测量上下文**：本文件在同一进程里连续跑了 50+ 个 API（持续的分配与 GC、`LtxParser`/`Parser` 被用作 fixture 反复解析、各访问点 inline cache 状态不同）。这也正是"抓某个改动的效果必须同文件 A/B"的原因——本节数据用于**横向看哪个 API 值得优化**，不用于纵向比较版本。
+
+### 待办（按收益排序）
+
+1. **`localName` 缓存**：每次 `indexOf(":")` 加可能的 `slice`，`matchesItem` 对每个候选元素都要读一次。同文件实测 50 元素 430.8 → 51.5 ns（8.4×）；`tagName` 是 `readonly`，构造期算好即可。
+2. **查询**：① `querySelectorAll` 在单组且无兄弟组合符时免去文档序重排（现在无论命中多少都要再遍历整棵树一遍）；② 为"取直接子元素"提供不经过选择器引擎的入口（插件的 `:scope > x` 全部可换）。
+3. **集合**：`XMPPElementCollection` 的下标与 `length` 走 Proxy 陷阱（21.8×/5.9×），考虑改成真实数组 + `item()` 挂载。注意 happy-dom 的 `NodeList` 同样用 Proxy，且 handler 里还多一次 `methodBinder.bind`——这是"带索引的类数组视图"的固有代价，不是实现疏漏。
+4. **`getElementsByTagNameNS`**：每个元素独立读 `namespaceURI` 并向祖先回溯（50 元素树 9.0 µs，比 `getElementsByTagName` 贵 8×），遍历时自上而下传递命名空间上下文即可。
+5. **COW 复制**：`_ensureAttrs` 的复制从 `Object.assign` 换成 `for…in`（null 原型 + 冻结表上实测 1 141 → 376 ns，2.9×）。
+6. **序列化**：`write(writer)` 的逐属性 5 次回调可合并；`toXMLString` 仍是逐层返回新串再 `+=`。
+7. **结果缓存**：happy-dom 式 per-node 查询结果缓存（先量插件对同一 stanza 的重复查询频率再定）。
+8. **`_findNS` 迭代化**：实测 0.66×（深度 21：263 → 174 ns），顺带修 `xmlns:foo=""` 被真值判断误当"未声明"的小 bug。
+9. **类选择器的 class token 缓存**：`matchesItem` 里 `classAttr.split(/\s+/)` 对每个候选元素 × 每个选择器组各执行一次（`querySelectorAll(".a")` 在 5000 元素文档上就是 5000 次 `split` 外加正则）。参照 happy-dom 在元素上惰性缓存解析好的 token 集合（等价于 `classList.contains`），并在 `setAttribute("class", …)`/`removeAttribute("class")` 时置空缓存。XMPP 场景几乎不用类选择器，优先级低于前 8 条。
+
+### 已落地（2026-10-13 ~ 10-14，均为同文件 A/B）
+
+| 改动 | 位置 | 实测 |
+| --- | --- | --- |
+| 属性表所有权转移（接管 SAX 产出的冻结表） | `LtxParser` + `Parser` + `Element` | 元素构造 4 属性 371.9 → 52.9 ns（0.142）；建树 depth-21 × 4 属性 8 378.0 → 1 483.8 ns（0.177） |
+| 无属性元素共享冻结空表（`EMPTY_ATTRS` 快路径） | `_ensureAttrs` | `createElement` 无属性回到 210 ns，与改动前的 204.6 ns 持平 |
+| `toXMLString` 的 `every()` 移入缩进分支 | `Element.ts` | `toXMLString()` 无缩进（101 元素）34 634.4 → 33 222.1 ns（−4.1%） |
+| `findAll` 直访 `childNodes`，`itemIndex` 取代 `items.slice` | `QuerySelector.ts` | `querySelectorAll("item")`（101 元素）24 525.7 → 9 345.7 ns（−62%）；`querySelector(":scope > body")` 959.8 → 344.6 ns（−64%） |
+| `appendChild` 末尾追加改 `push` | `insertBefore` | 27.1~30.2 → 18.0~18.7 ns（−35%~−38%） |
+
+
+## 迁入：原 REVIEW.md 的性能专项（2026-10-12 / 10-13；该文件已删除）
+
+> 本节承接原 `REVIEW.md` 的 §0 性能段落、§4.9 剪枝方案与 §5 性能专项。**口径提醒**：下面"跨进程对照"是 TS 版与 JS 版**分进程**跑出来的（避免内联缓存互相污染），与上文「逐 API 基线（2026-10-14）」的同 harness 口径不同，绝对值不可混比。
+
+### 跨进程对照：TS 版 vs JS 版（2026-10-12，Node v24 / win-x64）
+
+方法：同一份用例脚本分别在两个进程里跑；预热 300 ms、每样本预算 60 ms、15 个样本取中位数。
+
+| 用例 | ts/ltx | src/（JS） | 比值 | 判读 |
+|---|---:|---:|---:|---|
+| SAX·64 KB 纯文本·一次 write | 1.74 | 1.69 | 1.03× | 持平 |
+| SAX·64 KB 纯文本·分 5 次 write | 15.44 | 15.66 | 0.99× | 持平 |
+| SAX·64 KB 未闭合 CDATA | **1.81** | 323.51 | **0.006×** | 修掉了 JS 版 O(n²) |
+| SAX·64 KB 未闭合注释 | **1.78** | 50 129.40 | **0.00004×** | 修掉了 JS 版 O(n²) |
+| SAX·5000 个属性 | **852.91** | 1 029.55 | 0.83× | 快 17% |
+| SAX·8000 层嵌套 | 1 255.70 | 952.52 | **1.32×** | 慢 32% |
+| SAX·16 条真实 XMPP 语料 | 43.58 | 44.78 | 0.97× | 持平 |
+| 建树·16 条真实 XMPP 语料 | 69.45 | 55.82 | **1.24×** | 慢 24% |
+| 建树·8000 层嵌套 | 2 162.88 | 1 331.44 | **1.63×** | 慢 63% |
+
+补充微基准（同进程，仅作量级参考）：
+
+| 微操作 | 实测 |
+|---|---|
+| `createElement` ×2 + `appendChild` ×1 | 0.112 µs/op，116 B/op |
+| `Object.create(null)` + 3 次赋值 | 0.035 µs |
+| `{}` 字面量 + 3 次赋值 | 0.004 µs（8.1× 于上者，**本仓库复测不成立**） |
+| `getAttribute()`（1 次） | 8.4 ns |
+| `namespaceURI`（祖先链深度 200） | **2.867 µs/次** |
+
+判读：
+
+- **SAX 层已优于 JS 参考实现**（真实语料持平、属性密集更快、两处 O(n²) 被消除）。快路径里的 `indexOf` 跳跃与 `break scan` 应当保留。
+- **回归集中在 Element 建树层**：同一语料建树慢 24%，同深度建树慢 63%。嫌疑排序为"每标签 1~2 次 `Object.create(null)`"（**本仓库复测不成立**，见下）、`appendChild → insertBefore` 的额外层次（已落地）、`prefix`/`namespaceURI` 的 getter 开销。
+- **`namespaceURI` 是 O(depth) 且每次分配**：深度 200 单次 2.867 µs，`prefix` 每次 `indexOf` + `slice` 产生新字符串；`getElementsByTagNameNS` 因此是 O(n × depth)。
+- 其余可选项：`write(writer)` 每个属性 5 次回调；`escapeXML`/`escapeXMLText` 的正则可提到模块级复用。
+
+### 本仓库复测（2026-10-13，node v22 / i5-11400H / win32）
+
+| 项 | 上节的说法 | 本仓库实测 |
+|---|---|---|
+| `Object.create(null)` vs `{}` | 8× | **1.2×**（217 vs 180 ns / 百万次，差 ~37 ns） |
+| `namespaceURI` 单次 | depth 200 = 2.867 µs | depth 1 = 46 ns；depth 200 = 3.5 µs（量级复现） |
+| 全树 `getElementsByTagNameNS` | O(n·depth)（推断） | 9 元素 0.010 ms；65 元素 0.070 ms；201 元素链 0.457 ms |
+| 一条 4 标签 stanza | — | SAX 3.1 µs；`Parser.parse` 6.7 µs |
+| 分层复测（3 元素 stanza，同一文件） | — | SAX 1.31 µs → 加建树处理器 2.12 µs → `Parser.write` 2.22 µs；**建树 ≈ 0.81 µs/条（≈37%），合 271 ns/元素** |
+| 单元素 / 单次操作 | createElement 279 ns | `createElement` 无属性 9.5~103 ns、2 属性 70~86 ns、`appendChild` 18~19 ns、`prefix` 16 ns、`emit` 47 ns |
+
+判读：
+
+- **"每标签 1~2 次 `Object.create(null)` 是建树回归主因"不成立**：纯分配只比 `{}` 贵 ~37 ns。分层复测显示非 SAX 开销几乎全在建树，但拆到微操作后没有单项能解释 271 ns/元素——这类绝对值对测量上下文极其敏感、不可跨文件比较。真正能吃下量级的是**属性应用路径**：同文件内 `createElement`（2 属性）70~86 ns vs（无属性）9.5~21 ns。
+- **`namespaceURI` 的 O(depth) 只在深树才值钱**：XMPP 报文深度 ≤ 8，一次全树 NS 查询 0.010 ms；201 层的链才掉到 0.457 ms。`prefix` 单次 16 ns，构造期缓存的收益属噪音级。
+- **已落地的空表复用**（两处，同文件 A/B）：
+  - `LtxParser`：无属性标签共用一张冻结空表，遇到第一个属性值才分配。4 标签 stanza 3.13~3.34 → 2.81~2.83 µs/条（−13%~−15%）。
+  - `XMPPElement`：无属性元素共享空表。`createElement`（无属性）161~220 → 103~127 ns（−35%~−50%）；`Parser.parse`（4 标签）4.36~4.54 → 4.26~4.49 µs（−3%）；6 标签全无属性 3.75~3.76 → 3.52~3.81 µs（−3%~−6%）。
+- **已落地：`appendChild` 末尾追加改 `push`**：旧 `splice` 27.1~30.2 → 新 `push` 18.0~18.7 ns（−35%~−38%）。
+- **已落地：属性表所有权转移**：`LtxParser` 在 emit `startElement` 前 `Object.freeze(attrs)`，`Parser` 改调 `_createElementAdoptingAttrs` 直接接管；元素层以"冻结"作为「这张表不属于本元素」的标记，写属性时写时复制。同文件交替轮次实测 `createElement`（4 属性）753/892 → 315/465 ns（−48%~−58%），3 元素 stanza 的建树部分 1.84~3.98 → 0.60~0.80 µs/条（−67%~−80%）。语义由冻结兜底：`startElement` 监听方拿到只读表，元素后续写走 COW，不会反向改动监听方持有的表。
+- **已否决：解析器专用免校验挂载**（跳过自身/环/`NotFoundError`/`removeChild` 判定直接 `push`）。交替轮次 A/B 只省 1.1 ns/次挂载、2.5 ns/元素，对每元素 271 ns 是噪音级，不值得为此新增一个可绕过校验的内部 API。
+
+### 全层 A/B 的语料与方法（2026-10-13）
+
+把两版实现放进**同一个 Vitest 文件、同一个 harness** 逐层 A/B：每个用例先自适应定标迭代数（目标单轮 ~15 ms），再交替轮次采样（奇偶轮互换先后），各取自身最小值换算 ops/sec。**结果表见上文「逐 API 基线（2026-10-14，含上游对照）」**（同方法的更新版本），此处只保留语料定义与归因。
+
+| 名称 | 内容 | 大小 |
+|---|---|---|
+| `CHAT_MSG` | RFC 6121 §5.2.2 聊天消息 + XEP-0203 `delay` | 312 B |
+| `MUC_PRESENCE` | XEP-0045 §7.2.2 自身出席（`x`/`item`/`status`） | ≈300 B |
+| `ROSTER` | RFC 6121 §2.1.3 roster 结果（4 个 `item`） | 477 B |
+| `LONG_MSG` | 长正文消息 | ≈1.9 KB |
+| `SESSION` | 流头 + 15×上述四条 + 流尾 | 47 333 B |
+
+分片按 1 KB / 4 KB / 8 KB / 16 KB 切块 `write()`，模拟 socket 读块（TLS 记录 16 KB、明文读块可能更小）。
+
+归因（**已被后续改动覆盖的部分已标出**）：
+
+1. **属性表是建树层唯一的大杠杆**：`Object.assign({}, attrs)` 51 ns vs `Object.assign(Object.create(null), attrs)` 145 ns；`Object.keys` 循环写入 `{}` 84 ns vs 写入 null-proto 173 ns。即 null-proto 写入 ≈ +23 ns/属性，`Object.keys` 循环相对 `Object.assign` ≈ +30 ns/次。**已由属性表所有权转移消除**。
+2. **同一条属性数据在解析路径上被写两遍**（`LtxParser` 建表 → `_applyAttrs` 再建一张）。**已消除**。
+3. **建树层多出的 0.81 µs/条**中，属性约占 0.30 µs（8 个属性 × 37 ns），其余为 XMPP 语义带来的 `startElement`/`endElement` 透传 `emit`（上游 `Parser` 不转发）与 `streamRoot`/`stream:stream` 判定。
+4. **查询 API 是调用侧最大开销**：`QuerySelector.parse` 虽有解析缓存，但 `querySelector` 每次仍要 `new Set` + `findAll` + 按文档序重排时对整棵子树的遍历；`getElementsByTagName` 递归全树且每次 `new XMPPElementCollection`（Proxy 包装）。上游 `getChild` 只扫直接子节点，语义更窄因而更快。**`findAll` 的 Proxy 构造部分已消除（见上文已落地表），其余仍在**。
+5. **上游未修 fast-path 落空**：分片越小退化越重，这是本项目在 1 KB~8 KB 读块下快 2×~6.5× 的原因。
+6. **ns 级数字要谨慎读**：取属性同一操作在三处测出 3.0 / 7.8 / 12.1 ns（inline cache 随元素形状数变化）。表内每行比例可信，跨行绝对值不可直接比较。
+
+### XMPP 场景剪枝方案（原 §4.9，尚未实施）
+
+XMPP 的查询负载有三个特点：**树小且浅**（一条 stanza 通常 10~100 个元素、深度 ≤ 8）、**建成后只读**、**选择器形态高度集中**（绝大多数是"单 tag"、"tag + 属性"、"两层父子"，几乎不用类选择器与兄弟组合符）。据此分四层剪枝。
+
+#### A. 形态剪枝（编译期分派，收益最大）
+
+解析完选择器后判定形态，命中就走专用匹配器——不构造 `SelectorItem`、不进通用回溯：
+
+| 形态 | 例 | 专用实现 |
+|---|---|---|
+| 单个 tag | `body`、`show` | 直接比 `localName` 的前序扫描，命中即返回 |
+| 单 `#id` / `tag#id` | `#x1` | 先比属性 `id`（O(1) 属性查表） |
+| 两层父子 / 后代 | `message > body`、`iq query` | 两段正向推进：第一段命中集合 → 只在其次级/子树找第二段 |
+| `*` | `*` | 等价"所有元素"，无需匹配 |
+| 含 `\|` 前缀 | `stream\|features` | 先按 `localName` 过滤，再验前缀 |
+
+其余复杂形态（伪类、兄弟组合符、多步后代）才落通用引擎。
+
+#### B. 遍历剪枝（运行期）
+
+- **深度上限**：`maxDepth` 默认 64，超过即停止下探。正常 XMPP 报文远小于 64，无副作用，却能挡住深嵌套栈溢出。
+- **元素数组缓存**：在元素上惰性缓存"仅元素子节点"的数组（happy-dom 的 `PropertySymbol.elementArray` 就是这个思路）。注意 `findAll` 改为直访 `childNodes` 后已拿到大部分收益，再维护缓存字段的边际收益有限（每元素省一次 `instanceof`）。
+- **兄弟轴按需**：只有 `+`/`~` 需要兄弟索引；XMPP 几乎不用，通用引擎里用线性回扫即可。
+- **起点即 stanza 根**：第一步 tag 比较就把无关分支剪掉。
+
+#### C. 缓存剪枝（跨调用）
+
+happy-dom 用"per-node 结果缓存 + `affectsCache` 广播失效"，ltx 的等价物可以更省：**版本号失效**。
+
+```ts
+export class XMPPElement {
+  private _version = 0;                                              // 结构/属性变更时自增
+  private _queryCache?: Map<string, { version: number; result: XMPPNodeList }>;
+
+  private _bumpVersion(): void {
+    for (let n: XMPPElement | null = this; n; n = n.parentNode) n._version++;   // 沿祖先链冒泡
+  }
+
+  public querySelectorAll(selectors: string): XMPPNodeList {
+    const cache = (this._queryCache ??= new Map());
+    const hit = cache.get(selectors);
+    if (hit && hit.version === this._version) return hit.result;      // stanza 只读 → 命中率极高
+    const result = new XMPPNodeList(QuerySelector.querySelectorAll(this, selectors));
+    if (cache.size >= 8) cache.clear();                              // 每元素最多 8 条，粗粒度但够用
+    cache.set(selectors, { version: this._version, result });
+    return result;
+  }
+}
+```
+
+两条约束：**(a)** 子树变更必须沿祖先链冒泡（O(depth)，只在写操作时付一次）；**(b)** 若不想碰写路径，也可以只在 `Parser` 产出的"不可变 stanza"上启用缓存。是否值得做取决于插件对同一 stanza 的重复查询频率。
+
+#### D. API 剪枝：热路径不过选择器引擎
+
+两者不是二选一，而是分层：DOM 风格 API（`querySelector`/`querySelectorAll`）负责通用与可读性；XMPP 热路径用只看直接子节点的专用 API（`getChild`/`getChildren`/`getChildText`，JS 版本来就有，TS 版移植时未带上）。同一条 stanza 上 `el.getChild("body")` 只是几次标签比较，`el.querySelector("body")` 要构造集合 + 正向下探 + 走匹配器。
+
+#### E. 防护阈值
+
+`maxDepth`（默认 64）、`maxSteps`（单次匹配预算）、可选 `maxResults`，三者均可覆盖，让深嵌套与选择器复杂度在库内部消解，而不是把防护责任推给调用方。
+
 ## 复验结论：以下曾被疑为缺陷，经 RFC 6120 对照**不视为问题**
 
 - 忽略注释/处理指令、不建树：§11.1 将**注释、处理指令、DTD 子集、非预定义实体引用**列为 prohibited（发送方 MUST NOT 注入；接收方收到 SHOULD 回 `<restricted-xml/>` 关流，§11.1 行为规则 2 + §4.9.3.18），本库选择容忍忽略——real-world 互操作更宽松；注意 `<?xml?>` 声明不属该禁列，§11.5 要求流头前 SHOULD 发送

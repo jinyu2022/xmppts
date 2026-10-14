@@ -27,8 +27,8 @@
 
 ## 地址与命名空间
 
-- [JID](JID.ts#L25) 的 `full` 在有 resource 时返回 `bare/resource`，无 resource 时返回 `bare`，不会追加空 `/`。
-- [XMPPElement](ltx/Element.ts#L105) 的 `namespaceURI` 在显式 `xmlns=""` 下返回 `null`，后代同样不继承外层默认命名空间；前缀绑定及子元素重新声明的命名空间不受影响。
+- [JID](JID.ts#L12) 的 `full` 在有 resource 时返回 `bare/resource`，无 resource 时返回 `bare`，不会追加空 `/`。
+- [XMPPElement](ltx/Element.ts#L79) 的 `namespaceURI` 在显式 `xmlns=""` 下返回 `null`，后代同样不继承外层默认命名空间；前缀绑定及子元素重新声明的命名空间不受影响。
 
 ## XML 属性与字符引用
 
@@ -74,6 +74,7 @@
 | [XEP-0054](plugins/xep0054/readme.md) | vCard-Temp（已废弃） | 静态解析方法，供其他插件复用 |
 | [XEP-0077](plugins/xep0077/readme.md) | 带内注册 | 独立 socket，手动实例化 |
 | [XEP-0082](plugins/xep0082/readme.md) | 日期/时间格式化 | 静态工具函数 |
+| [XEP-0106](plugins/xep0106/readme.md) | JID 转义 | 静态转义/反转义工具 |
 | [XEP-0128](plugins/xep0128/readme.md) | 服务发现扩展 | 由 XEP-0030 内部调用 |
-| [XEP-0153](plugins/xep0153/readme.md) | vCard 头像（遗留） | 静态方法，供 MU
-| [XEP-0425](plugins/xep0425/readme.md) | 审核消息撤回 | 实现 `Plugin` 接口，但未登记在 `pluginLoaders` |
+| [XEP-0153](plugins/xep0153/readme.md) | vCard 头像（遗留） | 静态方法，供 MUC 等兼容场景复用 |
+| [XEP-0392](plugins/xep0392/readme.md) | 一致性颜色生成 | 静态方法，由字符串确定性生成颜色 |

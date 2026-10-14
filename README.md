@@ -17,7 +17,7 @@
 import { Client } from "xmppjs";
 
 const client = new Client("user@example.com", "password", {
-  protocol: "xmpp", // 或 "xmpps"（直连 TLS）
+  protocol: "xmpp", // 目前仅 "xmpp"（Node）可用；直连 TLS 由 XEP-0368 插件在连接前接入，无需改此项
 });
 client.registerDefaultPlugins();
 client.on("session:start", () => {

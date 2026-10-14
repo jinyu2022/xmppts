@@ -228,6 +228,7 @@ export class XMPPConnection extends EventEmitter {
       // socket 优先由中间件 setSocket 注入，未注入时创建默认明文 Socket（RFC 6120）
       // keepAlive 属 net.Socket 构造选项，connect() 的选项不支持
       this.socket ??= new Socket({ keepAlive: true });
+      // 规范强制要求使用 UTF-8 编码（RFC 6120 §4.7.1）
       this.socket.setEncoding("utf8");
       this.setupSocketListeners();
       // pending=未连上 connecting=无人拨号 → 仅"未拨号"socket 由连接层拨号
@@ -416,9 +417,9 @@ export class XMPPConnection extends EventEmitter {
       return;
     }
     // RFC 6120 §5.4.1：服务器宣告的 starttls 元素
-    const starttls = ctx.stanza
-      .getElementsByTagName("starttls")
-      .find((element) => element.namespaceURI === XMPPConnection.STARTTLS_NS);
+    const starttls = Array.from(
+      ctx.stanza.getElementsByTagName("starttls"),
+    ).find((element) => element.namespaceURI === XMPPConnection.STARTTLS_NS);
     const serverRequiresTLS =
       Boolean(starttls?.getElementsByTagName("required").length);
     // 本地方针要求 TLS，或服务器强制要求 → 升级

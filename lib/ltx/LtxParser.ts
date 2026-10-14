@@ -24,6 +24,11 @@ const STATE_ATTR_VALUE = 8;
 const STATE_CDATA = 9;
 // const STATE_IGNORE_CDATA = 10; // 原始代码中未使用，此处省略
 /**
+ * 无属性标签共享的空属性表（null 原型 + 冻结）。
+ * 解析器不再为每个标签分配空表，遇到第一个属性值时才换成真正的属性表。
+ */
+const EMPTY_ATTRS = Object.freeze(Object.create(null)as Record<string, string>)  ;
+/**
  * LtxParser 事件类型映射定义
  */
 interface LtxParserEvents {
@@ -57,13 +62,18 @@ export class LtxParser extends EventEmitter {
   private remainder: string | null = null;
   private parseRemainder: boolean = false;
   private tagName: string | undefined;
-  private attrs: Record<string, string> = Object.create(null) as Record<string, string>;
+  /** 当前标签的属性表；无属性时指向共享的 EMPTY_ATTRS，首个属性值才分配新表 */
+  private attrs: Record<string, string> = EMPTY_ATTRS;
   private endTag: boolean | undefined;
   private selfClosing: boolean | undefined;
   private attrQuote: number | undefined;
   private attrQuoteChar: string | undefined;
   private recordStart: number | undefined = 0;
   private attrName: string | undefined;
+  /** Buffer 输入用的流式解码器：跨 chunk 保留不完整的 UTF-8 字节序列 */
+  private readonly decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+  /** 已调用 end()：此后写入属调用方错误 */
+  private ended: boolean = false;
 
   constructor() {
     super();
@@ -78,6 +88,8 @@ export class LtxParser extends EventEmitter {
     if (!tagName) return;
 
     if (!endTag) {
+      // 先冻结再 emit：属性表交给监听方（Parser）后由元素直接接管，冻结用于标记"这张表不属于元素"
+      Object.freeze(attrs);
       // 遇到开始标签 -> 触发 startElement
       this.emit("startElement", tagName, attrs);
       // 若为自闭合标签，同时触发 endElement
@@ -94,10 +106,15 @@ export class LtxParser extends EventEmitter {
    * 向底层解析器写入数据（流式解析）。
    */
   public write(data: string | Buffer): void {
-    let strData = data;
-    if (typeof strData !== "string") {
-      strData = data.toString();
+    if (this.ended) {
+      throw new Error("Cannot write after end().");
     }
+    // Buffer 按 XMPP 强制的 UTF-8 流式解码（RFC 6120 §11.6）：跨 chunk 的不完整序列由解码器保留；
+    // ignoreBOM 使 U+FEFF 按规范作为零宽不换行空格保留，与 Buffer.toString/setEncoding("utf8") 一致
+    const strData =
+      typeof data === "string"
+        ? data
+        : this.decoder.decode(data, { stream: true });
 
     let pos = 0;
     let currentData = strData;
@@ -185,7 +202,7 @@ export class LtxParser extends EventEmitter {
             this.state = STATE_TAG_NAME;
             // 记录标签名开始位置（紧随 '<' 之后）
             this.recordStart = pos + 1;
-            this.attrs = Object.create(null) as Record<string, string>;
+            this.attrs = EMPTY_ATTRS;
             this.endTag = false;
             this.selfClosing = false;
           }
@@ -199,6 +216,8 @@ export class LtxParser extends EventEmitter {
                 this.emit("text", cData);
               }
               this.state = STATE_TEXT;
+              // 从 ']]>' 之后重新开始记录文本，否则紧随其后的同块文本会被丢弃
+              this.recordStart = pos + 3;
             } else if (currentData.length < pos + 2) {
               // 剩余数据不足，等待下一次写入继续判断
               this.parseRemainder = true;
@@ -268,7 +287,7 @@ export class LtxParser extends EventEmitter {
             this._handleTagOpening(this.endTag, this.tagName, this.attrs);
             // 重置与准备下一次
             this.tagName = undefined;
-            this.attrs = Object.create(null) as Record<string, string>;
+            this.attrs = EMPTY_ATTRS;
             this.endTag = undefined;
             this.selfClosing = undefined;
             this.state = STATE_TEXT;
@@ -309,6 +328,10 @@ export class LtxParser extends EventEmitter {
           if (c === this.attrQuote) {
             const value = endRecording();
             if (this.attrName && value !== undefined) {
+              if (this.attrs === EMPTY_ATTRS) {
+                // 共享表只读，遇到首个属性才分配真正的属性表
+                this.attrs = Object.create(null) as Record<string, string>;
+              }
               // 属性值需要进行 XML 实体转义还原
               this.attrs[this.attrName] = unescapeXML(value);
             }
@@ -335,13 +358,19 @@ export class LtxParser extends EventEmitter {
       this.write(data);
     }
 
+    // 冲掉解码器中残留的不完整字节（不足一个字符的部分按替换字符输出）
+    const flushed = this.decoder.decode();
+    if (flushed) {
+      this.write(flushed);
+    }
+
     // 如果在 STATE_TEXT 状态下有剩余文本，将其作为最后一个文本节点发出
     if (this.state === STATE_TEXT && this.remainder) {
       this.emit("text", unescapeXML(this.remainder));
       this.remainder = null;
     }
 
-    /* 禁用后续写入（解析结束） */
-    this.write = function write() {};
+    /* 标记解析结束，后续 write 将抛错 */
+    this.ended = true;
   }
 }

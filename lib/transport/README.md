@@ -56,7 +56,7 @@
 *   **客户端动作:**
     1.  **DNS 解析 FQDN** (Section 3.2): 解析服务器的完全限定域名（FQDN）以获取 IP 地址和端口。
     2.  **建立 TCP 连接** (Section 3.1): 通过解析得到的地址和端口建立持久的 TCP 连接。
-*   **对应代码:** [connect()](tcp.ts#L178)（SRV 解析 L211-L217）、[setupSocketListeners()](tcp.ts#L259)
+*   **对应代码:** [connect()](tcp.ts#L183)（SRV 解析 L211-L224）、[setupSocketListeners()](tcp.ts#L270)
 
 ## 2. 流建立 (Stream Establishment)
 
@@ -87,7 +87,7 @@
         xmlns='jabber:client'
         xmlns:stream='http://etherx.jabber.org/streams'>
     ```
-*   **对应代码:** [openStream()](tcp.ts#L378)、[sendStreamHeader()](tcp.ts#L571)
+*   **对应代码:** [openStream()](tcp.ts#L397)、[sendStreamHeader()](tcp.ts#L590)
 
 ## 3. 流协商：传输层安全 (TLS Negotiation)
 
@@ -113,7 +113,7 @@
     <proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>
     ```
     *   **执行 TLS 握手** (Section 5.4.3): 客户端和服务器在底层 TCP 连接上执行 TLS 握手。
-*   **对应代码:** [onFeaturesStartTls()](tcp.ts#L386)、[onStartTls()](tcp.ts#L445)、[upgradeToTLS()](tcp.ts#L602)
+*   **对应代码:** [onFeaturesStartTls()](tcp.ts#L405)、[onStartTls()](tcp.ts#L464)、[upgradeToTLS()](tcp.ts#L621)
 
 ## 4. 流重启 (Post-TLS Stream Restart)
 
@@ -144,7 +144,7 @@ TLS 握手成功后，必须重启 XML 流以清除旧的流上下文，并在�
         xmlns='jabber:client'
         xmlns:stream='http://etherx.jabber.org/streams'>
     ```
-*   **对应代码:** [upgradeToTLS()](tcp.ts#L602) 内 `secureConnect`（L614-L617）→ [sendStreamHeader()](tcp.ts#L571)
+*   **对应代码:** [upgradeToTLS()](tcp.ts#L621) 内 `secureConnect`（L634-L636）→ [sendStreamHeader()](tcp.ts#L590)
 
 ## 5. 流协商：认证 (SASL Negotiation)
 
@@ -284,8 +284,8 @@ SASL 认证成功后，必须再次重启 XML 流以清除旧的流上下文，�
 
 在资源绑定之后，客户端被认为已登录。RFC 6120 起不再要求独立的会话建立步骤（RFC 3921 的 `<iq type='set'><session/></iq>` 已废弃，个别老服务器仍会宣告 `urn:ietf:params:xml:ns:xmpp-session`）。
 
-*   **客户端动作 (C:):** 无——绑定成功后本库直接触发 `session:start`（见 [Connection._setupSocketEvents()](../connection.ts#L358)）。
-*   **对应代码:** 如需向老服务器补发 `<session/>`，可自行用 [sendAsync()](../connection.ts#L644) 实现。
+*   **客户端动作 (C:):** 无——绑定成功后本库直接触发 `session:start`（见 [Connection._setupSocketEvents()](../connection.ts#L414)）。
+*   **对应代码:** 如需向老服务器补发 `<session/>`，可自行用 [sendAsync()](../connection.ts#L744) 实现。
 
 ## 9. 节交换 (Stanza Exchange)
 
@@ -302,7 +302,7 @@ SASL 认证成功后，必须再次重启 XML 流以清除旧的流上下文，�
     ```
 *   **服务器动作 (S:):**
     *   **接收并路由/投递节。**
-*   **对应代码:** 发送 [Connection.send()](../connection.ts#L595)；接收 [route()](tcp.ts#L332) 分发 → `stanza` 事件 → [Connection 转发](../connection.ts#L381)
+*   **对应代码:** 发送 [Connection.send()](../connection.ts#L682)；接收 [route()](tcp.ts#L351) 分发 → `stanza` 事件 → [Connection 转发](../connection.ts#L439)
 
 ## 10. 流关闭 (Stream Closure)
 
