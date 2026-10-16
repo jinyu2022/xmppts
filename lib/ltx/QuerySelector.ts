@@ -44,6 +44,8 @@ export default class QuerySelector {
 
   /**
    * 查找与选择器匹配的第一个后代元素（前序，不含 node 自身）。
+   *
+   * 前序 DFS 命中即返回：CSS 规定取文档序最前的匹配元素，前序天然满足。
    * @param node 查找起点。
    * @param selector CSS 选择器。
    * @returns 匹配的元素，无匹配返回 null。
@@ -52,7 +54,19 @@ export default class QuerySelector {
     node: XMPPElement,
     selector: string,
   ): XMPPElement | null {
-    return this.querySelectorAll(node, selector)[0] ?? null;
+    const groups = this.parse(selector, "querySelector");
+    const stack: XMPPElement[] = [];
+    this.pushChildren(stack, node);
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      for (const group of groups) {
+        if (this.matchesSelector(current, group, node, group.length - 1)) {
+          return current;
+        }
+      }
+      this.pushChildren(stack, current);
+    }
+    return null;
   }
 
   /**

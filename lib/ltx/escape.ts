@@ -1,3 +1,4 @@
+/** 特殊字符 → 实体引用；引号仅属性值需要转义 */
 const escapeXMLTable = {
   "&": "&amp;",
   "<": "&lt;",
@@ -7,12 +8,33 @@ const escapeXMLTable = {
 } as const;
 
 /**
- * 替换匹配到的特殊字符为 XML 实体
- * @param match 匹配到的特殊字符
- * @returns 对应的 XML 实体
+ * 快速失败用的非全局正则（`.test()` 不进 JS 回调）
+ *
+ * 字符集须与 escapeXMLTable 的键保持同步，TEXT 版不含引号
  */
-function escapeXMLReplace(match: keyof typeof escapeXMLTable) {
-  return escapeXMLTable[match];
+const NEEDS_ESCAPE_ATTR = /["&'<>]/;
+const NEEDS_ESCAPE_TEXT = /[&<>]/;
+
+/**
+ * 手工扫描转义：无特殊字符时零分配返回原串，否则逐字符查表拼接
+ * @param s 待转义字符串
+ * @param needs 快速失败用的非全局正则
+ * @param inAttribute 属性值需转义引号，元素文本不需要
+ */
+function escapeWith(s: string, needs: RegExp, inAttribute: boolean): string {
+  if (!needs.test(s)) return s;
+  let out = "";
+  let last = 0;
+  for (let i = 0, n = s.length; i < n; i++) {
+    const ch = s.charAt(i);
+    const entity = escapeXMLTable[ch as keyof typeof escapeXMLTable];
+    if (entity === undefined) continue;
+    // 引号只在属性值中需要转义
+    if (!inAttribute && (ch === '"' || ch === "'")) continue;
+    out += s.slice(last, i) + entity;
+    last = i + 1;
+  }
+  return out + s.slice(last);
 }
 
 const unescapeXMLTable = {
@@ -58,24 +80,17 @@ function unescapeXMLReplace(match: string): string {
   }
 
   // 处理预定义的命名实体
-  const result = unescapeXMLTable[match as keyof typeof unescapeXMLTable];
-  if (result) {
-    return result;
-  } else {
-    throw new Error("Illegal XML entity " + match);
-  }
+  const result: string | undefined = unescapeXMLTable[match as keyof typeof unescapeXMLTable];
+  if (result !== undefined) return result;
+  throw new Error("Illegal XML entity " + match);
 }
 
-/**
- * 转义 XML 属性值或元素名称中的特殊字符 (&, <, >, ", ')
- */
+/** 转义 XML 属性值中的特殊字符：& < > " ' */
 export function escapeXML(s: string): string {
-   // @ts-expect-error replace 参数类型推断有误，escapeXMLReplace必定传入"&'<>
-  return s.replace(/["&'<>]/g, escapeXMLReplace);
+  return escapeWith(s, NEEDS_ESCAPE_ATTR, true);
 }
-/**
- * 反转义 XML 属性值或元素名称中的实体引用
- */
+
+/** 反转义 XML 属性值中的实体引用；未知实体或非法字符引用抛错 */
 export function unescapeXML(s: string): string {
   let result = "";
   let start: number;
@@ -92,26 +107,24 @@ export function unescapeXML(s: string): string {
     previous = end + 1;
   }
 
-  // shortcut if loop never entered:
-  // return the original string without creating new objects
+  // 循环未进入时直接返回原串，不创建新对象
   if (previous === 0) return s;
 
-  // push the remaining characters
+  // 追加剩余字符
   result = result + s.substring(previous);
 
   return result;
 }
 
-/**
- * 转义 XML 文本内容中的特殊字符 (&, <, >)
- */
+/** 转义 XML 文本内容中的特殊字符：& < > */
 export function escapeXMLText(s: string): string {
-  // @ts-expect-error replace 参数类型推断有误，escapeXMLReplace必定传入&<>
-  return s.replace(/[&<>]/g, escapeXMLReplace);
+  return escapeWith(s, NEEDS_ESCAPE_TEXT, false);
 }
 
 /**
- * 反转义 XML 文本内容中的实体引用 (&amp;, &lt;, &gt;)
+ * 反转义 XML 文本内容中的实体引用，escapeXMLText 的逆向
+ *
+ * 仅还原 & < > 的命名、十进制、十六进制写法；白名单之外保持原样，不抛错
  */
 export function unescapeXMLText(s: string): string {
   // 仅处理文本中常见的实体，包括数字实体

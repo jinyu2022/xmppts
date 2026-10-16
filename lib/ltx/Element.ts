@@ -138,12 +138,12 @@ export class XMPPElement {
    * @param tagName 元素的标签名
    * @param attrs SAX 产出的属性表；调用方交出后不得再写入
    * @returns 新创建的 XMPPElement 实例
+   * @private
    */
   public static _createElementAdoptingAttrs(
     tagName: string,
     attrs: Record<string, string>,
   ): XMPPElement {
-    Object.freeze(attrs);
     const el = new XMPPElement(tagName);
     el._attrs = attrs;
     return el;
@@ -368,9 +368,10 @@ export class XMPPElement {
     const traverse = (el: XMPPElement) => {
       for (const child of el._childNodes) {
         if (child instanceof XMPPElement) {
-          const nsMatch = ns === "*" || child.namespaceURI === ns;
+          // 先比 localName：namespaceURI 在元素无 xmlns 声明时要上溯父链，名为不匹配的元素不该付这笔钱
           const nameMatch = localName === "*" || child.localName === localName;
-          if (nsMatch && nameMatch) {
+          const nsMatch = nameMatch && (ns === "*" || child.namespaceURI === ns);
+          if (nsMatch) {
             result.push(child);
           }
           traverse(child);
@@ -528,7 +529,7 @@ export class XMPPElement {
    * @param level 内部使用，当前缩进级别
    * @returns 格式化的 XML 字符串
    */
-  public toXMLString(indent?: string | number, level: number = 1): string {
+  public toXMLString(indent?: string | number, level = 1): string {
     const indentStr = typeof indent === "number" ? " ".repeat(indent) : indent;
 
     let s = `<${this.tagName}`;

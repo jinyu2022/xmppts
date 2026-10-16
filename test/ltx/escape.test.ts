@@ -85,4 +85,9 @@ describe("unescapeXMLText", () => {
     expect(unescapeXMLText("&amp;&lt;&gt;&#38;")).toBe("&<>&");
     expect(unescapeXMLText("&quot;&apos;")).toBe("&quot;&apos;");
   });
+
+  it("还原十进制与十六进制数字引用", () => {
+    expect(unescapeXMLText("&#60;&#62;")).toBe("<>");
+    expect(unescapeXMLText("&#x26;&#x3c;&#x3e;")).toBe("&<>");
+  });
 });
