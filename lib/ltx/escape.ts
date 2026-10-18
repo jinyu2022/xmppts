@@ -62,7 +62,7 @@ function unescapeXMLReplace(match: string): string {
     }
     const isHex = match.startsWith("&#x");
     const numStr = isHex ? match.slice(3, -1) : match.slice(2, -1);
-    const num = parseInt(numStr, isHex ? 16 : 10);
+    const num = Number.parseInt(numStr, isHex ? 16 : 10);
 
     // https://www.w3.org/TR/xml/#NT-Char 定义了合法的 XML 字符范围:
     // #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
@@ -100,10 +100,8 @@ export function unescapeXML(s: string): string {
     (start = s.indexOf("&", previous)) !== -1 &&
     (end = s.indexOf(";", start + 1)) !== -1
   ) {
-    result =
-      result +
-      s.slice(previous, start) +
-      unescapeXMLReplace(s.slice(start, end + 1));
+    result +=
+      s.slice(previous, start) + unescapeXMLReplace(s.slice(start, end + 1));
     previous = end + 1;
   }
 
@@ -111,7 +109,7 @@ export function unescapeXML(s: string): string {
   if (previous === 0) return s;
 
   // 追加剩余字符
-  result = result + s.substring(previous);
+  result += s.substring(previous);
 
   return result;
 }

@@ -27,7 +27,9 @@ const STATE_CDATA = 9;
  * 无属性标签共享的空属性表（null 原型 + 冻结）。
  * 解析器不再为每个标签分配空表，遇到第一个属性值时才换成真正的属性表。
  */
-const EMPTY_ATTRS = Object.freeze(Object.create(null)as Record<string, string>)  ;
+const EMPTY_ATTRS = Object.freeze(
+  Object.create(null) as Record<string, string>,
+);
 /**
  * LtxParser 事件类型映射定义
  */
@@ -46,20 +48,23 @@ interface LtxParserEvents {
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export interface LtxParser {
   on<K extends keyof LtxParserEvents>(
-    event: K, listener: (...args: LtxParserEvents[K]) => void
+    event: K,
+    listener: (...args: LtxParserEvents[K]) => void,
   ): this;
   emit<K extends keyof LtxParserEvents>(
-    event: K, ...args: LtxParserEvents[K]
+    event: K,
+    ...args: LtxParserEvents[K]
   ): boolean;
 }
 /**
  * LtxParser 类：基于状态机的流式 XML 解析器（SAX-like）。
- * 继承自 EventEmitter，触发 'startElement', 'endElement', 'text', 'error' 事件。
+ * 继承自 EventEmitter，触发 'startElement', 'endElement', 'text' 事件。
  */
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export class LtxParser extends EventEmitter {
   private state: number = STATE_TEXT;
   private remainder: string | null = null;
+  /** 下次 write 时从 remainder 开头重新扫描（其中可能含有未完成的 CDATA/`<!` 前缀） */
   private parseRemainder: boolean = false;
   private tagName: string | undefined;
   /** 当前标签的属性表；无属性时指向共享的 EMPTY_ATTRS，首个属性值才分配新表 */
@@ -75,16 +80,14 @@ export class LtxParser extends EventEmitter {
   /** 已调用 end()：此后写入属调用方错误 */
   private ended: boolean = false;
 
-  constructor() {
-    super();
-    // 绑定 write 方法，以便在 end() 中可以安全地调用
-    this.write = this.write.bind(this);
-  }
-
   /**
    * 处理打开/关闭标签并触发对应事件。
    */
-  private _handleTagOpening(endTag: boolean | undefined, tagName: string | undefined, attrs: Record<string, string>) {
+  private _handleTagOpening(
+    endTag: boolean | undefined,
+    tagName: string | undefined,
+    attrs: Record<string, string>,
+  ) {
     if (!tagName) return;
 
     if (!endTag) {
@@ -111,13 +114,11 @@ export class LtxParser extends EventEmitter {
     }
     // Buffer 按 XMPP 强制的 UTF-8 流式解码（RFC 6120 §11.6）：跨 chunk 的不完整序列由解码器保留；
     // ignoreBOM 使 U+FEFF 按规范作为零宽不换行空格保留，与 Buffer.toString/setEncoding("utf8") 一致
-    const strData =
+    let pos = 0;
+    let currentData =
       typeof data === "string"
         ? data
         : this.decoder.decode(data, { stream: true });
-
-    let pos = 0;
-    let currentData = strData;
 
     /* 处理上次留下的未完成数据片段 */
     if (this.remainder) {
@@ -343,14 +344,17 @@ export class LtxParser extends EventEmitter {
     }
 
     // 若还有未完成的记录片段，则保存为 remainder 以供下一次 write 使用
-    if (typeof this.recordStart === "number" && this.recordStart <= currentData.length) {
+    if (
+      typeof this.recordStart === "number" &&
+      this.recordStart <= currentData.length
+    ) {
       this.remainder = currentData.slice(this.recordStart);
       this.recordStart = 0;
     }
   }
 
   /**
-   * 结束输入并在没有错误时根据解析结果触发 'tree' 或 'error'。
+   * 结束输入：可选地写入剩余数据，冲掉解码器残留字节，发出尾部文本并禁止后续 write。
    */
   public end(data?: string | Buffer): void {
     // 可选地在结束时写入剩余数据

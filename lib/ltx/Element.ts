@@ -1,4 +1,7 @@
-import { XMPPElementCollection, XMPPNodeList } from "./XMPPElementCollection.js";
+import {
+  XMPPElementCollection,
+  XMPPNodeList,
+} from "./XMPPElementCollection.js";
 import { escapeXML, escapeXMLText } from "./escape.js";
 import QuerySelector from "./QuerySelector.js";
 /** DOM-inspired：文本节点用 string，元素节点用 XMPPElement */
@@ -8,14 +11,23 @@ type XMPPNode = XMPPElement | string;
  * 无属性元素共享的空属性表（null 原型 + 冻结）。
  * 冻结同时是「这张表不属于本元素」的标记：首次写入属性时才复制成自己的表。
  */
-const EMPTY_ATTRS = Object.freeze(Object.create(null) as Record<string, string>);
+const EMPTY_ATTRS = Object.freeze(
+  Object.create(null) as Record<string, string>,
+);
 
 /**
  * DOM-inspired XML 元素（XMPP/LTX）。
- * 命名与常用行为贴近 DOM，但不是完整 WHATWG 实现。
+ *
+ * 命名与常用行为贴近 DOM，但不是完整 WHATWG 实现：
+ * - 只实现 XMPP 所需的 DOM 子集，选择器支持范围见 QuerySelector。
+ * - 集合（`childNodes` / `children` / `getElementsByTagName*` / `querySelectorAll`）
  */
 export class XMPPElement {
   public readonly tagName: string;
+  /** `tagName` 的前缀部分，undefined 表示尚未计算（首次访问 prefix 时填充） */
+  private _prefix?: string | null;
+  /** `tagName` 的本地名，undefined 表示尚未计算（首次访问 localName 时填充） */
+  private _localName?: string;
   private _parentNode: XMPPElement | null = null;
   /** 内部可写子节点列表 */
   private _childNodes: XMPPNode[] = [];
@@ -26,7 +38,7 @@ export class XMPPElement {
   private _ensureAttrs(): Record<string, string> {
     if (this._attrs === EMPTY_ATTRS) {
       this._attrs = Object.create(null) as Record<string, string>;
-    } else if(Object.isFrozen(this._attrs)) {
+    } else if (Object.isFrozen(this._attrs)) {
       const own = Object.create(null) as Record<string, string>;
       Object.assign(own, this._attrs);
       this._attrs = own;
@@ -45,22 +57,18 @@ export class XMPPElement {
     namespaceURI: string | null = null,
     qualifiedName?: string,
   ) {
-    if (qualifiedName && !tagName) {
-      this.tagName = qualifiedName;
-    } else if (tagName && !namespaceURI && !qualifiedName) {
-      this.tagName = tagName;
-    } else {
-      throw new Error("必须提供 tagName 或 qualifiedName");
-    }
+    // 私有调用点只有两种形态：createElement 传 tagName，createElementNS 传 qualifiedName
+    this.tagName = (tagName || qualifiedName)!;
 
     if (namespaceURI) {
       // 新建元素的 _attrs 必为共享空表，直接换成本元素的表
       this._attrs = Object.create(null) as Record<string, string>;
-      this._attrs[this.prefix ? `xmlns:${this.prefix}` : "xmlns"] = namespaceURI;
+      this._attrs[this.prefix ? `xmlns:${this.prefix}` : "xmlns"] =
+        namespaceURI;
     }
   }
 
-  /** 只读子节点列表（DOM 风格） */
+  /** 只读子节点列表（DOM 风味快照，非 live；运行时是原生数组） */
   public get childNodes(): readonly XMPPNode[] {
     return this._childNodes;
   }
@@ -69,8 +77,22 @@ export class XMPPElement {
    * 获取元素标签名的前缀 (e.g., "ns:tag" -> "ns")。
    */
   public get prefix(): string | null {
-    const idx = this.tagName.indexOf(":");
-    return idx >= 0 ? this.tagName.slice(0, idx) : null;
+    if (this._prefix === undefined) {
+      const idx = this.tagName.indexOf(":");
+      this._prefix = idx >= 0 ? this.tagName.slice(0, idx) : null;
+    }
+    return this._prefix;
+  }
+
+  /**
+   * 获取不带前缀的本地名称 (e.g., "ns:tag" -> "tag")。
+   */
+  public get localName(): string {
+    if (this._localName === undefined) {
+      const idx = this.tagName.indexOf(":");
+      this._localName = idx >= 0 ? this.tagName.slice(idx + 1) : this.tagName;
+    }
+    return this._localName;
   }
 
   /**
@@ -119,7 +141,7 @@ export class XMPPElement {
   }
 
   public static createElementNS(
-    namespaceURI: string,
+    namespaceURI: string | null,
     qualifiedName: string,
     attrs?: Record<string, string | number>,
   ): XMPPElement {
@@ -169,11 +191,21 @@ export class XMPPElement {
   }
 
   /**
-   * 获取不带前缀的本地名称 (e.g., "ns:tag" -> "tag")。
+   * 子节点参数校验：要求传入值为 XMPPElement，否则抛 TypeError。
+   * @param value 待校验的参数值
+   * @param method 调用方方法名，用于错误文案
+   * @param position 参数位置（从 1 开始）
    */
-  public get localName(): string {
-    const idx = this.tagName.indexOf(":");
-    return idx >= 0 ? this.tagName.slice(idx + 1) : this.tagName;
+  private static _assertElement(
+    value: unknown,
+    method: string,
+    position: number,
+  ): asserts value is XMPPElement {
+    if (!(value instanceof XMPPElement)) {
+      throw new TypeError(
+        `Failed to execute '${method}' on 'Node': parameter ${position} is not of type 'XMPPElement'.`,
+      );
+    }
   }
 
   /**
@@ -186,21 +218,19 @@ export class XMPPElement {
   /**
    * 设置属性值（值强制转为字符串）。
    */
-  public setAttribute(name: string, val: string): this {
+  public setAttribute(name: string, val: string): void {
     this._ensureAttrs()[String(name)] = String(val);
-    return this;
   }
 
   /**
    * 移除属性。
    */
-  public removeAttribute(name: string): this {
+  public removeAttribute(name: string): void {
     const key = String(name);
     // 表里没有该属性时无需复制（冻结表是共享的）
     if (key in this._attrs) {
       delete this._ensureAttrs()[key];
     }
-    return this;
   }
 
   /**
@@ -284,9 +314,9 @@ export class XMPPElement {
 
   /**
    * 本节点是否包含给定节点（含自身），对齐 DOM `Node.contains`。
-   * @param other 待判定节点
+   * @param other 待判定节点；null 返回 false
    */
-  public contains(other: XMPPElement): boolean {
+  public contains(other: XMPPElement | null): boolean {
     for (let p: XMPPElement | null = other; p; p = p.parentNode) {
       if (p === this) {
         return true;
@@ -297,10 +327,11 @@ export class XMPPElement {
 
   /** 从父节点移除自身（不在父节点子列表中时为 no-op） */
   public remove(): void {
-    const parent = this._parentNode;
-    if (parent?._childNodes.includes(this)) {
-      parent.removeChild(this);
-    }
+    if (!this._parentNode) return;
+    const index = this._parentNode._childNodes.indexOf(this);
+    if (index === -1) return;
+    this._parentNode._childNodes.splice(index, 1);
+    this._parentNode = null;
   }
 
   /**
@@ -321,7 +352,7 @@ export class XMPPElement {
   /**
    * 设置当前元素的文本内容。null 与空字符串都会清空全部子节点。
    */
-  public set textContent(value: string) {
+  public set textContent(value: string | null) {
     for (const child of this._childNodes) {
       if (child instanceof XMPPElement) {
         child._parentNode = null;
@@ -370,7 +401,8 @@ export class XMPPElement {
         if (child instanceof XMPPElement) {
           // 先比 localName：namespaceURI 在元素无 xmlns 声明时要上溯父链，名为不匹配的元素不该付这笔钱
           const nameMatch = localName === "*" || child.localName === localName;
-          const nsMatch = nameMatch && (ns === "*" || child.namespaceURI === ns);
+          const nsMatch =
+            nameMatch && (ns === "*" || child.namespaceURI === ns);
           if (nsMatch) {
             result.push(child);
           }
@@ -384,24 +416,33 @@ export class XMPPElement {
 
   /**
    * 返回与选择器匹配的第一个后代元素（前序），无匹配返回 null。
+   * 选择器只支持 QuerySelector 文档列出的子集，不是完整 CSS 实现。
    * @param selectors CSS 选择器。
    * @returns 匹配的元素。
    */
-  public querySelector(selectors: string): XMPPElement | null {
-    return QuerySelector.querySelector(this, selectors);
+  public querySelector<E extends XMPPElement = XMPPElement>(
+    selectors: string,
+  ): E | null {
+    return QuerySelector.querySelector(this, selectors) as E | null;
   }
 
   /**
    * 返回与选择器匹配的所有后代元素（前序），以 XMPPNodeList 形式返回。
+   * 集合是 DOM 风味快照；选择器支持范围见 QuerySelector。
    * @param selectors CSS 选择器。
    * @returns 匹配的元素集合。
    */
-  public querySelectorAll(selectors: string): XMPPNodeList {
-    return new XMPPNodeList(QuerySelector.querySelectorAll(this, selectors));
+  public querySelectorAll<E extends XMPPElement = XMPPElement>(
+    selectors: string,
+  ): XMPPNodeList<E> {
+    return new XMPPNodeList<E>(
+      QuerySelector.querySelectorAll(this, selectors) as unknown as E[],
+    );
   }
 
   /**
    * 元素自身是否匹配选择器（组合符会沿祖先链判断）。
+   * 选择器只支持 QuerySelector 文档列出的子集，不是完整 CSS 实现。
    * @param selectors CSS 选择器。
    * @returns 是否匹配。
    */
@@ -412,21 +453,9 @@ export class XMPPElement {
   /**
    * 追加子元素（DOM 标准风格：appendChild）。
    */
-  public appendChild(child: XMPPElement): XMPPElement {
+  public appendChild<T extends XMPPElement>(child: T): T {
+    XMPPElement._assertElement(child, "appendChild", 1);
     return this.insertBefore(child, null);
-  }
-
-  /** node 是否为本节点自身或祖先（用于环检测） */
-  private _hasAncestor(node: XMPPElement): boolean {
-    if (node === this) {
-      return true;
-    }
-    for (let p = this.parentNode; p; p = p.parentNode) {
-      if (p === node) {
-        return true;
-      }
-    }
-    return false;
   }
 
   /**
@@ -436,6 +465,10 @@ export class XMPPElement {
     node: T,
     child: XMPPElement | null,
   ): T {
+    XMPPElement._assertElement(node, "insertBefore", 1);
+    if (child != null) {
+      XMPPElement._assertElement(child, "insertBefore", 2);
+    }
     if (node === child) {
       return node;
     }
@@ -446,7 +479,7 @@ export class XMPPElement {
       );
     }
     // 无子节点的节点不可能是本节点的祖先，解析器「新建后立即挂载」的热路径因此零成本
-    if (node._childNodes.length > 0 && this._hasAncestor(node)) {
+    if (node._childNodes.length > 0 && node.contains(this)) {
       throw new DOMException(
         "The new child element contains the parent.",
         "HierarchyRequestError",
@@ -476,11 +509,12 @@ export class XMPPElement {
   /**
    * 移除指定的子元素（DOM 标准风格：removeChild）。
    */
-  public removeChild(child: XMPPElement): XMPPElement {
+  public removeChild<T extends XMPPElement>(child: T): T {
+    XMPPElement._assertElement(child, "removeChild", 1);
     const index = this._childNodes.indexOf(child);
     if (child.parentNode !== this || index === -1) {
       throw new DOMException(
-        "The node to be removed is not a child of this node.",
+        "Failed to execute 'removeChild' on 'Node': The node to be removed is not a child of this node.",
         "NotFoundError",
       );
     }
@@ -512,8 +546,12 @@ export class XMPPElement {
     for (const node of nodes) {
       if (node instanceof XMPPElement) {
         this.appendChild(node);
-      } else {
+      } else if (typeof node === "string") {
         this._childNodes.push(node);
+      } else {
+        throw new TypeError(
+          "Failed to execute 'append' on 'Node': parameters must be XMPPElement or string.",
+        );
       }
     }
   }
@@ -531,55 +569,15 @@ export class XMPPElement {
    */
   public toXMLString(indent?: string | number, level = 1): string {
     const indentStr = typeof indent === "number" ? " ".repeat(indent) : indent;
-
-    let s = `<${this.tagName}`;
-
-    // 添加属性
-    for (const k in this._attrs) {
-      const v = this._attrs[k];
-      if (v != null) {
-        s += ` ${k}="${escapeXML(v)}"`;
-      }
-    }
-
-    const children_length = this._childNodes.length;
-
-    if (children_length === 1 && typeof this._childNodes[0] === "string") {
-      s += `>${escapeXMLText(this._childNodes[0])}</${this.tagName}>`;
-    } else if (children_length > 0) {
-      // 仅全部子节点为元素时才缩进：对混合内容缩进会插入真实空白，序列化结果无法回读
-      const prettyIndent =
-        indentStr && this._childNodes.every((child) => child instanceof XMPPElement)
-          ? indentStr
-          : null;
-      s += ">";
-      for (const child of this._childNodes) {
-        if (child == null) continue;
-
-        if (prettyIndent) {
-          s += "\n" + prettyIndent.repeat(level);
-        }
-
-        if (typeof child === "string") {
-          s += escapeXMLText(child);
-        } else if (child instanceof XMPPElement) {
-          s += child.toXMLString(indentStr, level + 1);
-        } else {
-          // 兜底：其它类型（如 number）按其字符串形式序列化，避免静默丢数据
-          s += escapeXMLText(String(child));
-        }
-      }
-
-      if (prettyIndent) {
-        s += "\n" + prettyIndent.repeat(level - 1);
-      }
-      s += `</${this.tagName}>`;
-    } else {
-      // 空元素
-      s += "/>";
-    }
-
-    return s;
+    let result = "";
+    this._write(
+      (chunk) => {
+        result += chunk;
+      },
+      indentStr ?? null,
+      level,
+    );
+    return result;
   }
 
   /**
@@ -587,9 +585,22 @@ export class XMPPElement {
    * @param writer 写入函数
    */
   public write(writer: (chunk: string) => void): void {
+    this._write(writer, null, 1);
+  }
+
+  /**
+   * 序列化的唯一实现；`indent` 为 null 时不缩进。
+   * @param writer 写入函数
+   * @param indent 缩进串，仅当全部子节点为元素时生效
+   * @param level 当前缩进级别
+   */
+  private _write(
+    writer: (chunk: string) => void,
+    indent: string | null,
+    level: number,
+  ): void {
     writer("<");
     writer(this.tagName);
-
     for (const k in this._attrs) {
       const v = this._attrs[k];
       if (v != null) {
@@ -600,30 +611,33 @@ export class XMPPElement {
         writer('"');
       }
     }
-
     if (this._childNodes.length === 0) {
       writer("/>");
-    } else {
-      this._addChildren(writer);
+      return;
     }
-  }
 
-  /**
-   * 写出包含子节点的闭合部分（已进行文本转义）。
-   */
-  protected _addChildren(writer: (chunk: string) => void): void {
+    // 仅全部子节点为元素时才缩进：对混合内容缩进会插入真实空白，序列化结果无法回读
+    const prettyIndent =
+      indent && this._childNodes.every((child) => child instanceof XMPPElement)
+        ? indent
+        : null;
     writer(">");
     for (const child of this._childNodes) {
-      if (child != null) {
-        if (child instanceof XMPPElement) {
-          child.write(writer);
-        } else if (typeof child === "string") {
-          writer(escapeXMLText(child));
-        } else {
-          // 兜底：非字符串/非元素子节点按字符串写出，避免静默丢数据
-          writer(escapeXMLText(String(child)));
-        }
+      if (child == null) continue;
+      if (prettyIndent) {
+        writer("\n" + prettyIndent.repeat(level));
       }
+      if (child instanceof XMPPElement) {
+        child._write(writer, indent, level + 1);
+      } else if (typeof child === "string") {
+        writer(escapeXMLText(child));
+      } else {
+        // 兜底：其他类型子节点按字符串形式写出，避免静默丢数据
+        writer(escapeXMLText(String(child)));
+      }
+    }
+    if (prettyIndent) {
+      writer("\n" + prettyIndent.repeat(level - 1));
     }
     writer("</");
     writer(this.tagName);

@@ -94,6 +94,12 @@ describe('XMPPElement', () => {
       expect(body.parentNode).toBe(el);
       expect(el.childNodes[0]).toBe(body);
     });
+
+    it('参数不是 XMPPElement 时抛 TypeError', () => {
+      const el = XMPPElement.createElement('message');
+      expect(() => el.appendChild(null as unknown as XMPPElement)).toThrowError(TypeError);
+      expect(() => el.appendChild({} as unknown as XMPPElement)).toThrowError(TypeError);
+    });
   });
 
   describe('removeChild', () => {
@@ -106,6 +112,11 @@ describe('XMPPElement', () => {
       expect(result).toBe(body);
       expect(body.parentNode).toBeNull();
       expect(el.childNodes).toEqual([]);
+    });
+
+    it('参数不是 XMPPElement 时抛 TypeError', () => {
+      const el = XMPPElement.createElement('message');
+      expect(() => el.removeChild(null as unknown as XMPPElement)).toThrowError(TypeError);
     });
   });
 
@@ -139,23 +150,23 @@ describe('XMPPElement', () => {
   });
 
   describe('setAttribute', () => {
-    it('设置属性并返回 this', () => {
+    it('设置属性并返回 undefined（对齐 DOM）', () => {
       const el = XMPPElement.createElement('message');
       const result = el.setAttribute('id', '123');
       
-      expect(result).toBe(el);
+      expect(result).toBeUndefined();
       expect(el.getAttribute('id')).toBe('123');
     });
   });
 
   describe('removeAttribute', () => {
-    it('移除属性', () => {
+    it('移除属性并返回 undefined（对齐 DOM）', () => {
       const el = XMPPElement.createElement('message');
       el.setAttribute('id', '123');
       el.setAttribute('type', 'chat');
       
       const result = el.removeAttribute('id');
-      expect(result).toBe(el);
+      expect(result).toBeUndefined();
       expect(el.getAttribute('id')).toBeNull();
       expect(el.getAttribute('type')).toBe('chat');
     });
@@ -617,6 +628,14 @@ describe('XMPPElement', () => {
       expect(child1.parentNode).toBe(el);
       expect(child2.parentNode).toBe(el);
     });
+
+    it('参数类型非法时抛 TypeError', () => {
+      const el = XMPPElement.createElement('message');
+      expect(() =>
+        el.append(null as unknown as string),
+      ).toThrowError(TypeError);
+      expect(el.childNodes).toHaveLength(0);
+    });
   });
 
   describe('parentElement', () => {
@@ -689,6 +708,18 @@ describe('XMPPElement', () => {
       expect(() => el.insertBefore(XMPPElement.createElement('x'), ref)).toThrowError(
         expect.objectContaining({ name: 'NotFoundError' })
       );
+    });
+
+    it('参数不是 XMPPElement 时抛 TypeError', () => {
+      const el = XMPPElement.createElement('root');
+      const ref = XMPPElement.createElement('ref');
+      el.appendChild(ref);
+      expect(() =>
+        el.insertBefore(null as unknown as XMPPElement, ref),
+      ).toThrowError(TypeError);
+      expect(() =>
+        el.insertBefore(XMPPElement.createElement('x'), {} as unknown as XMPPElement),
+      ).toThrowError(TypeError);
     });
   });
 });
