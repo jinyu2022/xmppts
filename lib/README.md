@@ -49,7 +49,6 @@
 | [XEP-0060](plugins/xep0060/readme.md) | 发布-订阅（PubSub，仅注册 `pubsub#errors` 解析器） | — |
 | [XEP-0084](plugins/xep0084/readme.md) | 用户头像 | XEP-0030、XEP-0163（PEP，见该目录 debug S2） |
 | [XEP-0115](plugins/xep0115/readme.md) | 实体能力 | XEP-0030 |
-| [XEP-0156](plugins/xep0156/readme.md) | 发现替代连接方式 | — |
 | [XEP-0163](plugins/xep0163/readme.md) | 个人事件协议（PEP） | XEP-0030 |
 | [XEP-0172](plugins/xep0172/readme.md) | 用户昵称 | XEP-0030 |
 | [XEP-0184](plugins/xep0184/readme.md) | 消息回执 | — |
@@ -77,4 +76,5 @@
 | [XEP-0106](plugins/xep0106/readme.md) | JID 转义 | 静态转义/反转义工具 |
 | [XEP-0128](plugins/xep0128/readme.md) | 服务发现扩展 | 由 XEP-0030 内部调用 |
 | [XEP-0153](plugins/xep0153/readme.md) | vCard 头像（遗留） | 静态方法，供 MUC 等兼容场景复用 |
+| [XEP-0156](plugins/xep0156/readme.md) | 发现替代连接方式 | 静态端点解析，由 WebSocket 传输调用 |
 | [XEP-0392](plugins/xep0392/readme.md) | 一致性颜色生成 | 静态方法，由字符串确定性生成颜色 |

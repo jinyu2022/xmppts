@@ -5,23 +5,28 @@
 ## 1. 核心组件架构
 
 - **`Connection` (lib/connection.ts)**: 高层抽象类，负责插件生命周期管理、Stanza 解析与分发、拦截器管线以及异步请求的 Promise 映射。
-- **`XMPPConnection` (lib/transport/tcp.ts)**: 底层传输类，负责 TCP/TLS 连接、DNS SRV 解析、XMPP 流协商（SASL 认证、资源绑定）。
+- **`StreamConnection` (lib/transport/stream-connection.ts)**: 传输无关的流协商基类，负责状态机、SASL 认证、资源绑定、会话恢复与管线事件。
+- **传输注册表 (lib/transport/index.ts)**: 维护协议到 `TransportFactory` 的映射；`Connection` 按 `protocol` 从 `transports` 取值，新增协议无需修改连接类。
+- **`XMPPConnection` (lib/transport/tcp.ts)**: TCP/STARTTLS 传输实现，负责 DNS SRV 解析、socket 生命周期、RFC 6120 流头/流尾与 TLS 升级。
+- **`WSConnection` (lib/transport/websocket.ts)**: WebSocket（RFC 7395）传输实现，复用基类的认证/绑定流程。
 - **`Status` (lib/transport/typing.ts)**: 定义了连接过程中的所有状态常量。
 
 ## 2. 详细生命周期阶段
 
 ### 2.1 配置与注册阶段 (Pre-connection)
 在调用 `connect()` 之前，程序处于静态配置阶段：
-1.  **构造实例**: `new Connection(jid, password, options)`。解析 JID，合成连接 URL。
+1.  **构造实例**: `new Connection(jid, password, options)`。解析 JID，记录端点配置（`host`/`port`/`path`/`protocol`/`tls`）。
 2.  **插件注册 (`registerPlugin`)**: 插件构造函数被添加到 `pendingPlugins` 待处理队列。此时插件尚未实例化。
 
 ### 2.2 初始化与注入阶段 (Initialization)
 当调用 `async connect()` 时，但在网络握手之前：
 1.  **插件依赖解析 (`checkAndRegisterDep`)**: 递归扫描插件的静态 `dependencies` 属性，自动注册缺失的依赖插件。
-2.  **插件实例化**: 
-    *   执行 `new Plugin(connection)`。
-    *   调用每个插件实例的 `init()` 方法。
-3.  **插件扩展能力注入**: 插件通常在 `init()` 中通过以下接口扩展功能：
+2.  **插件实例化**: 执行 `new Plugin(connection)`。构造函数早于传输创建，可注册或覆盖传输实现（`connection.registerTransport`），但不得访问传输层管线。需要网络发现的选择（如 XEP-0368 的直连 TLS）放在工厂的 `create()` 内完成；XEP-0156 是纯静态工具，由 WebSocket 传输在 `openTransport()` 内按需调用。
+
+    **覆盖顺序**：插件实例化发生在 `connect()` 内部，晚于用户调用 `registerTransport()`，所以同名协议的插件注册会覆盖用户注册（XEP-0368 覆盖 `xmpp` 正是依赖这一点）。用户自定义实现需要生效时，不要注册会覆盖该协议的插件，或改用其他协议名。
+3.  **创建传输**: 连接层按 `protocol` 从 `transports` 映射取值并调用工厂。工厂的 `create()` 可异步（如 DNS SRV / host-meta 查询），并可返回不同的传输实例；用户显式指定的 `host`/`port` 必须同时提供才会被采纳，否则视为未指定，由传输层自行发现。
+4.  **`init()` 调用**: 调用每个插件实例的 `init()` 方法；此时 `connection.transport` 已就绪，可注册管线与事件处理器。
+5.  **插件扩展能力注入**: 插件通常在 `init()` 中通过以下接口扩展功能：
     *   `registerStanzaPlugin()`: 注册 XML 命名空间到 JS 对象的映射器。
     *   `registerInterceptor()`: 插入 `send`/`receive` 拦截管线。
     *   `registerEventPlugin()`: 定义基于 Stanza 内容匹配的自定义事件。
@@ -53,7 +58,7 @@
 调用 `connection.disconnect()` 时：
 1.  **断开连接**: `socket.disconnect()` 向服务器发送 `</stream:stream>`，Socket 触发 `stream:end`（状态为 `SESSIONEND`）。
 2.  **事件送达**: 清理延后到底层 `close` 之后，用户监听器可收到 `session:end` / `disconnect`。
-3.  **高层清理**: 仅在“真断开”（未启用自动重连，或重连次数已耗尽）时，底层 `close` 触发后 `removeAllListeners()` 移除所有监听器，并清空拦截器与插件注册表；`pendingPlugins` 保留，再次 `connect()` 时由 `initPlugins()` 重建插件。
+3.  **高层清理**: 仅在“真断开”（未启用自动重连，或重连次数已耗尽）时，底层 `close` 触发后 `removeAllListeners()` 移除所有监听器，并清空拦截器与插件注册表；`pendingPlugins` 保留，再次 `connect()` 时由 `instantiatePlugins()`/`initPlugins()` 重建插件。
 
 ## 3. 核心事件汇总表
 
@@ -72,7 +77,7 @@
 | `close` | 物理连接关闭 | 高层据此发出 `disconnect` |
 | `error` | 认证失败/超时/底层错误 | 错误处理 |
 
-> 另有**管线事件点**（非 socket 事件）：`beforeConnect` / `stream:features:starttls` / `starttls:proceed` / `stream:features:mechanisms` / `sasl` / `stream:negotiated` / `binding`，由 `pipeline.run()` 在各协商阶段触发，载荷类型见 `TransportPipelineEvents`。
+> 另有**管线事件点**（非 socket 事件）：`stream:features:starttls` / `starttls:proceed` / `stream:features:mechanisms` / `sasl` / `stream:negotiated` / `binding`，由 `pipeline.run()` 在各协商阶段触发，载荷类型见 `TransportPipelineEvents`。
 
 ### Conn 事件（高层）
 

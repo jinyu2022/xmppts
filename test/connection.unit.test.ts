@@ -12,7 +12,7 @@ import { XEP0297 } from "../lib/plugins/XEP0297";
 import XEP0402 from "../lib/plugins/xep0402";
 import { Pipeline } from "../lib/transport/pipeline";
 import { Status } from "../lib/transport/typing";
-import type { TransportPipelineEvents } from "../lib/transport/tcp";
+import type { TransportPipelineEvents } from "../lib/transport/stream-connection";
 import type { Options } from "../lib/types";
 
 /**
@@ -161,7 +161,12 @@ describe("Connection（单元测试，假传输层）", () => {
           .rejects.toThrow("连接已断开"));
       }
     });
-    await (connection as unknown as { initPlugins(): Promise<void> }).initPlugins();
+    const lifecycle = connection as unknown as {
+      instantiatePlugins(): Promise<void>;
+      initPlugins(): void;
+    };
+    await lifecycle.instantiatePlugins();
+    lifecycle.initPlugins();
     await Promise.all(failures);
     expect(failures).toHaveLength(1);
     expect(transport.sent).toHaveLength(0);
@@ -456,9 +461,12 @@ describe("Connection（单元测试，假传输层）", () => {
     const { connection } = setup();
     connection.registerPlugin("XEP0280");
     // 直接调用私有初始化，避免 connect() 建立真实 socket
-    await (
-      connection as unknown as { initPlugins(): Promise<void> }
-    ).initPlugins();
+    const lifecycle = connection as unknown as {
+      instantiatePlugins(): Promise<void>;
+      initPlugins(): void;
+    };
+    await lifecycle.instantiatePlugins();
+    lifecycle.initPlugins();
 
     // XEP0280 依赖 XEP0030/XEP0297，XEP0297 又依赖 XEP0203
     for (const name of ["XEP0280", "XEP0297", "XEP0203", "XEP0030"] as const) {

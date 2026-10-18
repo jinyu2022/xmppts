@@ -1,8 +1,6 @@
-import { connect as tlsConnect } from "node:tls";
 import { resolveSrv, type EndpointInfo } from "@/dns";
 import type { Plugin } from "../types";
-import { Connection } from "../../connection";
-import { Status } from "../../transport/typing";
+import type { Connection } from "../../connection";
 import logger from "@/log";
 
 const log = logger.getLogger("XEP0368");
@@ -22,33 +20,37 @@ class XEP0368 implements Plugin {
   // 考虑到意外的断链可能是服务器ip相关问题，因此不进行缓存
   constructor(connection: Connection) {
     this.connection = connection;
+    // 构造函数先于传输创建：覆盖默认 xmpp 传输，在 create() 中决定直连 TLS 或明文 TCP
+    connection.registerTransport(
+      "xmpp",
+      async ({ jid, password, tls, ...endpoint }) => {
+        // 覆盖了 defaultTransports.xmpp，Node 环境守卫需在本工厂内重做
+        if (typeof process === "undefined") {
+          throw new Error("xmpp 协议仅支持 Node.js 环境");
+        }
+        // 端点必须 host + port 完整；不完整时视为未指定，交给 SRV 发现
+        if (tls && !(endpoint.host && endpoint.port != null)) {
+          const discovered = (await XEP0368.resolveDirectTLS(jid.domain))[0];
+          if (discovered) {
+            const { default: XMPPSConnection } = await import(
+              "../../transport/tcp-direct.js"
+            );
+            log.debug(
+              `使用直连 TLS 端点: ${discovered.host}:${discovered.port}`,
+            );
+            return new XMPPSConnection(jid, password, discovered);
+          }
+        }
+        const { default: XMPPConnection } = await import(
+          "../../transport/tcp.js"
+        );
+        return new XMPPConnection(jid, password, tls, endpoint);
+      },
+    );
   }
 
-  init() {
-    // 连接前介入：直连 TLS 场景下用 _xmpps-client SRV 解析端点并注入加密 socket
-    const socket = this.connection.transport;
-    socket?.pipeline?.use("beforeConnect", async (ctx, next) => {
-      if (ctx.url || !ctx.tls) return next(); // 已有地址，或非 TLS
-      const endpoint = (await XEP0368.resolveDirectTLS(ctx.domain))[0];
-      if (endpoint) {
-        ctx.url = `xmpps://${endpoint.host}:${endpoint.port}`;
-        // 直连 TLS
-        const tls = tlsConnect({
-          host: endpoint.host,
-          port: endpoint.port,
-          servername: ctx.domain,
-          ALPNProtocols: ["xmpp-client"],
-        });
-        // 握手完成即置 TLS 就绪：features 只可能在 secureConnect 后到达，route 将按 TLS_ESTABLISHED 分派进 SASL
-        tls.once("secureConnect", () => {
-          socket.status = Status.TLS_ESTABLISHED;
-        });
-        ctx.setSocket!(tls);
-        log.debug(`使用直连 TLS 端点: ${ctx.url}`);
-      }
-      return next();
-    });
-  }
+  /** 发现与传输选择在构造函数与 provider.create() 中完成，运行期无需额外初始化 */
+  init() {}
 
   /**
    * 查询直连 TLS SRV 记录（XEP-0368 §4.1）

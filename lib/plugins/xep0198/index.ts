@@ -4,7 +4,7 @@ import type Connection from "@/connection";
 import { StanzaBase } from "@/stanza";
 import { TimeoutError, XMPPError } from "@/errors";
 import { Status } from "@/transport/typing";
-import type { BindingContext, SendContext } from "@/transport/tcp";
+import type { BindingContext, SendContext } from "@/transport/stream-connection";
 import logger from "@/log";
 import type { XMPPElement } from "@/ltx/Element";
 const log = logger.getLogger("XEP0198");

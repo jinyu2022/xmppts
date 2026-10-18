@@ -115,6 +115,7 @@ export class XEP0045 extends MUC implements Plugin {
         this.connection.registerEventPlugin("muc:voice-request", {
             tagName: "message",
             matcher: (msg) => {
+                if (!this.rooms.has(msg.from.bare) || msg.type === "groupchat") return false;
                 // XEP-0045 §8.6：审批表单为 type=form 且 FORM_TYPE 为 muc#request
                 const formEl = msg.xml.getElementsByTagNameNS(XEP0004.NS, "x")[0];
                 if (!formEl) return false;

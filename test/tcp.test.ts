@@ -9,8 +9,6 @@ logger.setLevel("debug");
 const TEST_JID_STRING = "PLACEHOLDER_USER@example.com";
 /** 您的 XMPP 密码 */
 const TEST_PASSWORD = "PLACEHOLDER_PASSWORD";
-/** XMPP 服务器的连接 URL，如果留空则使用 SRV 记录解析 */
-const TEST_SERVER_URL = "";
 
 describe("XMPPConnection TCP/TLS 连接测试", () => {
   // 需真实账号与外网，默认跳过；填入下方账号后去掉 .skip 手动运行
@@ -44,8 +42,8 @@ describe("XMPPConnection TCP/TLS 连接测试", () => {
     connection.on("stanza", (stanza) => {
       console.log("收到 stanza:", stanza.toXMLString());
     });
-    // 开始连接
-    void connection.connect(TEST_SERVER_URL);
+    // 开始连接（未指定端点，按 SRV 记录解析）
+    void connection.connect();
 
     // 等待连接成功
     await expect(connectPromise).resolves.toBeUndefined();

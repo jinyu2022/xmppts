@@ -68,7 +68,6 @@ export class XEP0030 implements Plugin {
 
     this.connection.on("iq", (iq) => {
       if (iq.type !== "get") return;
-      // TODO: 不应该操作xml，应该操作对象
       const stanza = iq.xml;
       // 只处理 iq 直接子元素中命名空间为 disco 的 query，其余交给对应插件
       const query = Array.from(

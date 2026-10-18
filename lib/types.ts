@@ -13,4 +13,10 @@ export interface Options {
   /** 最大重连次数 */
   reconnectMaxAttempts?: number;
 }
-export type Protocol = "ws" | "http" | "xmpp";
+/** 内置连接协议 */
+export type BuiltinProtocol = "ws" | "http" | "xmpp";
+/**
+ * 连接协议：内置协议保留字面量提示，自定义协议配合
+ * `Connection.registerTransport()` 使用任意 scheme。
+ */
+export type Protocol = BuiltinProtocol | (string & Record<never, never>);

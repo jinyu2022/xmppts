@@ -5,7 +5,7 @@ import { Connection } from "../lib/connection";
 import { pluginLoaders } from "../lib/plugins";
 import { Status } from "../lib/transport/typing";
 import { Pipeline } from "../lib/transport/pipeline";
-import type { TransportPipelineEvents } from "../lib/transport/tcp";
+import type { TransportPipelineEvents } from "../lib/transport/stream-connection";
 import { XMPPElement } from "../lib/ltx/Element";
 import { Parser } from "../lib/ltx/Parser";
 import { Message } from "../lib/stanza";
@@ -69,7 +69,12 @@ describe("Client", () => {
 
     client.registerDefaultPlugins();
     // 私有成员：运行时按名字直接访问，与 Connection 的插件挂载方式一致
-    await (client as unknown as { initPlugins(): Promise<void> }).initPlugins();
+    const lifecycle = client as unknown as {
+      instantiatePlugins(): Promise<void>;
+      initPlugins(): void;
+    };
+    await lifecycle.instantiatePlugins();
+    lifecycle.initPlugins();
 
     for (const name of Object.keys(pluginLoaders)) {
       expect(client[name]).toBeDefined();

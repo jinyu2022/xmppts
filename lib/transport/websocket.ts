@@ -1,20 +1,15 @@
-import { EventEmitter } from "events";
-import type { Capabilities } from "@/plugins/xep0115/entityCaps";
-import { TimeoutError } from "@/errors";
 import { Status } from "./typing";
+import type { TransportEndpoint } from "./typing";
 import {
-  SaslClient,
-  SaslError,
-  buildBindRequest,
-  collectStreamFeatures,
-  getStreamErrorCondition,
-  isStreamError,
+  StreamConnection,
   isStreamFeatures,
-  parseBindResult,
-} from "./stream-negotiation";
-import { XMPPElement, Parser } from "@/ltx";
+  type SendContext,
+} from "./stream-connection";
+import { Parser, type XMPPElement } from "@/ltx";
 import { JID } from "@/JID";
 import logger from "@/log";
+// 传输层按需调用该静态方法解析端点；该模块不反向依赖传输层
+import XEP0156 from "@/plugins/xep0156";
 
 const log = logger.getLogger("WS");
 const FRAMING_NS = "urn:ietf:params:xml:ns:xmpp-framing";
@@ -22,86 +17,62 @@ const FRAMING_NS = "urn:ietf:params:xml:ns:xmpp-framing";
 type BrowserWebSocket = typeof globalThis.WebSocket;
 type WebSocketInstance = InstanceType<BrowserWebSocket>;
 
-interface SocketEventMap {
-  open: void;
-  close: CloseEvent | undefined;
-  error: Error;
-  /** Auth finished; stream restart may still be in progress */
-  authenticated: void;
-  "stream:start": void;
-  "stream:end": void;
-  "stream:negotiated": void;
-  stanza: XMPPElement;
-  binded: void;
-}
-
-// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
-export interface WSConnection {
-  on<E extends keyof SocketEventMap>(
-    event: E,
-    listener: (arg: SocketEventMap[E]) => void,
-  ): this;
-  once<E extends keyof SocketEventMap>(
-    event: E,
-    listener: (arg: SocketEventMap[E]) => void,
-  ): this;
-  emit<E extends keyof SocketEventMap>(
-    event: E,
-    arg?: SocketEventMap[E],
-  ): boolean;
-  off<E extends keyof SocketEventMap>(
-    event: E,
-    listener: (arg: SocketEventMap[E]) => void,
-  ): this;
-}
-
 /**
  * XMPP over WebSocket (RFC 7395)
  *
- * Differences vs TCP (RFC 6120):
- * - Stream open/close uses framing: <open/> / <close xmlns="urn:ietf:params:xml:ns:xmpp-framing"/>
- * - No STARTTLS; TLS is provided by wss://
- * - Each WS message is a complete XML document (not a continuous stream)
- * - Subprotocol "xmpp" is required
+ * 与 TCP（RFC 6120）的差异全部集中在本类：
+ * - 流开启/关闭使用 framing：`<open/>` / `<close xmlns="...xmpp-framing"/>`
+ * - 无 STARTTLS；TLS 由 wss:// 提供
+ * - 每条 WebSocket 消息是一个完整 XML 文档（不是连续流）
+ * - 必须使用 "xmpp" 子协议
+ *
+ * SASL/绑定/会话恢复流程由 {@link StreamConnection} 基类复用。
  */
-// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
-export class WSConnection extends EventEmitter {
-  /** 当前完整 JID；绑定成功后可能被服务器改写 resource（RFC 6120 §7.7.1） */
-  jid: JID;
-  readonly password: string;
-  private readonly domain: string;
+export class WSConnection extends StreamConnection {
   private ws: WebSocketInstance | null = null;
-  private url?: string;
-  status: (typeof Status)[keyof typeof Status] = Status.DISCONNECTED;
-  streamFeatures: Set<string> = new Set();
-  entityCaps?: Capabilities;
-  private readonly sasl: SaslClient;
-  private bindId?: string;
-  private bindTimer?: ReturnType<typeof setTimeout>;
+  /** 端点配置；重连时复用 */
+  private endpoint: TransportEndpoint;
+  private readonly tls: boolean;
+  host = "";
+  port = "";
 
-  constructor(jid: JID, password: string) {
-    super();
-    if (!jid.resource) {
-      const resource = Math.random().toString(32).slice(2, 8);
-      jid = new JID(`${jid.bare}/${resource}`);
-    }
-    this.jid = jid;
-    this.domain = jid.domain;
-    this.password = password;
-    this.sasl = new SaslClient(jid);
+  constructor(
+    jid: JID,
+    password: string,
+    tls = true,
+    endpoint?: TransportEndpoint,
+  ) {
+    super(jid, password);
+    this.tls = tls;
+    this.endpoint = endpoint ?? {};
+    // WebSocket 没有 STARTTLS：首个流特性直接进入 SASL 决策
+    this.pipeline.use(
+      "stream:features:starttls",
+      this.onFeaturesStartTls.bind(this),
+    );
   }
 
-  async connect(url?: string) {
-    if (url) {
-      this.url = url;
+  /** 建立 WebSocket 连接（RFC 7395 §3）：按端点配置拼接地址，重连时复用 */
+  protected async openTransport(_reconnect: boolean): Promise<void> {
+    // 端点不完整时按 XEP-0156 从 host-meta 发现；重连沿用已解析的端点
+    if (!this.endpoint.host || this.endpoint.port == null) {
+      this.endpoint = await XEP0156.resolveEndpoint(this.jid.domain);
     }
-    if (!this.url) throw new Error("missing websocket url");
+    const endpoint = this.endpoint;
+
+    const scheme = this.tls ? "wss" : "ws";
+    // 缺省端口由最终 scheme 决定（host-meta 只报告显式端口）；写回端点供重连复用
+    const port = endpoint.port ?? (this.tls ? 443 : 80);
+    this.endpoint = { ...endpoint, port };
+    const path = endpoint.path ? `/${endpoint.path.replace(/^\/+/, "")}` : "";
+    const targetUrl = `${scheme}://${endpoint.host}:${port}${path}`;
+    // 端点不完整时已由 resolveEndpoint 补齐，且 URL 解析保证 host 非空
+    this.host = endpoint.host!;
+    this.port = String(port);
 
     const WSCtor = await this.resolveWebSocket();
-    this.status = Status.CONNECTING;
-    this.ws = new WSCtor(this.url, "xmpp");
-    log.debug("connecting", this.url);
-
+    log.debug("connecting", targetUrl);
+    this.ws = new WSCtor(targetUrl, "xmpp");
     this.ws.onopen = () => this.onOpen();
     this.ws.onclose = (ev) => this.onClose(ev);
     this.ws.onmessage = (ev) => this.onMessage(ev);
@@ -119,25 +90,18 @@ export class WSConnection extends EventEmitter {
     return mod.default ?? mod;
   }
 
-  private onOpen() {
+  private onOpen(): void {
     log.debug("open");
-    this.status = Status.CONNECTED;
-    this.sendOpen();
-    this.status = Status.STREAM_START;
-    this.emit("open");
+    this.openStream();
   }
 
-  private onClose(ev: CloseEvent) {
-    if (this.status !== Status.SESSIONEND) {
-      this.status = Status.SESSIONEND;
-      this.emit("stream:end");
-    }
-    this.status = Status.DISCONNECTED;
+  private onClose(ev: CloseEvent): void {
+    this.ws = null;
     log.debug("ws close", ev.code, ev.reason);
-    this.emit("close", ev);
+    this.onTransportClosed(ev);
   }
 
-  private onMessage(ev: MessageEvent) {
+  private onMessage(ev: MessageEvent): void {
     const data =
       typeof ev.data === "string"
         ? ev.data
@@ -145,127 +109,68 @@ export class WSConnection extends EventEmitter {
           ? ev.data.toString("utf8")
           : String(ev.data);
     log.debug("recv", data);
+    this.feed(data);
+  }
 
+  private onError(): void {
+    const err = new Error("WebSocket error");
+    log.error("error", err);
+    this.emit("error", err);
+  }
+
+  /** 解析收到的完整 XML 文档；framing 节点先行处理（RFC 7395 §3） */
+  protected feed(data: string): void {
+    let stanza: XMPPElement;
     // RFC 7395: each WebSocket message is one complete XML document.
     try {
-      const stanza = Parser.parse(data);
-      void this.onStanza(stanza);
+      stanza = Parser.parse(data);
     } catch (error) {
       log.error("parse failed", error, data);
       this.emit(
         "error",
         error instanceof Error ? error : new Error(String(error)),
       );
+      return;
     }
+    if (stanza.localName === "open" && stanza.namespaceURI === FRAMING_NS) {
+      log.info("framing open received");
+      return;
+    }
+    if (stanza.localName === "close" && stanza.namespaceURI === FRAMING_NS) {
+      log.info("server closed framing stream");
+      this.status = Status.SESSIONEND;
+      this.emit("stream:end");
+      this.closeTransport();
+      return;
+    }
+    void this.handleStanza(stanza);
   }
 
-  private onError() {
-    const err = new Error("WebSocket error");
-    log.error("error", err);
-    this.emit("error", err);
-  }
-
-  private async onStanza(stanza: XMPPElement): Promise<void> {
-    try {
-      if (stanza.localName === "open" && stanza.namespaceURI === FRAMING_NS) {
-        log.info("framing open received");
-        return;
-      }
-      if (stanza.localName === "close" && stanza.namespaceURI === FRAMING_NS) {
-        log.info("server closed framing stream");
-        this.status = Status.SESSIONEND;
-        this.emit("stream:end");
-        this.close();
-        return;
-      }
-      if (await this.handleLogin(stanza)) return;
-      this.emit("stanza", stanza);
-    } catch (error) {
-      const failure = error instanceof Error ? error : new Error(String(error));
-      log.error("negotiation failed", failure);
-      this.status = failure instanceof SaslError
-        ? Status.AUTHFAIL
-        : Status.ERROR;
-      this.emit("error", failure);
-      this.disconnect();
+  /** WebSocket 没有 STARTTLS：首个流特性直接进入 SASL 决策 */
+  private async onFeaturesStartTls(
+    ctx: SendContext,
+    next: () => Promise<void>,
+  ): Promise<void> {
+    if (!isStreamFeatures(ctx.stanza)) {
+      // 首次流特性之后只可能是 features；其他节交给 handleFailure 统一收尾
+      throw new Error(`SASL 阶段收到非流特性节: ${ctx.stanza.tagName}`);
     }
-  }
-
-  private async handleLogin(stanza: XMPPElement): Promise<boolean> {
-    if (isStreamError(stanza)) {
-      throw new Error(`流错误: ${getStreamErrorCondition(stanza)}`);
-    }
-
-    if (this.status === Status.STREAM_START && isStreamFeatures(stanza)) {
-      this.status = Status.STREAM_ESTABLISHED;
-      this.send(this.sasl.start(stanza, this.password));
-      this.status = Status.AUTHENTICATING;
-      return true;
-    }
-
-    if (this.status === Status.AUTHENTICATING) {
-      const result = await this.sasl.process(stanza, this.password);
-      if (result.type === "send") this.send(result.data);
-      if (result.type === "success") {
-        this.status = Status.AUTHENTICATED;
-        this.emit("authenticated");
-        this.sendOpen();
-      }
-      return true;
-    }
-
-    if (this.status === Status.AUTHENTICATED && isStreamFeatures(stanza)) {
-      const features = collectStreamFeatures(stanza);
-      this.streamFeatures = features.namespaces;
-      this.entityCaps = features.entityCaps;
-      this.emit("stream:negotiated");
-      if (stanza.getElementsByTagName("bind").length > 0) {
-        this.startBind();
-      }
-      return true;
-    }
-
-    if (this.status === Status.BINDING && stanza.getAttribute("id") === this.bindId) {
-      this.finishBind(stanza);
-      return true;
-    }
-    return this.status < Status.BINDED;
-  }
-
-  private startBind(): void {
-    const request = buildBindRequest(this.jid.resource);
-    this.bindId = request.id;
-    this.status = Status.BINDING;
-    this.send(request.data);
-    this.bindTimer = setTimeout(() => {
-      this.bindTimer = undefined;
-      this.bindId = undefined;
-      this.status = Status.ERROR;
-      const error = new TimeoutError(`请求超时: ${request.id}`);
-      this.emit("error", error);
-      this.disconnect();
-    }, 30000);
-    this.bindTimer?.unref?.();
-  }
-
-  private finishBind(response: XMPPElement): void {
-    if (this.bindTimer) clearTimeout(this.bindTimer);
-    this.bindTimer = undefined;
-    this.bindId = undefined;
-    this.jid = parseBindResult(response, this.jid.bare);
-    this.status = Status.BINDED;
-    this.emit("binded");
+    return this.onFeaturesMechanisms(ctx, next);
   }
 
   /** RFC 7395 stream open */
-  private sendOpen(): void {
+  protected sendStreamOpen(): void {
     this.writeRaw(
       `<open to="${this.domain}" version="1.0" xmlns="${FRAMING_NS}"/>`,
     );
-    this.emit("stream:start");
   }
 
-  private writeRaw(data: string): void {
+  /** RFC 7395 stream close */
+  protected sendStreamClose(): void {
+    this.writeRaw(`<close xmlns="${FRAMING_NS}"/>`);
+  }
+
+  protected writeRaw(data: string): void {
     if (!this.ws) {
       throw new Error("not connected");
     }
@@ -276,30 +181,11 @@ export class WSConnection extends EventEmitter {
     this.ws.send(data);
   }
 
-  send(data: string | XMPPElement): void {
-    this.writeRaw(typeof data === "string" ? data : data.toXMLString());
-  }
-
-  private close() {
-    if (this.bindTimer) clearTimeout(this.bindTimer);
-    this.bindTimer = undefined;
-    this.bindId = undefined;
+  protected closeTransport(): void {
     if (this.ws && this.ws.readyState === 1) {
       this.ws.close();
     }
     this.ws = null;
-  }
-
-  /** Close XMPP framing stream then WebSocket (RFC 7395 §3.6) */
-  disconnect() {
-    try {
-      this.writeRaw(`<close xmlns="${FRAMING_NS}"/>`);
-    } catch {
-      // already closed
-    }
-    this.status = Status.SESSIONEND;
-    this.emit("stream:end");
-    this.close();
     log.debug("disconnected");
   }
 }

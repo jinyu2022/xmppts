@@ -5,7 +5,6 @@ import XEP0045 from "./xep0045";
 import XEP0060 from "./xep0060";
 import XEP0084 from "./xep0084";
 import XEP0115 from "./xep0115";
-import XEP0156 from "./xep0156";
 import XEP0163 from "./xep0163";
 import XEP0172 from "./xep0172";
 import XEP0184 from "./xep0184";
@@ -32,7 +31,6 @@ export {
   XEP0060,
   XEP0084,
   XEP0115,
-  XEP0156,
   XEP0163,
   XEP0172,
   XEP0184,
@@ -59,7 +57,6 @@ export const pluginLoaders = {
   XEP0060: () => import("./xep0060").then((mod) => mod.default),
   XEP0084: () => import("./xep0084").then((mod) => mod.default),
   XEP0115: () => import("./xep0115").then((mod) => mod.default),
-  XEP0156: () => import("./xep0156").then((mod) => mod.default),
   XEP0163: () => import("./xep0163").then((mod) => mod.default),
   XEP0172: () => import("./xep0172").then((mod) => mod.default),
   XEP0184: () => import("./xep0184").then((mod) => mod.default),

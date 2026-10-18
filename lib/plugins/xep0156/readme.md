@@ -1,51 +1,41 @@
 # XEP-0156 — 发现替代连接方式
 
-通过 HTTPS 拉取 `.well-known/host-meta`（XRD）发现 WebSocket / BOSH 等替代连接端点。
+通过 HTTPS 拉取 `.well-known/host-meta`（XRD）解析 WebSocket 端点。纯工具类：不实现 `Plugin`，不登记在 `pluginLoaders`，由 [WSConnection](../../transport/websocket.ts) 在建立连接前调用。
 
-- **依赖**：无
-- **实例访问**：`connection.XEP0156`
-
-## 可配置项
-
-无可配置项。
-
-## 注册后行为
-
-`init()` 在以下任一条件成立时直接跳过：已有 `connection.url`、无 transport、未指定协议、协议为 `xmpp`。否则查询替代连接方式并回填 `connection`：
-
-1. 协议 `ws` → 取 `websocket`；协议 `http` → 取 `xbosh`，取不到则抛错。
-2. 按 `connection.tls` 在 `ws`/`wss`、`http`/`https` 间转换，写入 `connection.url`。
-3. 设置 `connection.host`、`port`、`path`。
-
-## 扩展字段
-
-无。
-
-## 可监听事件
-
-无。
+- **入口**：`@/plugins/xep0156` 默认导出
+- **触发条件**：`ws` 传输的端点不完整（`host` 或 `port` 缺失）时自动调用
 
 ## 公开 API
 
 | 方法 | 说明 |
 |------|------|
+| `XEP0156.resolveEndpoint(domain)`（静态） | 取 host-meta 的 `websocket` 端点 → `{ host, port?, path }`；只保留公布地址的显式端口，缺省端口由传输按最终 scheme 决定；未公布时抛错 |
 | `XEP0156.discoverAltXMPP(domain, timeout?)`（静态） | 拉取 `https://<domain>/.well-known/host-meta` → `{ websocket?, xbosh?, httppoll? }`（默认超时 5000ms） |
 
 > `httppoll` 非规范 §2.1 定义的关系（规范只定义 `websocket` 与 `xbosh`），属兼容性扩展。
 
 ## 使用示例
 
+一般无需手动调用：`protocol: "ws"` 且未提供完整端点时，连接流程会自动发现。
+
+```typescript
+import { Client } from "xmppts";
+
+const client = new Client("juliet@capulet.lit", "secret", { protocol: "ws" });
+await client.connect(); // 未指定 host/port → host-meta 发现 WebSocket 端点
+```
+
+也可单独调用：
+
 ```typescript
 import XEP0156 from "@/plugins/xep0156";
 
-// → Promise<{ websocket?, xbosh?, httppoll? }>（默认超时 5000ms）
-const endpoints = await XEP0156.discoverAltXMPP("example.com");
-console.log(endpoints.websocket);
+const endpoint = await XEP0156.resolveEndpoint("example.com");
 ```
 
 ## 注意事项
 
-- 仅在未指定 URL 且协议不是 `xmpp` 时生效（其中"未指定协议"分支实际不可达：`Connection.protocol` 默认 `"xmpp"`，见 debug S3）。
-- 发现失败或未找到对应协议端点时只会 reject（unhandled promise rejection），不会阻断 `connect()`。
-- 当前 `Connection.createSocket()` 尚不支持 `ws`/`http`，`init()` 因此不会被调用（见 [debug.md](debug.md) S1/S2）。
-- 适用于需要通过 host-meta 自动发现 WebSocket/BOSH 地址的场景。
+- 仅解析 `websocket` 关系；`xbosh` 尚无传输实现。
+- 用户显式提供完整 `host` + `port` 时不查询 host-meta。
+- 缺省端口不在本工具内补齐：公布地址未写端口时返回 `port: undefined`，由 `WSConnection` 按最终使用的 scheme（`tls` 决定 wss/ws）补 443/80。
+- 服务公布的地址为 `wss://` 时，`tls: false` 会按 `ws://` 连接，需要服务端同时接受明文（参见 [debug.md](debug.md) SEC-001）。

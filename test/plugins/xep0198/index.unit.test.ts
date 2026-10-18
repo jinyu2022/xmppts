@@ -7,7 +7,7 @@ import { Parser } from "../../../lib/ltx/Parser";
 import { StanzaBase } from "../../../lib/stanza";
 import { Pipeline, SyncPipeline } from "../../../lib/transport/pipeline";
 import { Status } from "../../../lib/transport/typing";
-import type { TransportPipelineEvents } from "../../../lib/transport/tcp";
+import type { TransportPipelineEvents } from "../../../lib/transport/stream-connection";
 
 /**
  * XEP-0198: Stream Management（单元测试，假连接 + 假传输层，不建立 socket）

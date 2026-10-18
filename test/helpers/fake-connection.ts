@@ -46,8 +46,7 @@ export class FakeConnection extends EventEmitter {
     return Promise.resolve(this.sendAsyncResult);
   };
 
-  /** xep0156 等插件读取的连接字段 */
-  url?: string;
+  /** 插件读取的连接字段 */
   protocol: string | undefined = "ws";
   host?: string;
   port?: number;

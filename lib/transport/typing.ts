@@ -1,7 +1,20 @@
 import type { XMPPElement } from "@/ltx";
 import type { EventEmitter } from "node:events";
 import type { Pipeline } from "./pipeline";
-import type { TransportPipelineEvents } from "./tcp";
+import type { TransportPipelineEvents } from "./stream-connection";
+/**
+ * 传输端点：连接层按用户配置与发现结果传入，由具体传输解释。
+ * 各项缺省时由传输自行决定（TCP 查 SRV、WS 报错）。
+ */
+export interface TransportEndpoint {
+    /** 目标主机 */
+    host?: string;
+    /** 目标端口 */
+    port?: number;
+    /** 目标路径（WebSocket/BOSH） */
+    path?: string;
+}
+
 /**
  * TCP / WebSocket 传输层共用接口。
  * 高层 Connection 通过此接口订阅协商完成与 stanza，不关心底层 framing 差异。
@@ -12,7 +25,8 @@ export interface TransportSocket extends EventEmitter {
     port: string;
     pipeline: Pipeline<TransportPipelineEvents>;
     streamFeatures: Set<string>;
-    connect(url?: string): Promise<void>;
+    /** 建立连接；端点已在创建传输实例时通过工厂上下文传入 */
+    connect(): Promise<void>;
     /** 复用同一实例（保留管线与会话状态）重新建立底层连接 */
     reconnect(): Promise<void>;
     send(data: string | XMPPElement): void;
@@ -58,9 +72,3 @@ export const Status = {
     /** 会话结束 */
     SESSIONEND: 43,
 } as const;
-
-export interface SaslData {
-    mechanism?: "PLAIN" | "SCRAM-SHA-1";
-    clientFirstMessageBare?: string;
-    serverProof?: string;
-}

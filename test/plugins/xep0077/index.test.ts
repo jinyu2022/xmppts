@@ -17,6 +17,7 @@ import type { TLSSocket } from "node:tls";
 /** 假 socket：只实现 setListener 用到的 write/事件方法 */
 class FakeSocket extends EventEmitter {
   readonly written: string[] = [];
+  setEncoding() {}
   write(data: string): void {
     this.written.push(data);
   }

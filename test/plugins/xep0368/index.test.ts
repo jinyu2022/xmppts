@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Connection } from "../../../lib/connection";
+import { JID } from "../../../lib/JID";
 import { Status } from "../../../lib/transport/typing";
+import XMPPConnection from "../../../lib/transport/tcp";
+import XMPPSConnection from "../../../lib/transport/tcp-direct";
 import XEP0368 from "../../../lib/plugins/xep0368";
 import logger from "../../../lib/log";
 
@@ -135,6 +138,49 @@ describe("XEP0368 直连 TLS", () => {
     expect(endpoints[0].port).toBeGreaterThan(0);
   });
 
+  it("用户端点完整时不做直连 TLS 发现", async () => {
+    const spy = vi
+      .spyOn(XEP0368, "resolveDirectTLS")
+      .mockResolvedValue([{ host: "unused.mock.example", port: 443 }]);
+    const conn = new Connection(`xep0368-test@${DOMAIN}`, TEST_PASSWORD, {
+      protocol: "xmpp",
+      host: "explicit.example",
+      port: 5222,
+    });
+    new XEP0368(conn);
+
+    const transport = await conn.transports.xmpp({
+      jid: new JID(`xep0368-test@${DOMAIN}`),
+      password: TEST_PASSWORD,
+      tls: true,
+      host: "explicit.example",
+      port: 5222,
+    });
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(transport).toBeInstanceOf(XMPPConnection);
+  });
+
+  it("端点缺少 port 时仍做直连 TLS 发现", async () => {
+    const spy = vi
+      .spyOn(XEP0368, "resolveDirectTLS")
+      .mockResolvedValue([{ host: "xmpps.mock.example", port: 443 }]);
+    const conn = new Connection(`xep0368-test@${DOMAIN}`, TEST_PASSWORD, {
+      protocol: "xmpp",
+    });
+    new XEP0368(conn);
+
+    const transport = await conn.transports.xmpp({
+      jid: new JID(`xep0368-test@${DOMAIN}`),
+      password: TEST_PASSWORD,
+      tls: true,
+      host: "partial.example",
+    });
+
+    expect(spy).toHaveBeenCalledWith(DOMAIN);
+    expect(transport).toBeInstanceOf(XMPPSConnection);
+  });
+
   it("从初始连接开始，直连 TLS 握手后直接进入 SASL 认证", async () => {
     // 固定 SRV 解析结果，隔离真实 DNS/网络
     vi.spyOn(XEP0368, "resolveDirectTLS").mockResolvedValue([
@@ -145,32 +191,30 @@ describe("XEP0368 直连 TLS", () => {
     });
     active.add(conn);
     conn.registerPlugin("XEP0368");
-    // 初始连接：不提供 url，由 XEP0368 在 beforeConnect 阶段解析 SRV 并注入 TLSSocket
+    // 初始连接：不提供端点，XEP0368 在工厂的 create() 中解析 SRV 并返回 XMPPSConnection
     await conn.connect();
     const transport = conn.transport;
     expect(transport).not.toBeNull();
 
-    // 等待注入与 connect() 同步段落盘（beforeConnect 微任务链）
+    // 等待直连 TLS socket 创建（tls.connect mock）
     await vi.waitFor(() => expect(serverRef.current).not.toBeNull());
-    // 排空微任务：确保 setupSocketListeners 的 "connect" 监听已注册
+    // 排空微任务：确保 setupSocketListeners 的 secureConnect 监听已注册
     await new Promise<void>((resolve) => setImmediate(resolve));
     const server = serverRef.current!;
-    // 注入的是"加密" socket（模拟 TLSSocket），传输层未创建明文 Socket
+    // 直连 TLS 传输创建的是加密 socket
     expect(server.socket.encrypted).toBe(true);
 
-    // 先挂监听再触发连接：避免事件早于注册而丢失
+    // 先挂监听再触发连接：TCP 连接建立不触发流，必须等 TLS 握手完成
     const connected = new Promise<void>((resolve) =>
       conn.once("connect", () => resolve()),
     );
     server.acceptConnection();
-    await connected;
-    // 底层连接建立：open 触发、流头发出，此时握手未完成 → STREAM_START
-    expect(transport?.status).toBe(Status.STREAM_START);
-    expect(server.expectReceived("<stream:stream")).toContain(DOMAIN);
-
-    // 模拟 TLS 握手完成：XEP0368 的 secureConnect 监听置 TLS_ESTABLISHED
+    expect(transport?.status).not.toBe(Status.STREAM_START);
     server.secureConnect();
+    await connected;
+    // 握手完成：流头发出并直接进入 TLS_ESTABLISHED
     expect(transport?.status).toBe(Status.TLS_ESTABLISHED);
+    expect(server.expectReceived("<stream:stream")).toContain(DOMAIN);
 
     // TLS 就绪后的流特性：route 走 mechanisms 分支，直接发起 SASL 认证
     server.send(
@@ -198,7 +242,7 @@ describe("XEP0368 直连 TLS", () => {
     const transport = conn.transport;
     expect(transport).not.toBeNull();
 
-    // ctx.tls=false → XEP0368 不介入：默认明文 Socket（无需等待 DNS/注入）
+    // tls=false，不介入端点选择：返回默认明文 XMPPConnection
     await vi.waitFor(() => expect(serverRef.current).not.toBeNull());
     // 排空微任务：确保 setupSocketListeners 的 "connect" 监听已注册
     await new Promise<void>((resolve) => setImmediate(resolve));
