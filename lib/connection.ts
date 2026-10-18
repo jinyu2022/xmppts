@@ -6,6 +6,7 @@ import logger from "./log";
 import { Message, Iq, Presence, StanzaBase } from "./stanza";
 import { Status, type TransportSocket } from "./transport/typing";
 import { SyncPipeline } from "./transport/pipeline";
+import { defaultTransports, type TransportFactory } from "./transport/index";
 import type { Protocol, Options } from "./types";
 const log = logger.getLogger("connection");
 
@@ -76,16 +77,14 @@ export interface Connection extends PluginRegistry {
 export class Connection extends EventEmitter {
   jid: JID;
   password: string;
-  /** 连接协议，xmpp仅node环境可用，ws暂时禁用 */
+  /** 连接协议，按此值从 `transports` 注册表选择传输实现 */
   protocol: Protocol = "xmpp";
-  /** 连接的url，不要前缀 */
+  /** 连接主机；未指定时由传输自行发现（TCP 查 SRV） */
   host?: string;
-  /** 连接的端口 */
+  /** 连接的端口；未指定时用传输默认端口 */
   port?: number;
-  /** 连接的路径 */
+  /** 连接的路径（WebSocket/BOSH） */
   path?: string;
-  /** 连接的url */
-  url?: string;
   /** 是否启用tls，在本地调试的时候您可能不需要，默认为true */
   tls = true;
 
@@ -107,6 +106,14 @@ export class Connection extends EventEmitter {
    * @warrning 你要知道你自己在做什么
    */
   transport: TransportSocket | null = null;
+
+  /**
+   * 协议到传输工厂的映射。
+   * 默认包含内置的 xmpp/ws/http，可通过 {@link registerTransport} 追加或覆盖。
+   */
+  readonly transports: Record<string, TransportFactory> = {
+    ...defaultTransports,
+  };
 
   /**
    * 会话是否可用：资源绑定成功至流关闭/断线之间为 true。
@@ -158,9 +165,9 @@ export class Connection extends EventEmitter {
    * @param jid 完整的账号，例如：user@domain.com
    * @param password 密码
    * @param options 自定义配置，一般不需要配置，包括：
-   *    - host为连接的url，不要前缀
-   *    - protocol为连接协议，xmpp仅node环境可用，ws暂时禁用
-   *    - tls为是否启用tls，在本地调试的时候您可能不需要，默认为true
+   *    - host 为连接主机，未指定时由传输发现
+   *    - protocol 为连接协议，内置 xmpp/ws/http，自定义协议可用 registerTransport 注册
+   *    - tls 为是否启用tls，在本地调试的时候您可能不需要，默认为true
    */
   constructor(jid: string, password: string, options?: Options) {
     super();
@@ -198,20 +205,9 @@ export class Connection extends EventEmitter {
     if (options?.reconnectMaxAttempts) {
       this.reconnectMaxAttempts = options.reconnectMaxAttempts;
     }
-    // 组合url
-    if (this.host && this.protocol) {
-      const prefix = this.tls ? `${this.protocol}s` : this.protocol;
-      this.url = `${prefix}://${this.host}`;
-      if (this.port) {
-        this.url += `:${this.port}`;
-      }
-      if (this.path) {
-        this.url += `/${this.path}`;
-      }
-    }
 
     // 先注册写出终端，保证未 connect 时 send 也会走到它（未连接即抛错）
-    // connect 时 initPlugins() 会清空管线并把它重新注册到所有插件之后
+    // connect 时 instantiatePlugins() 会清空管线，initPlugins() 再把它重新注册到所有插件之后
     this.pipeline.use("send", this.write);
   }
 
@@ -301,20 +297,8 @@ export class Connection extends EventEmitter {
     );
   }
 
-  /** 注册插件 */
-  private async initPlugins() {
-    // 清掉上一次的注册（含写出终端），避免重复调用时叠加
-    this.pipeline.clear();
-    // 每个已注册插件各做一次依赖闭包，顺带解析并缓存构造函数
-    await Promise.all(
-      Array.from(this.pendingPlugins.keys(), (name) =>
-        this.checkAndRegisterDep(name),
-      ),
-    );
-    // 先全部实例化，保证 init() 里能访问到依赖实例
-    for (const [name, { func, options }] of this.pendingPlugins) {
-      this[name] = new func!(this, options);
-    }
+  /** 调用插件 init()：此时 transport 已创建，可注册管线与事件处理器 */
+  private initPlugins() {
     for (const name of this.pendingPlugins.keys()) {
       (this[name] as InstanceType<PluginConstructor>).init();
     }
@@ -389,22 +373,55 @@ export class Connection extends EventEmitter {
     this.reconnectTimer = undefined;
     // 复位重连计数与会话状态
     this.reconnectAttempts = 0;
-    this.transport = await this.createSocket();
-    await this.initPlugins();
+    // 清掉上一次的注册（含写出终端），避免重复调用时叠加
+    this.pipeline.clear();
+    // 插件实例化先于传输创建：构造函数可注册传输或补全连接配置
+    await this.instantiatePlugins();
+    const create = this.transports[this.protocol];
+    if (!create) {
+      throw new Error(`未知的协议: ${this.protocol}`);
+    }
+    this.transport = await create({
+      jid: this.jid,
+      password: this.password,
+      tls: this.tls,
+      host: this.host,
+      port: this.port,
+      path: this.path,
+    });
+    this.initPlugins();
     this._setupSocketEvents();
-    await this.transport.connect(this.url);
+    await this.transport.connect();
   }
 
-  private async createSocket(): Promise<TransportSocket> {
-    if (this.protocol === "http") {
-      throw new Error("暂不支持xbosh");
-    } else if (this.protocol === "xmpp" && typeof process !== "undefined") {
-      log.info("使用xmpp协议");
-      const XMPPConnection = (await import("./transport/tcp.js")).default;
-      return new XMPPConnection(this.jid, this.password, this.tls);
-    } else {
-      throw new Error("未知的协议");
+  /**
+   * 实例化插件：依赖解析 → `new Plugin(connection)`。
+   * 此时 transport 尚未创建，构造函数可注册传输或补全连接配置，
+   * 但不得访问传输层管线（在 {@link initPlugins} 中完成）。
+   */
+  private async instantiatePlugins() {
+    await Promise.all(
+      Array.from(this.pendingPlugins.keys(), (name) =>
+        this.checkAndRegisterDep(name),
+      ),
+    );
+    // 先全部实例化，保证 init() 里能访问到依赖实例
+    for (const [name, { func, options }] of this.pendingPlugins) {
+      this[name] = new func!(this, options);
     }
+  }
+
+  /**
+   * 注册一种传输实现，供该连接实例使用。
+   *
+   * 同名协议覆盖已有实现。插件也会在构造函数中调用本方法（如 XEP0368 覆盖 `xmpp`），
+   * 而插件实例化发生在 {@link connect} 内部、晚于用户调用本方法的时机，因此**同名协议的
+   * 插件注册会覆盖用户注册**；要保留自定义实现，请勿注册会覆盖该协议的插件，或改用其他协议名。
+   * @param protocol 协议名（URL scheme），与 {@link protocol} 取值对应
+   * @param create 传输工厂，见 {@link TransportFactory}
+   */
+  registerTransport(protocol: string, create: TransportFactory): void {
+    this.transports[protocol] = create;
   }
 
   /**
@@ -499,7 +516,7 @@ export class Connection extends EventEmitter {
 
   /**
    * 清除监听器与插件运行时状态。
-   * 刻意保留 pendingPlugins：真断开后复用本实例 connect() 时由 initPlugins() 重建插件，调用方无需重新 registerPlugin
+   * 刻意保留 pendingPlugins：真断开后复用本实例 connect() 时由 instantiatePlugins()/initPlugins() 重建插件，调用方无需重新 registerPlugin
    */
   private _cleanup() {
     // 清理待执行的重连定时器，避免残留

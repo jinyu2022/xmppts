@@ -13,7 +13,7 @@ describe("plugins barrel", () => {
       .filter((key) => key !== "pluginLoaders")
       .sort();
     expect(Object.keys(pluginLoaders).sort()).toEqual(exported);
-    expect(exported).toHaveLength(24);
+    expect(exported).toHaveLength(23);
   });
 
   it("每个 loader 解析出可实例化的插件类，且与静态导出同一引用", async () => {

@@ -59,6 +59,27 @@ class FakeWebSocket {
 
 const RealWebSocket = globalThis.WebSocket;
 
+/** host-meta 响应：公布 WebSocket 端点（XEP-0156 Example 1） */
+const WS_XRD = `<?xml version='1.0' encoding='utf-8'?>
+  <XRD xmlns='http://docs.oasis-open.org/ns/xri/xrd-1.0'>
+    <Link rel="urn:xmpp:alt-connections:websocket"
+          href="wss://web.example.com:443/ws" />
+  </XRD>`;
+
+function stubFetch(text: string) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      () =>
+        ({
+          ok: true,
+          status: 200,
+          text: () => Promise.resolve(text),
+        }) as unknown as Response,
+    ),
+  );
+}
+
 /** 只宣告 PLAIN 的流特性 */
 const AUTH_FEATURES = `<stream:features xmlns:stream="http://etherx.jabber.org/streams">
   <mechanisms xmlns="urn:ietf:params:xml:ns:xmpp-sasl">
@@ -72,9 +93,14 @@ const SASL_SUCCESS = `<success xmlns="urn:ietf:params:xml:ns:xmpp-sasl"/>`;
 
 /** 建立连接并触发 open（返回假 ws 供后续驱动） */
 async function connectOpen() {
-  const connection = new WSConnection(new JID("juliet@capulet.lit/balcony"), "secret");
   // WebSocket 端点取自 XEP-0156 Example 1
-  await connection.connect("wss://web.example.com:443/ws");
+  const connection = new WSConnection(
+    new JID("juliet@capulet.lit/balcony"),
+    "secret",
+    true,
+    { host: "web.example.com", port: 443, path: "/ws" },
+  );
+  await connection.connect();
   const ws = FakeWebSocket.last();
   ws.open();
   return { connection, ws };
@@ -98,12 +124,31 @@ describe("WSConnection", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     (globalThis as { WebSocket?: unknown }).WebSocket = RealWebSocket;
   });
 
-  it("缺少 url 时 connect 抛错", async () => {
-    const connection = new WSConnection(new JID("juliet@capulet.lit"), "secret");
-    await expect(connection.connect()).rejects.toThrow("missing websocket url");
+  it("端点不完整时按 XEP-0156 发现并建连", async () => {
+    stubFetch(WS_XRD);
+    const connection = new WSConnection(
+      new JID("juliet@capulet.lit/balcony"),
+      "secret",
+    );
+    await connection.connect();
+
+    expect(FakeWebSocket.last().url).toBe("wss://web.example.com:443/ws");
+  });
+
+  it("未公布 websocket 端点时 connect 抛错", async () => {
+    stubFetch(`<XRD xmlns='http://docs.oasis-open.org/ns/xri/xrd-1.0'/>`);
+    const connection = new WSConnection(
+      new JID("juliet@capulet.lit/balcony"),
+      "secret",
+    );
+
+    await expect(connection.connect()).rejects.toThrow(
+      "未找到 websocket 连接方法",
+    );
   });
 
   it("构造时无 resource 自动生成", () => {
@@ -209,8 +254,13 @@ describe("WSConnection", () => {
   });
 
   it("send 在未连接与非 OPEN 状态下抛错", async () => {
-    const connection = new WSConnection(new JID("test@example.com"), "secret");
-    await connection.connect("wss://example.com/xmpp");
+    const connection = new WSConnection(
+      new JID("test@example.com"),
+      "secret",
+      true,
+      { host: "example.com", port: 443, path: "/xmpp" },
+    );
+    await connection.connect();
     expect(() => connection.send("<a/>")).toThrow("websocket not open");
 
     FakeWebSocket.last().open();

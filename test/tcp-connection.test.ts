@@ -5,6 +5,10 @@ import { connect as tlsConnect } from "node:tls";
 import { JID } from "../lib/JID";
 import { Parser } from "../lib/ltx/Parser";
 import { Status } from "../lib/transport/typing";
+import { resolveSrv } from "../lib/dns";
+
+// SRV 查询恒返回空，避免测试触发真实 DNS
+vi.mock("../lib/dns", () => ({ resolveSrv: vi.fn(() => Promise.resolve([])) }));
 
 import {
   getServer,
@@ -30,8 +34,8 @@ import XMPPConnection from "../lib/transport/tcp";
 const TEST_JID = new JID("juliet@capulet.lit/balcony");
 /** 测试用的密码 */
 const TEST_PASSWORD = "test123";
-/** 测试用的服务端地址（TCP 直连模式） */
-const SERVER_URL = "tcp://localhost:5222";
+/** 测试用的服务端端点（TCP 直连模式） */
+const SERVER_ENDPOINT = { host: "localhost", port: 5222 };
 
 /** 包含 PLAIN 认证机制的 stream features，模拟服务端在流协商第一阶段返回。 */
 const AUTH_FEATURES = `<stream:features xmlns:stream="http://etherx.jabber.org/streams">
@@ -123,7 +127,7 @@ function createScramServerExchange(clientAuthBase64: string) {
  * @returns 可用于模拟服务端行为的 MockServer 实例.
  */
 async function connectClient(client: XMPPConnection): Promise<MockServer> {
-  await client.connect(SERVER_URL);
+  await client.connect();
   return getServer();
 }
 
@@ -184,7 +188,7 @@ describe("XMPPConnection 传输层集成测试", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     serverRef.current = null;
-    client = new XMPPConnection(TEST_JID, TEST_PASSWORD, false);
+    client = new XMPPConnection(TEST_JID, TEST_PASSWORD, false, SERVER_ENDPOINT);
   });
 
   // 每个测试后尝试断开连接，确保不残留 socket 和事件监听器
@@ -453,7 +457,7 @@ describe("XMPPConnection 传输层集成测试", () => {
    * - TLS 握手完成后重启流
    */
   it("TLS 模式通过 STARTTLS 升级建立连接", async () => {
-    client = new XMPPConnection(TEST_JID, TEST_PASSWORD, true);
+    client = new XMPPConnection(TEST_JID, TEST_PASSWORD, true, SERVER_ENDPOINT);
 
     const server = await connectClient(client);
     server.acceptConnection();
@@ -494,7 +498,7 @@ describe("XMPPConnection 传输层集成测试", () => {
    * 被当作 bind 响应处理而断开连接。
    */
   it("TLS 模式完整握手（STARTTLS → SASL → 资源绑定）", async () => {
-    client = new XMPPConnection(TEST_JID, TEST_PASSWORD, true);
+    client = new XMPPConnection(TEST_JID, TEST_PASSWORD, true, SERVER_ENDPOINT);
 
     const server = await connectClient(client);
     server.acceptConnection();
@@ -546,7 +550,7 @@ describe("XMPPConnection 传输层集成测试", () => {
    * - 错误消息提示服务器未宣告 starttls 功能
    */
   it("TLS 模式但服务器未宣告 starttls 时拒绝降级", async () => {
-    client = new XMPPConnection(TEST_JID, TEST_PASSWORD, true);
+    client = new XMPPConnection(TEST_JID, TEST_PASSWORD, true, SERVER_ENDPOINT);
 
     const server = await connectClient(client);
     const error = waitForEvent<Error>(client, "error");
@@ -571,7 +575,7 @@ describe("XMPPConnection 传输层集成测试", () => {
     // 在 fake timers 内执行 connect()，让连接超时定时器受控便于快进
     vi.useFakeTimers();
     try {
-      await client.connect(SERVER_URL);
+      await client.connect();
       vi.advanceTimersByTime(30_000);
     } finally {
       vi.useRealTimers();
@@ -662,16 +666,51 @@ describe("XMPPConnection 传输层集成测试", () => {
    * - 仅创建一个 socket，不会因并发调用泄漏双 socket
    */
   it("connect 重复调用立即失败且不泄漏双 socket", async () => {
-    const first = client.connect(SERVER_URL);
+    const first = client.connect();
 
     // 首次调用已同步占位为 CONNECTING，二次调用应在守卫处立即失败
     expect(client.status).toBe(Status.CONNECTING);
-    await expect(client.connect(SERVER_URL)).rejects.toThrow(
+    await expect(client.connect()).rejects.toThrow(
       "连接已在进行中",
     );
 
     await first;
     expect(client.status).toBe(Status.CONNECTING);
     expect(Socket).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 显式端点必须完整：host 与 port 同时提供才采纳，否则视为未指定并走 SRV 发现。
+   */
+  it("构造时指定的 host/port 优先于 SRV 发现", async () => {
+    client = new XMPPConnection(TEST_JID, TEST_PASSWORD, false, {
+      host: "explicit.example",
+      port: 5223,
+    });
+    await client.connect();
+
+    expect(client.host).toBe("explicit.example");
+    expect(client.port).toBe("5223");
+    expect(resolveSrv).not.toHaveBeenCalled();
+  });
+
+  it("端点缺少 port 时不采纳，回退 SRV 与默认端口", async () => {
+    client = new XMPPConnection(TEST_JID, TEST_PASSWORD, false, {
+      host: "partial.example",
+    });
+    await client.connect();
+
+    expect(client.host).toBe("capulet.lit");
+    expect(client.port).toBe("5222");
+    expect(resolveSrv).toHaveBeenCalled();
+  });
+
+  it("端点缺少 host 时不采纳，回退 SRV 与默认端口", async () => {
+    client = new XMPPConnection(TEST_JID, TEST_PASSWORD, false, { port: 5223 });
+    await client.connect();
+
+    expect(client.host).toBe("capulet.lit");
+    expect(client.port).toBe("5222");
+    expect(resolveSrv).toHaveBeenCalled();
   });
 });

@@ -14,15 +14,9 @@ export class JID {
   constructor(jid: string) {
     const { local, domain, resource } = JID.parse(jid);
 
-    // XEP-0106 §4.1 第 4/5 条：发送与比较都使用转义形式
-    // RFC 8265 §3.3.3 规定的顺序：Case Mapping → NFC
-    this.local = (XEP0106.detect(local) ? XEP0106.escapeLocal(local) : local)
-      .toLowerCase()
-      .normalize("NFC");
-    // RFC 7622 §3.2：domainpart 末尾的标签分隔点（"."）须在任何其他规范化步骤之前剥离
-    this.domain = domain.replace(/\.$/, "").toLowerCase().normalize("NFC");
-    /** resourcepart 按 OpaqueString 处理：归一但保留大小写 */
-    this.resource = resource?.normalize("NFC");
+    this.local = local;
+    this.domain = domain;
+    this.resource = resource;
     /** local 缺省（域 JID）时为空串，bare 退化为纯域名 */
     this.bare = this.local ? `${this.local}@${this.domain}` : this.domain;
     this.full = this.resource ? `${this.bare}/${this.resource}` : this.bare;
@@ -36,6 +30,10 @@ export class JID {
     return unescape ? XEP0106.unescapeLocal(this.local) : this.local;
   }
 
+  /**
+   * 解析 JID 并完成规范化：返回的部件已做大小写折叠、NFC 归一与 XEP-0106 转义，
+   * 可直接用于比较与线上传输。
+   */
   static parse(jid: string): {
     local: string;
     domain: string;
@@ -55,7 +53,17 @@ export class JID {
     }
     const resource = match[3];
 
-    return { local, domain, resource };
+    return {
+      // XEP-0106 §4.1 第 4/5 条：发送与比较都使用转义形式
+      // RFC 8265 §3.3.3 规定的顺序：Case Mapping → NFC
+      local: (XEP0106.detect(local) ? XEP0106.escapeLocal(local) : local)
+        .toLowerCase()
+        .normalize("NFC"),
+      // RFC 7622 §3.2：domainpart 末尾的标签分隔点（"."）须在任何其他规范化步骤之前剥离
+      domain: domain.replace(/\.$/, "").toLowerCase().normalize("NFC"),
+      // resourcepart 按 OpaqueString 处理：归一但保留大小写
+      resource: resource?.normalize("NFC"),
+    };
   }
 
   /** 支持 JID 或 JID 字符串比较；已知非 JID 对象静态推导为 false */

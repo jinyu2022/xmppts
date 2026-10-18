@@ -19,8 +19,8 @@ export class Register {
         timeout: 10_000,
       });
     } else {
-      const { XMPPDiscoverer } = await import("../xep0156/discoverAltXMPP");
-      const { websocket } = await XMPPDiscoverer.discoverAltXMPP(domain);
+      const { default: XEP0156 } = await import("../xep0156");
+      const { websocket } = await XEP0156.discoverAltXMPP(domain);
       if (!websocket) {
         throw new Error("未发现websocket地址");
       }

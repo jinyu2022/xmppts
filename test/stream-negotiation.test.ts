@@ -2,49 +2,28 @@ import { describe, expect, it } from "vitest";
 import { Parser, XMPPElement } from "../lib/ltx";
 import {
   BIND_NS,
-  SASL_NS,
   STREAM_NS,
-  SaslClient,
   buildBindRequest,
   collectStreamFeatures,
-  getSaslFailureCondition,
   getStreamErrorCondition,
   isStreamError,
   isStreamFeatures,
   parseBindResult,
+  parseSaslEvent,
+} from "../lib/transport/stream-connection";
+import {
+  SASL_NS,
+  SaslClient,
   parseSaslAttributes,
-  selectSaslMechanism,
   utf8ToBase64,
-} from "../lib/transport/stream-negotiation";
+} from "../lib/auth/sasl";
 import { JID } from "../lib/JID";
 
 function parse(xml: string): XMPPElement {
   return Parser.parse(xml);
 }
 
-function saslFeatures(...mechanisms: string[]): XMPPElement {
-  return parse(
-    `<stream:features xmlns:stream="${STREAM_NS}">
-      <mechanisms xmlns="${SASL_NS}">
-        ${mechanisms.map((mechanism) => `<mechanism>${mechanism}</mechanism>`).join("")}
-      </mechanisms>
-    </stream:features>`,
-  );
-}
-
 describe("流协商辅助函数", () => {
-  it("优先选择 SCRAM-SHA-1", () => {
-    expect(selectSaslMechanism(saslFeatures("PLAIN", "SCRAM-SHA-1"))).toBe(
-      "SCRAM-SHA-1",
-    );
-  });
-
-  it("拒绝不受支持的 SASL 机制", () => {
-    expect(() => selectSaslMechanism(saslFeatures("EXTERNAL"))).toThrow(
-      "不受支持的认证机制",
-    );
-  });
-
   it("把非 ASCII 文本编码为 UTF-8 Base64", () => {
     const text = "päss";
     const binary = atob(utf8ToBase64(text));
@@ -90,18 +69,41 @@ describe("流协商辅助函数", () => {
     );
   });
 
-  it("读取 SASL failure 条件", () => {
+  it("解析 SASL 事件", () => {
     const failure = parse(
       `<failure xmlns="${SASL_NS}"><not-authorized/><text>nope</text></failure>`,
     );
-    expect(getSaslFailureCondition(failure)).toBe("not-authorized");
+
+    expect(parseSaslEvent(failure)).toEqual({
+      type: "failure",
+      condition: "not-authorized",
+    });
+    expect(parseSaslEvent(parse(`<success xmlns="${SASL_NS}"/>`))).toEqual({
+      type: "success",
+      payload: "",
+    });
+    // 非 SASL 命名空间的节由调用方放行
+    expect(parseSaslEvent(parse("<message/>"))).toBeUndefined();
   });
 });
 
 describe("SaslClient", () => {
+  it("优先选择 SCRAM-SHA-1", () => {
+    const client = new SaslClient(new JID("juliet@capulet.lit/balcony"));
+    client.start(["PLAIN", "SCRAM-SHA-1"], "pass");
+    expect(client.mechanism).toBe("SCRAM-SHA-1");
+  });
+
+  it("拒绝不受支持的 SASL 机制", () => {
+    const client = new SaslClient(new JID("juliet@capulet.lit/balcony"));
+    expect(() => client.start(["EXTERNAL"], "pass")).toThrow(
+      "不受支持的认证机制",
+    );
+  });
+
   it("构造 UTF-8 的 PLAIN 认证请求", () => {
     const client = new SaslClient(new JID("用户@capulet.lit/client"));
-    const auth = parse(client.start(saslFeatures("PLAIN"), "密码"));
+    const auth = parse(client.start(["PLAIN"], "密码"));
     const decoded = new TextDecoder().decode(
       Uint8Array.from(atob(auth.textContent), (character) =>
         character.charCodeAt(0),
@@ -116,24 +118,19 @@ describe("SaslClient", () => {
 
   it("接受 PLAIN 成功", async () => {
     const client = new SaslClient(new JID("juliet@capulet.lit/balcony"));
-    client.start(saslFeatures("PLAIN"), "pass");
+    client.start(["PLAIN"], "pass");
 
     await expect(
-      client.process(parse(`<success xmlns="${SASL_NS}"/>`), "pass"),
+      client.process({ type: "success", payload: "" }, "pass"),
     ).resolves.toEqual({ type: "success" });
   });
 
   it("暴露 PLAIN failure 条件", async () => {
     const client = new SaslClient(new JID("juliet@capulet.lit/balcony"));
-    client.start(saslFeatures("PLAIN"), "pass");
+    client.start(["PLAIN"], "pass");
 
     await expect(
-      client.process(
-        parse(
-          `<failure xmlns="${SASL_NS}"><not-authorized/></failure>`,
-        ),
-        "pass",
-      ),
+      client.process({ type: "failure", condition: "not-authorized" }, "pass"),
     ).rejects.toThrow("认证失败: not-authorized");
   });
 });
