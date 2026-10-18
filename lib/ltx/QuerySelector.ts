@@ -55,12 +55,23 @@ export default class QuerySelector {
     selector: string,
   ): XMPPElement | null {
     const groups = this.parse(selector, "querySelector");
+    // `:scope > a > b` 只可能出现在直接子元素链上，不必扫描整棵子树
+    if (groups.length === 1 && this.isScopedChildChain(groups[0])) {
+      const group = groups[0];
+      return group.length === 1
+        ? null
+        : this.findScopedChild(node, group, 1, node);
+    }
     const stack: XMPPElement[] = [];
     this.pushChildren(stack, node);
     while (stack.length > 0) {
       const current = stack.pop()!;
       for (const group of groups) {
-        if (this.matchesSelector(current, group, node, group.length - 1)) {
+        const matched =
+          group.length === 1
+            ? this.matchesItem(current, group[0], node)
+            : this.matchesSelector(current, group, node, group.length - 1);
+        if (matched) {
           return current;
         }
       }
@@ -80,6 +91,12 @@ export default class QuerySelector {
     selector: string,
   ): XMPPElement[] {
     const groups = this.parse(selector, "querySelectorAll");
+    // `:scope > a > b` 只在直接子元素链上，按链收集即为文档序
+    if (groups.length === 1 && this.isScopedChildChain(groups[0])) {
+      const result: XMPPElement[] = [];
+      this.findScopedChildren(node, groups[0], 1, node, result);
+      return result;
+    }
     const found = new Set<XMPPElement>();
     for (const group of groups) {
       // 起点自身也参与匹配（`:scope` 与组合符需要），输出时再排除
@@ -117,6 +134,7 @@ export default class QuerySelector {
 
   /** 校验并解析选择器为选择器组列表（命中缓存则跳过解析） */
   private static parse(selector: string, method: string): SelectorItem[][] {
+    // JS 调用方可能不传参，按 happy-dom 语义把 undefined 当字符串处理
     const value = String(selector);
     if (!value.trim()) {
       throw new DOMException(
@@ -199,6 +217,94 @@ export default class QuerySelector {
         if (descendants.length > 0) {
           this.findAll(descendants, root, items, itemIndex, found);
         }
+      }
+    }
+  }
+
+  /** 选择器组是否为纯 `:scope` 开头、且后续全是子代组合符（`:scope > a > b`） */
+  private static isScopedChildChain(items: readonly SelectorItem[]): boolean {
+    const first = items[0];
+    if (
+      !first.scope ||
+      first.tag !== null ||
+      first.id !== null ||
+      first.classes.length > 0 ||
+      first.attributes.length > 0
+    ) {
+      return false;
+    }
+    for (let i = 1; i < items.length; i++) {
+      if (items[i].combinator !== ">") {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * 沿直接子元素逐级匹配 `:scope > ...`。
+   *
+   * 先深入第一个匹配的子树，保证返回文档序最前的元素。
+   * @param parent 当前层的父元素
+   * @param items 选择器组
+   * @param index 当前匹配的 items 下标（0 是 `:scope`）
+   * @param scope 查询起点，作为 `:scope` 锚点
+   */
+  private static findScopedChild(
+    parent: XMPPElement,
+    items: readonly SelectorItem[],
+    index: number,
+    scope: XMPPElement,
+  ): XMPPElement | null {
+    const item = items[index];
+    const last = index === items.length - 1;
+    const children = parent.childNodes;
+    for (const child of children) {
+      if (
+        !(child instanceof XMPPElement) ||
+        !this.matchesItem(child, item, scope)
+      ) {
+        continue;
+      }
+      if (last) {
+        return child;
+      }
+      const found = this.findScopedChild(child, items, index + 1, scope);
+      if (found) {
+        return found;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 收集 `:scope > a > b` 链上的全部匹配，按子元素遍历顺序即为文档序。
+   * @param parent 当前层的父元素
+   * @param items 选择器组
+   * @param index 当前匹配的 items 下标（0 是 `:scope`）
+   * @param scope 查询起点，作为 `:scope` 锚点
+   * @param result 收集结果
+   */
+  private static findScopedChildren(
+    parent: XMPPElement,
+    items: readonly SelectorItem[],
+    index: number,
+    scope: XMPPElement,
+    result: XMPPElement[],
+  ): void {
+    const item = items[index];
+    const last = index === items.length - 1;
+    for (const child of parent.childNodes) {
+      if (
+        !(child instanceof XMPPElement) ||
+        !this.matchesItem(child, item, scope)
+      ) {
+        continue;
+      }
+      if (last) {
+        result.push(child);
+      } else {
+        this.findScopedChildren(child, items, index + 1, scope, result);
       }
     }
   }
@@ -599,7 +705,9 @@ export default class QuerySelector {
       operator,
       value,
       regExp:
-        operator && value ? this.buildAttributeRegExp(operator, value) : undefined,
+        operator && value
+          ? this.buildAttributeRegExp(operator, value)
+          : undefined,
       never,
     });
     return i + 1;
