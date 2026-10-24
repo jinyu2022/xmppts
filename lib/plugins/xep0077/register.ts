@@ -1,4 +1,4 @@
-import { EventEmitter } from "events";
+import { Emitter } from "@/emitter";
 import { Form, type Field } from "../xep0004/form";
 import { Iq } from "@/stanza"
 import { XMPPElement } from "@/ltx/Element";
@@ -53,11 +53,19 @@ export class Register {
   }
 }
 
+/** WSconnection 对外暴露的事件，命名对齐 TLSSocket */
+interface WSConnectionEvents {
+  connect: [data: unknown];
+  data: [data: unknown];
+  close: [data: unknown];
+  error: [data: unknown];
+}
+
 /**
  * 兼容TLSSocket api 的包装。
  * WebSocket 注册通道暂时禁用：旧 shims 已移除，保留此类供后续重构参考。
  */
-export class WSconnection extends EventEmitter{
+export class WSconnection extends Emitter<WSConnectionEvents> {
   readonly url: string;
   private socket: WebSocket| null = null;
   static readonly eventMap = {

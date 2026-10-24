@@ -1,13 +1,20 @@
 import { Form, type DataForm } from "../xep0004/form";
 
-import { XMPPError, TimeoutError } from "@/errors";
+import { XMPPError } from "@/errors";
 import { Register } from "./register";
 import type { TLSSocket } from "node:tls";
-import { EventEmitter } from "events";
+import { Emitter } from "@/emitter";
 import { Parser } from "@/ltx/Parser";
 import type { XMPPElement } from "@/ltx/Element";
 import logger from "@/log";
 const log = logger.getLogger("XEP0077");
+
+/** 注册流程内部事件 */
+interface RegistrationEvents {
+  /** 表单查询收尾；服务器不支持注册或请求失败时为 null */
+  registration: [form: DataForm | null];
+}
+
 /**
  * XEP-0077: In-Band Registration
  * @see https://xmpp.org/extensions/xep-0077.html
@@ -16,7 +23,7 @@ const log = logger.getLogger("XEP0077");
 export default class XEP0077 extends Register {
   private domain?: string;
   private socket: TLSSocket | null = null;
-  private readonly event = new EventEmitter();
+  private readonly event = new Emitter<RegistrationEvents>();
   private protocol?: "xmpps" | "ws";
   private registrationForm?: DataForm;
   /** 表单查询已有结果（成功或失败），供 getRegistrationForm 判断是否还要等待 */
@@ -152,7 +159,7 @@ export default class XEP0077 extends Register {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new TimeoutError(`请求超时: ${id}`));
+        reject(new DOMException(`请求超时: ${id}`, "TimeoutError"));
       }, timeout);
       timer.unref?.();
 

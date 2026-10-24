@@ -29,7 +29,7 @@
 | `getRegistrationForm()` | 获取服务器注册表单 → `Promise<DataForm \| null>`（不支持时返回 `null`） |
 | `register(username, password, captcha?, challenge?)` | 提交注册信息创建新账户 → `Promise<boolean>`；失败抛 `XMPPError`（空 password 抛裸 `Error`）。`challenge` 仅在缓存表单含该字段且取到值时才覆盖显式参数（见 debug M4） |
 | `register(iq)` | 重载：直接提交构造好的 IQ；此重载不使用 `password`/`captcha`/`challenge` |
-| `sendAsync(data, timeout?)` | 发送 IQ 并等待响应（默认超时 10s）→ `Promise<XMPPElement>`；id 缺失时自动生成，未连接 reject `Error`、超时 reject `TimeoutError` |
+| `sendAsync(data, timeout?)` | 发送 IQ 并等待响应（默认超时 10s）→ `Promise<XMPPElement>`；id 缺失时自动生成，未连接 reject `Error`、超时 reject `DOMException`（name 为 `TimeoutError`） |
 | `setListener()` | 绑定 socket 事件与解析器（`connectSocket()` 内自动调用） |
 | `parse(data)` | 把原始数据喂给常驻 XML 解析器 |
 | `XEP0077.createSubmitFormEL(username, password, captcha?, challenge?)`（静态） | 构造注册提交 IQ；`captcha`/`challenge` 写为服务器方言字段 `ocr`/`challenge`（非 §13.4.1 登记字段） |
