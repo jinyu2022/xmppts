@@ -1,5 +1,5 @@
 import { Status } from "./typing";
-import type { TransportEndpoint } from "./typing";
+import type { TransportEndpoint, TransportSink } from "./typing";
 import {
   StreamConnection,
   isStreamFeatures,
@@ -39,10 +39,11 @@ export class WSConnection extends StreamConnection {
   constructor(
     jid: JID,
     password: string,
+    sink: TransportSink,
     tls = true,
     endpoint?: TransportEndpoint,
   ) {
-    super(jid, password);
+    super(jid, password, sink);
     this.tls = tls;
     this.endpoint = endpoint ?? {};
     // WebSocket 没有 STARTTLS：首个流特性直接进入 SASL 决策
@@ -115,7 +116,7 @@ export class WSConnection extends StreamConnection {
   private onError(): void {
     const err = new Error("WebSocket error");
     log.error("error", err);
-    this.emit("error", err);
+    this.sink.onError(err);
   }
 
   /** 解析收到的完整 XML 文档；framing 节点先行处理（RFC 7395 §3） */
@@ -126,8 +127,7 @@ export class WSConnection extends StreamConnection {
       stanza = Parser.parse(data);
     } catch (error) {
       log.error("parse failed", error, data);
-      this.emit(
-        "error",
+      this.sink.onError(
         error instanceof Error ? error : new Error(String(error)),
       );
       return;
@@ -139,7 +139,6 @@ export class WSConnection extends StreamConnection {
     if (stanza.localName === "close" && stanza.namespaceURI === FRAMING_NS) {
       log.info("server closed framing stream");
       this.status = Status.SESSIONEND;
-      this.emit("stream:end");
       this.closeTransport();
       return;
     }

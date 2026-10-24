@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { ErrorConditions, TimeoutError, XMPPError } from "../lib/errors";
+import { ErrorConditions, XMPPError } from "../lib/errors";
 import { Parser } from "../lib/ltx/Parser";
 
 /**
- * XMPPError / TimeoutError 单元测试。
+ * XMPPError 单元测试。
  * 覆盖 <error/> 节解析（condition/type/text）、非直接子元素与命名空间隔离、
  * 非法 condition 忽略，以及 stanza 上下文字段的快照。
  *
@@ -101,14 +101,5 @@ describe("XMPPError", () => {
     expect(ErrorConditions).toContain("service-unavailable");
     expect(ErrorConditions).toContain("unexpected-request");
     expect(new Set(ErrorConditions).size).toBe(ErrorConditions.length);
-  });
-});
-
-describe("TimeoutError", () => {
-  it("保留 name 与 message，可被 instanceof 识别", () => {
-    const error = new TimeoutError("超时了");
-    expect(error).toBeInstanceOf(Error);
-    expect(error.name).toBe("TimeoutError");
-    expect(error.message).toBe("超时了");
   });
 });

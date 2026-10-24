@@ -6,7 +6,7 @@
 
 ## 0. 生命周期事件总览
 
-下图为 ASCII 时序图，将传输层 `Socket`（WS/TCP）事件与高层 `Connection` 事件绘制在同一时间轴上。`Connection` 在 [`_setupSocketEvents()`](../connection.ts) 中订阅 socket 事件并转发为自身事件。
+下图为 ASCII 时序图，将传输层 `Socket`（WS/TCP）事件与高层 `Connection` 事件绘制在同一时间轴上。传输层通过工厂上下文注入的 `TransportSink` 汇报事件，`Connection` 在 [`_createSink()`](../connection.ts#L476) 中把它们转发为自身事件。
 
 ```text
   应用层                Connection              Socket (WS/TCP)            XMPP 服务器
@@ -16,38 +16,32 @@
     │                      ├── connect() ───────────►│                          │
     │                      │                        ├── TCP/TLS/WS 握手 ──────►│
     │                      │                        │◄──────── 握手完成 ────────┤
-    │                      │               socket: open                       │
-    │◄───── conn: connect ─┼──────── 转发 ──────────│                          │
     │                      │                        ├── 流头部 ───────────────►│
-    │                      │              socket: stream:start                │
     │                      │                        ├── <auth> SASL 认证 ─────►│
     │                      │                        │◄──────── <success> ──────┤
-    │                      │            socket: authenticated                 │
     │                      │                        ├── 流重启 + 二次流特性 ────►│
     │                      │                        │◄─── <features><bind/> ────┤
     │                      │       pipeline: stream:negotiated                │
     │                      │                        ├── <iq set><bind/> ───────►│
     │                      │                        │◄─────── bound JID ────────┤
-    │                      │               socket: binded                     │
+    │                      │               sink: onBinded                     │
     │◄─ conn: session:start┼──────── 转发 ──────────│                          │
     │                      │                        │                          │
     │    ═════ 活跃会话（循环）═════                  │                          │
     │                      │                        │◄──────── stanza ─────────┤
-    │                      │               socket: stanza                     │
+    │                      │               sink: onStanza                     │
     │◄─ conn: message/iq/presence/others ── 转发 ───│                          │
     │                      │                        │                          │
     │    ═════ 关闭 ═════                              │                          │
     │                      │                        ├── </stream:stream> ─────►│
-    │                      │              socket: stream:end（会话关闭）       │
-    │◄── conn: session:end ┼──────── 转发 ──────────│                          │
-    │                      │               socket: close（连接关闭）           │
-    │◄──── conn: disconnect┼──────── 转发 ──────────│                          │
+    │                      │               sink: onClose（连接关闭）            │
+    │◄─ conn: session:end ── 转发 ──────────────────│                          │
     │                      │                        │                          │
     │    ═════ 异常路径 ═════                        │                          │
-    │                      │       socket: error（认证失败 / 绑定超时 / WS 错误） │
+    │                      │       sink: onError（认证失败 / 绑定超时 / WS 错误） │
 ```
 
-> 事件归属速查：**socket** 事件为 `open` / `authenticated` / `stream:start` / `binded` / `stanza` / `stream:end` / `close` / `error`（`stream:negotiated` 属管线事件点，见 `TransportPipelineEvents`）；**connection** 事件为 `connect` / `session:start` / `session:end` / `connection:lost` / `reconnecting` / `reconnected` / `disconnect` / `message` / `iq` / `presence` / `others`。两层命名零重叠：`open → connect`、`binded → session:start`、`stream:end → session:end`、`close → disconnect`。会话关闭（`stream:end`）与连接关闭（`close`）是两个独立事件。
+> 事件归属速查：**传输层通知**只有 `TransportSink` 的 4 个回调 `onBinded` / `onStanza` / `onClose` / `onError`（单向、单消费者，由 `Connection._createSink()` 创建并随工厂上下文传入构造函数）；`stream:negotiated` 等属管线事件点，见 `TransportPipelineEvents`。**connection 事件**为 `session:start` / `session:end` / `error` / `connection:lost` / `reconnecting` / `reconnected` / `message` / `iq` / `presence` / `others`。对应关系：`onBinded → session:start`（重连成功为 `reconnected`）、`onError → error`（载荷为 `ProtocolError`，用 `scope` 区分来源）、`onClose → session:end`（或调度重连）。
 
 ## 1. 网络连接 (TCP Binding)
 
@@ -56,7 +50,7 @@
 *   **客户端动作:**
     1.  **DNS 解析 FQDN** (Section 3.2): 解析服务器的完全限定域名（FQDN）以获取 IP 地址和端口。
     2.  **建立 TCP 连接** (Section 3.1): 通过解析得到的地址和端口建立持久的 TCP 连接。
-*   **连接实现选择:** [Connection.connect()](../connection.ts#L366) 按 `protocol` 从 `transports` 映射（默认见 [transport/index.ts](index.ts)）取值：`xmpp`（明文 + STARTTLS）、`ws`、`http`；新增协议用 [Connection.registerTransport()](../connection.ts#L421) 注册。协议不区分带 `s` 的变体，TLS 与否统一看 `tls` 字段。插件可在构造函数中注册传输或覆盖已有协议（XEP-0368 覆盖 `xmpp`，在工厂内做直连 TLS 发现并返回 [tcp-direct.ts](tcp-direct.ts) 的 `XMPPSConnection`）。
+*   **连接实现选择:** [Connection.connect()](../connection.ts#L380) 按 `protocol` 从 `transports` 映射（默认见 [transport/index.ts](index.ts)）取值：`xmpp`（明文 + STARTTLS）、`ws`、`http`；新增协议用 [Connection.registerTransport()](../connection.ts#L465) 注册。协议不区分带 `s` 的变体，TLS 与否统一看 `tls` 字段。插件可在构造函数中注册传输或覆盖已有协议（XEP-0368 覆盖 `xmpp`，在工厂内做直连 TLS 发现并返回 [tcp-direct.ts](tcp-direct.ts) 的 `XMPPSConnection`）。
 *   **对应代码:** [openTransport()](tcp.ts#L82)（端点解析 L133）、[setupSocketListeners()](tcp.ts#L161)；直连 TLS 的 socket 创建与就绪事件见 [tcp-direct.ts](tcp-direct.ts)
 
 ## 2. 流建立 (Stream Establishment)
@@ -88,7 +82,7 @@
         xmlns='jabber:client'
         xmlns:stream='http://etherx.jabber.org/streams'>
     ```
-*   **对应代码:** [openStream()](stream-connection.ts#L261)、[sendStreamOpen()](tcp.ts#L241)
+*   **对应代码:** [openStream()](stream-connection.ts#L315)、[sendStreamOpen()](tcp.ts#L279)
 
 ## 3. 流协商：传输层安全 (TLS Negotiation)
 
@@ -114,7 +108,7 @@
     <proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>
     ```
     *   **执行 TLS 握手** (Section 5.4.3): 客户端和服务器在底层 TCP 连接上执行 TLS 握手。
-*   **对应代码:** [onFeaturesStartTls()](tcp.ts#L186)、[onStartTls()](tcp.ts#L229)、[upgradeToTLS()](tcp.ts#L272)
+*   **对应代码:** [onFeaturesStartTls()](tcp.ts#L223)、[onStartTls()](tcp.ts#L267)、[upgradeToTLS()](tcp.ts#L310)
 
 ## 4. 流重启 (Post-TLS Stream Restart)
 
@@ -145,7 +139,7 @@ TLS 握手成功后，必须重启 XML 流以清除旧的流上下文，并在�
         xmlns='jabber:client'
         xmlns:stream='http://etherx.jabber.org/streams'>
     ```
-*   **对应代码:** [upgradeToTLS()](tcp.ts#L272) 内 `secureConnect`（L285-L289）→ [sendStreamOpen()](tcp.ts#L241)
+*   **对应代码:** [upgradeToTLS()](tcp.ts#L310) 内 `secureConnect`（L318-L322）→ [sendStreamOpen()](tcp.ts#L279)
 
 ## 5. 流协商：认证 (SASL Negotiation)
 
@@ -206,11 +200,11 @@ TLS 握手成功后，必须重启 XML 流以清除旧的流上下文，并在�
     </failure>
     ```
 *   **客户端动作 (C:) (如果失败):**
-    *   **当前实现不重试**：`<failure/>` 会抛 `SaslError`，由 `handleFailure()` 置 `Status.AUTHFAIL`、发出 `error` 事件并断开（[stream-connection.ts#L326-L334](stream-connection.ts#L326-L334)）。需要重试时重新 `connect()`。
+    *   **当前实现不重试**：`<failure/>` 由 `SaslClient.process()` 返回失败结果，传输层包装为 `ProtocolError`（`scope: "sasl"`），置 `Status.AUTHFAIL` 并断开。需要重试时重新 `connect()`。
     ```xml
     <auth xmlns='urn:ietf:params:xml:ns:xmpp-sasl' mechanism='PLAIN'>...</auth>
     ```
-*   **对应代码:** [onSasl()](stream-connection.ts#L351)（success → `emit("authenticated")` L360 + 流重启 L362；失败 → [handleFailure()](stream-connection.ts#L326)）
+*   **对应代码:** [onSasl()](stream-connection.ts#L446)（success → 置 `Status.AUTHENTICATED` 并重启流；失败 → [handleFailure()](stream-connection.ts#L388)）
 
 ## 6. 流重启 (Post-SASL Stream Restart)
 
@@ -239,7 +233,7 @@ SASL 认证成功后，必须再次重启 XML 流以清除旧的流上下文，�
         xmlns='jabber:client'
         xmlns:stream='http://etherx.jabber.org/streams'>
     ```
-*   **对应代码:** [onSasl()](stream-connection.ts#L351) 内 success → [sendStreamOpen()](tcp.ts#L241)
+*   **对应代码:** [onSasl()](stream-connection.ts#L446) 内 success → [sendStreamOpen()](tcp.ts#L279)
 
 ## 7. 资源绑定 (Resource Binding)
 
@@ -279,14 +273,14 @@ SASL 认证成功后，必须再次重启 XML 流以清除旧的流上下文，�
         </bind>
     </iq>
     ```
-*   **对应代码:** [onNegotiated()](stream-connection.ts#L371) 预填并发送绑定请求（记录 `bindId`，L380-L387）→ 绑定响应经 [onBinding()](stream-connection.ts#L397) 处理（[route()](stream-connection.ts#L270) 的 `BINDING` 分支）；[startBind()](stream-connection.ts#L423) 供插件回退重绑（如 XEP-0198 恢复被拒）
+*   **对应代码:** [onNegotiated()](stream-connection.ts#L474) 预填绑定请求（记录 `bindId`，L485-L490）→ 绑定响应经 [onBinding()](stream-connection.ts#L499) 处理（[route()](stream-connection.ts#L322) 的 `BINDING` 分支）；XEP-0198 恢复被拒时在 `binding` 事件写回 `ctx.outgoing`，由同一处理器代发
 
 ## 8. 会话建立 (Session Establishment)
 
 在资源绑定之后，客户端被认为已登录。RFC 6120 起不再要求独立的会话建立步骤（RFC 3921 的 `<iq type='set'><session/></iq>` 已废弃，个别老服务器仍会宣告 `urn:ietf:params:xml:ns:xmpp-session`）。
 
-*   **客户端动作 (C:):** 无——绑定成功后本库直接触发 `session:start`（见 [Connection._setupSocketEvents()](../connection.ts#L418)）。
-*   **对应代码:** 如需向老服务器补发 `<session/>`，可自行用 [sendAsync()](../connection.ts#L748) 实现。
+*   **客户端动作 (C:):** 无——绑定成功后传输层调用 `sink.onBinded()`，高层在 [Connection._createSink()](../connection.ts#L476) 中触发 `session:start`。
+*   **对应代码:** 如需向老服务器补发 `<session/>`，可自行用 [sendAsync()](../connection.ts#L797) 实现。
 
 ## 9. 节交换 (Stanza Exchange)
 
@@ -303,7 +297,7 @@ SASL 认证成功后，必须再次重启 XML 流以清除旧的流上下文，�
     ```
 *   **服务器动作 (S:):**
     *   **接收并路由/投递节。**
-*   **对应代码:** 发送 [Connection.send()](../connection.ts#L686)；接收 [route()](stream-connection.ts#L270) 分发 → `stanza` 事件 → [Connection 转发](../connection.ts#L443)
+*   **对应代码:** 发送 [Connection.send()](../connection.ts#L746)；接收 [route()](stream-connection.ts#L322) 分发 → `TransportSink.onStanza` → [Connection.onMessage()](../connection.ts#L633)
 
 ## 10. 流关闭 (Stream Closure)
 
@@ -319,7 +313,7 @@ SASL 认证成功后，必须再次重启 XML 流以清除旧的流上下文，�
     ```xml
     </stream:stream>
     ```
-*   **对应代码:** [disconnect()](stream-connection.ts#L232)（发 `</stream:stream>` 由 [sendStreamClose()](tcp.ts#L250) 完成）、[closeTransport()](tcp.ts#L294)
+*   **对应代码:** [disconnect()](stream-connection.ts#L287)（发 `</stream:stream>` 由 [sendStreamClose()](tcp.ts#L288) 完成）、[closeTransport()](tcp.ts#L331)
 
 ### 关键概念和实现要点
 

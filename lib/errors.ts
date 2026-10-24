@@ -27,6 +27,54 @@ export const ErrorConditions = [
 
 export type ErrorTypes = "auth" | "cancel" | "continue" | "modify" | "wait";
 
+/** 协议错误的作用域，供上层按 `scope` 判断错误来源与重连策略 */
+export type ProtocolErrorScope = "sasl" | "binding" | "stream" | "protocol";
+
+/** {@link ProtocolError} 的构造参数 */
+export interface ProtocolErrorOptions {
+  /** 错误来源 */
+  scope: ProtocolErrorScope;
+  /** 面向人的描述 */
+  message: string;
+  /** 协议条件名（SASL 失败条件、流错误条件、stanza 错误条件） */
+  condition?: string;
+  /** 协议错误附带的 `<text/>` 内容 */
+  text?: string;
+  /** 包装前的原始错误 */
+  cause?: unknown;
+  /**
+   * 是否为可重试的临时错误（如协商/连接超时）。
+   * 默认 false：上层会把协议错误视为终态，不再重连。
+   */
+  retryable?: boolean;
+}
+
+/**
+ * 带 `scope` 标记的协议错误。
+ *
+ * 传输层把认证、绑定、流错误等统一包装为该类型，上层只需读 `scope`
+ * 即可判断错误来源，无需依赖具体错误类。
+ */
+export class ProtocolError extends Error {
+  /** 错误来源 */
+  readonly scope: ProtocolErrorScope;
+  /** 协议条件名；无对应条件时为 undefined */
+  readonly condition?: string;
+  /** 协议错误附带的文本 */
+  readonly text?: string;
+  /** 是否为可重试的临时错误；见 {@link ProtocolErrorOptions.retryable} */
+  readonly retryable: boolean;
+
+  constructor(options: ProtocolErrorOptions) {
+    super(options.message, { cause: options.cause });
+    this.name = "ProtocolError";
+    this.scope = options.scope;
+    this.condition = options.condition;
+    this.text = options.text;
+    this.retryable = options.retryable ?? false;
+  }
+}
+
 /** `<error/>` 的解析结果（RFC 6120 §8.3.2） */
 export interface StanzaError {
   /** `type` 属性，必需（§8.3.2） */
@@ -93,15 +141,4 @@ export class XMPPError extends Error {
       ? { text: el.textContent }
       : { condition: el.localName as (typeof ErrorConditions)[number] };
   };
-}
-
-
-/**
- * 专门用于表达超时错误的类，继承自 Error
- */
-export class TimeoutError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "TimeoutError";
-  }
 }

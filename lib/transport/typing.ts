@@ -1,7 +1,7 @@
 import type { XMPPElement } from "@/ltx";
-import type { EventEmitter } from "node:events";
 import type { Pipeline } from "./pipeline";
 import type { TransportPipelineEvents } from "./stream-connection";
+import type { JID } from "@/JID";
 /**
  * 传输端点：连接层按用户配置与发现结果传入，由具体传输解释。
  * 各项缺省时由传输自行决定（TCP 查 SRV、WS 报错）。
@@ -16,16 +16,34 @@ export interface TransportEndpoint {
 }
 
 /**
- * TCP / WebSocket 传输层共用接口。
- * 高层 Connection 通过此接口订阅协商完成与 stanza，不关心底层 framing 差异。
+ * 传输层向上层的通知接口。
+ *
+ * 传输实例由 Connection 创建并一对一持有，通知是单向的「结果汇报」：
+ * 协商决策仍由 {@link TransportPipelineEvents} 描述的管线驱动，不在此接口内。
  */
-export interface TransportSocket extends EventEmitter {
-    status: number;
+export interface TransportSink {
+    /** 资源绑定完成（含 XEP-0198 会话恢复成功） */
+    onBinded(): void;
+    /** 协商完成后的业务 stanza */
+    onStanza(stanza: XMPPElement): void;
+    /** 底层连接关闭；WS 携带关闭事件，TCP 未定义 */
+    onClose(closeEvent?: CloseEvent): void;
+    /** 协商或传输错误 */
+    onError(error: Error): void;
+}
+
+/**
+ * TCP / WebSocket 传输层共用接口。
+ * 高层 Connection 通过 {@link TransportSink} 接收协商完成与 stanza，不关心底层 framing 差异。
+ */
+export interface TransportSocket {
+    jid: JID;
+    status: (typeof Status)[keyof typeof Status];
     host: string;
     port: string;
     pipeline: Pipeline<TransportPipelineEvents>;
     streamFeatures: Set<string>;
-    /** 建立连接；端点已在创建传输实例时通过工厂上下文传入 */
+    /** 建立连接；端点与通知接收者已在创建传输实例时通过工厂上下文传入 */
     connect(): Promise<void>;
     /** 复用同一实例（保留管线与会话状态）重新建立底层连接 */
     reconnect(): Promise<void>;

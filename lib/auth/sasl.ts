@@ -38,19 +38,9 @@ type SaslResult =
   /** 需发送 data（已序列化为 XML）后等待服务器下一节 */
   | { type: "send"; data: string }
   /** 认证完成 */
-  | { type: "success" };
-
-/** SASL 认证失败（RFC 6120 §6.5.2），携带机器可读的条件名供状态判定。 */
-export class SaslError extends Error {
-  /** SASL 失败条件，如 not-authorized */
-  readonly condition: string;
-
-  constructor(condition: string) {
-    super(`认证失败: ${condition}`);
-    this.name = "SaslError";
-    this.condition = condition;
-  }
-}
+  | { type: "success" }
+  /** 服务器返回认证失败，携带失败条件名 */
+  | { type: "failure"; condition: string };
 
 /**
  * 将 UTF-8 字符串编码为 Base64。
@@ -165,8 +155,7 @@ export class SaslClient {
    *
    * @param event - 由传输层从服务器 SASL 节解析出的协议事件。
    * @param password - 明文密码，仅本调用期间使用，不驻留实例。
-   * @returns 下一步行动：send（需回复 XML）/ success。
-   * @throws {SaslError} 收到 failure 事件时。
+   * @returns 下一步行动：send（需回复 XML）/ success / failure（携带失败条件）。
    * @throws {Error} 尚未 start()、收到与当前机制不符的节，或 SCRAM 数据不合法时。
    */
   async process(event: SaslEvent, password: string): Promise<SaslResult> {
@@ -178,7 +167,7 @@ export class SaslClient {
 
     // failure 与当前机制无关，任何阶段收到都立即终止认证
     if (event.type === "failure") {
-      throw new SaslError(event.condition);
+      return { type: "failure", condition: event.condition };
     }
 
     // PLAIN 只有一轮交互（RFC 6120 §6.4.2）：服务器不应再发 challenge

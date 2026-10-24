@@ -2,9 +2,9 @@ import { Socket } from "node:net";
 import { connect as tlsConnect, TLSSocket } from "node:tls";
 import { resolveSrv } from "../dns";
 import { Parser, escapeXML } from "@/ltx";
-import { TimeoutError } from "@/errors";
+
 import { Status } from "./typing";
-import type { TransportEndpoint } from "./typing";
+import type { TransportEndpoint, TransportSink } from "./typing";
 import {
   StreamConnection,
   isStreamFeatures,
@@ -12,6 +12,7 @@ import {
   type StanzaContext,
 } from "./stream-connection";
 import { JID } from "../JID";
+import { ProtocolError } from "../errors";
 import logger from "@/log";
 
 const log = logger.getLogger("tcp");
@@ -43,10 +44,11 @@ export class XMPPConnection extends StreamConnection {
   constructor(
     jid: JID,
     password: string,
+    sink: TransportSink,
     tls = true,
     endpoint?: TransportEndpoint,
   ) {
-    super(jid, password);
+    super(jid, password, sink);
     this.tls = tls;
     this.explicitEndpoint = endpoint;
     this.host = jid.domain;
@@ -65,7 +67,6 @@ export class XMPPConnection extends StreamConnection {
         } catch (error) {
           log.warn("回发流关闭标签失败，可能是连接已断开", error);
         }
-        this.emit("stream:end");
       }
       this.closeTransport();
     });
@@ -96,11 +97,12 @@ export class XMPPConnection extends StreamConnection {
         if (this.status === Status.DISCONNECTED) return; // 已建立或已断开，不重复处理
         // 挂起的 socket 调 end() 不会立即关闭，销毁以尽快触发 close 事件
         this.socket?.destroy();
-        this.emit(
-          "error",
-          new TimeoutError(
-            `连接超时: ${this.host}:${this.port}（30 秒内未建立连接）`,
-          ),
+        this.sink.onError(
+          new ProtocolError({
+            scope: "stream",
+            message: `连接超时: ${this.host}:${this.port}（30 秒内未建立连接）`,
+            retryable: true,
+          }),
         );
       }, 30_000);
       this.connectTimer?.unref?.();
@@ -195,7 +197,7 @@ export class XMPPConnection extends StreamConnection {
     socket.on("error", (error: Error) => {
       // 已被新连接替换的旧 socket：其错误不影响当前会话
       if (this.socket && this.socket !== socket) return;
-      this.emit("error", error);
+      this.sink.onError(error);
       this.closeTransport();
     });
 
@@ -323,7 +325,6 @@ export class XMPPConnection extends StreamConnection {
       log.info("TLS 升级成功");
       this.status = Status.TLS_ESTABLISHED;
       this.sendStreamOpen(); // 流重启
-      this.emit("stream:start");
     });
     this.setupSocketListeners();
   }

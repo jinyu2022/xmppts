@@ -155,6 +155,7 @@ describe("XEP0368 直连 TLS", () => {
       tls: true,
       host: "explicit.example",
       port: 5222,
+      sink: conn._createSink(),
     });
 
     expect(spy).not.toHaveBeenCalled();
@@ -175,6 +176,7 @@ describe("XEP0368 直连 TLS", () => {
       password: TEST_PASSWORD,
       tls: true,
       host: "partial.example",
+      sink: conn._createSink(),
     });
 
     expect(spy).toHaveBeenCalledWith(DOMAIN);
@@ -205,15 +207,11 @@ describe("XEP0368 直连 TLS", () => {
     expect(server.socket.encrypted).toBe(true);
 
     // 先挂监听再触发连接：TCP 连接建立不触发流，必须等 TLS 握手完成
-    const connected = new Promise<void>((resolve) =>
-      conn.once("connect", () => resolve()),
-    );
     server.acceptConnection();
     expect(transport?.status).not.toBe(Status.STREAM_START);
     server.secureConnect();
-    await connected;
     // 握手完成：流头发出并直接进入 TLS_ESTABLISHED
-    expect(transport?.status).toBe(Status.TLS_ESTABLISHED);
+    await vi.waitFor(() => expect(transport?.status).toBe(Status.TLS_ESTABLISHED));
     expect(server.expectReceived("<stream:stream")).toContain(DOMAIN);
 
     // TLS 就绪后的流特性：route 走 mechanisms 分支，直接发起 SASL 认证
@@ -250,11 +248,7 @@ describe("XEP0368 直连 TLS", () => {
     expect(server.socket.encrypted).toBe(false);
 
     // 明文 TCP 建立后发出 open，等待流特性做 STARTTLS 决策
-    const connected = new Promise<void>((resolve) =>
-      conn.once("connect", () => resolve()),
-    );
     server.acceptConnection();
-    await connected;
-    expect(transport?.status).toBe(Status.STREAM_START);
+    await vi.waitFor(() => expect(transport?.status).toBe(Status.STREAM_START));
   });
 });

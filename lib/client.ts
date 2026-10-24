@@ -1,9 +1,8 @@
 import Connection from "./connection";
 import { JID } from "./JID";
 import { pluginLoaders } from "./plugins";
-import { Options } from "./types";
-import { Message, MsgType } from "@/stanza";
-import { TimeoutError } from "./errors";
+import type { Options } from "./types";
+import { Message, type MsgType } from "@/stanza";
 export class Client extends Connection {
   constructor(jid: string, password: string, options?: Options) {
     super(jid, password, options);
@@ -43,7 +42,7 @@ export class Client extends Connection {
     try {
       return await this.sendAsync(msg, 1000);
     } catch (e) {
-      if (e instanceof TimeoutError) return;
+      if (e instanceof DOMException && e.name === "TimeoutError") return;
       throw e;
     }
   }
