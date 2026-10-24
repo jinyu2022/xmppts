@@ -16,6 +16,7 @@
     },
     "moduleResolution": "bundler",
     "isolatedModules": true,
+    "verbatimModuleSyntax": true,
     "moduleDetection": "force",
     "allowJs": true,
     "checkJs": true,
@@ -32,7 +33,8 @@
   "include": [
     "lib",
     "./index.ts",
-    "test"
+    "test",
+    "scripts"
   ],
   "exclude": [
     "node_modules",
