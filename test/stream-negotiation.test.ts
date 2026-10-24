@@ -5,7 +5,6 @@ import {
   STREAM_NS,
   buildBindRequest,
   collectStreamFeatures,
-  getStreamErrorCondition,
   isStreamError,
   isStreamFeatures,
   parseBindResult,
@@ -53,7 +52,6 @@ describe("流协商辅助函数", () => {
 
     expect(isStreamFeatures(features)).toBe(true);
     expect(isStreamError(error)).toBe(true);
-    expect(getStreamErrorCondition(error)).toBe("policy-violation");
   });
 
   it("收集宣告的 feature 命名空间", () => {
@@ -64,7 +62,7 @@ describe("流协商辅助函数", () => {
       </stream:features>`,
     );
 
-    expect(collectStreamFeatures(features).namespaces).toEqual(
+    expect(collectStreamFeatures(features)).toEqual(
       new Set([BIND_NS, "urn:xmpp:sm:3"]),
     );
   });
@@ -131,7 +129,7 @@ describe("SaslClient", () => {
 
     await expect(
       client.process({ type: "failure", condition: "not-authorized" }, "pass"),
-    ).rejects.toThrow("认证失败: not-authorized");
+    ).resolves.toEqual({ type: "failure", condition: "not-authorized" });
   });
 });
 

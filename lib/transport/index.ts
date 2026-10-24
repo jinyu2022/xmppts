@@ -1,5 +1,9 @@
 import type { JID } from "@/JID";
-import type { TransportEndpoint, TransportSocket } from "./typing";
+import type {
+  TransportEndpoint,
+  TransportSink,
+  TransportSocket,
+} from "./typing";
 
 /**
  * 传输工厂上下文：创建底层传输所需的最小连接信息。
@@ -13,6 +17,8 @@ export interface TransportContext extends TransportEndpoint {
   readonly password: string;
   /** 是否期望 TLS（由具体传输解释：TCP 的 STARTTLS、WebSocket 的 wss） */
   readonly tls: boolean;
+  /** 上层通知接收者：构造传输实例时一并传入，生命周期与实例一致 */
+  readonly sink: TransportSink;
 }
 
 /**
@@ -31,16 +37,16 @@ export type TransportFactory = (
  * 这里只做协议到实现的映射，不包含任何协商逻辑。
  */
 export const defaultTransports: Readonly<Record<string, TransportFactory>> = {
-  xmpp: async ({ jid, password, tls, ...endpoint }) => {
+  xmpp: async ({ jid, password, tls, sink, ...endpoint }) => {
     if (typeof process === "undefined") {
       throw new Error("xmpp 协议仅支持 Node.js 环境");
     }
     const XMPPConnection = (await import("./tcp.js")).default;
-    return new XMPPConnection(jid, password, tls, endpoint);
+    return new XMPPConnection(jid, password, sink, tls, endpoint);
   },
-  ws: async ({ jid, password, tls, ...endpoint }) => {
+  ws: async ({ jid, password, tls, sink, ...endpoint }) => {
     const WSConnection = (await import("./websocket.js")).default;
-    return new WSConnection(jid, password, tls, endpoint);
+    return new WSConnection(jid, password, sink, tls, endpoint);
   },
   http: () => {
     throw new Error("暂不支持xbosh");

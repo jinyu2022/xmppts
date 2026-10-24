@@ -1,32 +1,44 @@
-import { EventEmitter } from "node:events";
+import { Emitter } from "./emitter";
 import { XMPPElement } from "./ltx/Element.js";
-import { TimeoutError } from "./errors";
+import { Parser } from "./ltx/Parser";
 import { JID } from "./JID";
 import logger from "./log";
+import { pluginLoaders } from "./plugins/index";
+import type {
+  Plugin,
+  PluginFactory,
+  PluginOptions,
+  PluginOptionsOf,
+} from "./plugins/types";
 import { Message, Iq, Presence, StanzaBase } from "./stanza";
-import { Status, type TransportSocket } from "./transport/typing";
+import { Status, type TransportSink, type TransportSocket } from "./transport/typing";
 import { SyncPipeline } from "./transport/pipeline";
 import { defaultTransports, type TransportFactory } from "./transport/index";
+import { ProtocolError } from "./errors";
 import type { Protocol, Options } from "./types";
 const log = logger.getLogger("connection");
 
-interface StanzaHandlerMap {
-  message: (message: Message) => void;
-  iq: (iq: Iq) => void;
-  presence: (presence: Presence) => void;
-  others: (other: StanzaBase) => void;
+/** stanza 标签 → 实例类型 */
+interface StanzaTypeMap {
+  message: Message;
+  iq: Iq;
+  presence: Presence;
+  others: StanzaBase;
 }
 
-interface EventHandlerMap {
-  message: (message: Message) => boolean;
-  iq: (iq: Iq) => boolean;
-  presence: (presence: Presence) => boolean;
-  others: (other: StanzaBase) => boolean;
-}
-// 事件插件映射类型
-interface EventPluginMap<K extends keyof EventHandlerMap> {
-  eventName: keyof SocketEventMap;
-  matcher: EventHandlerMap[K];
+/** 插件名 → 插件实例类型，用于把插件实例合并到 {@link Connection} */
+type PluginRegistry = {
+  [K in keyof typeof pluginLoaders]?: InstanceType<
+    Awaited<ReturnType<(typeof pluginLoaders)[K]>>
+  >;
+};
+
+/**
+ * 判断元素是否为三大节，并把类型收窄为 {@link StanzaTypeMap} 的键。
+ * 其余元素属流层（如 `<stream:error>`、SASL 元素）。
+ */
+function isStanzaTag(tagName: string): tagName is keyof StanzaTypeMap {
+  return tagName === "message" || tagName === "iq" || tagName === "presence";
 }
 
 // 定义所有可能的事件参数类型
@@ -35,46 +47,69 @@ export interface SocketEventMap {
   iq: Iq;
   presence: Presence;
   others: StanzaBase;
-  /**代表连接建立 */
-  connect: void;
+  /** 每次 connect() 后的首次绑定成功 */
   "session:start": void;
-  /** 会话正式结束：本端发出流尾或收到对端流尾；自动重连期间不发 */
+  /**
+   * 会话正式结束：连接关闭且不再重连（主动断开、对端关闭、协商失败或重连耗尽）；
+   * 自动重连期间不发。派发前 `isSessionActive` 已降为 `false`，监听器内不能继续发送业务 stanza。
+   */
   "session:end": void;
-  /** 物理连接断开；自动重连期间不发，进入断线态时只发一次 */
+  /** 连接错误（网络失败、认证失败、协议错误等）；会话可能尚未建立 */
+  error: Error;
+  /** 进入自动重连：已建立会话的物理连接断开且仍会重试；同一次断线只发一次 */
   "connection:lost": void;
   /** 正在自动重连，每次尝试前发出 */
   reconnecting: void;
   /** 自动重连成功（会话此前已建立，不再发 session:start） */
   reconnected: void;
-  /** 套接字关闭；自动重连期间不发 */
-  disconnect: void;
 }
-// 扩展 EventEmitter 类型定义
-// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
-export interface Connection extends PluginRegistry {
-  on<E extends keyof SocketEventMap>(
-    event: E,
-    listener: (arg: SocketEventMap[E]) => unknown,
-  ): this;
 
-  off<E extends keyof SocketEventMap>(
-    event: E,
-    listener: (arg: SocketEventMap[E]) => unknown,
-  ): this;
+/**
+ * 指定标签可注册的事件名：载荷类型是该标签 stanza 类型子类型的事件。
+ *
+ * 插件事件（`Message & { ... }` 这类扩展量）因此能注册到对应标签；
+ * 生命周期事件（载荷 void）与自定义载荷事件（如 muc:stale）不兼容，被排除。
+ */
+type EventNameFor<T extends keyof StanzaTypeMap> = {
+  [E in keyof SocketEventMap]-?: NonNullable<
+    SocketEventMap[E]
+  > extends StanzaTypeMap[T]
+    ? E
+    : never;
+}[keyof SocketEventMap];
 
-  once<E extends keyof SocketEventMap>(
-    event: E,
-    listener: (arg: SocketEventMap[E]) => unknown,
-  ): this;
-
-  emit<E extends keyof SocketEventMap>(
-    event: E,
-    arg?: SocketEventMap[E],
-  ): boolean;
+/**
+ * 事件插件注册项：三个字段互相约束。
+ *
+ * `tagName` 决定 `matcher` 收到的 stanza 类型与可选的事件名范围，
+ * `eventName` 的载荷须兼容该标签的 stanza 类型。
+ */
+interface EventPluginMap<T extends keyof StanzaTypeMap> {
+  /** 标签名，决定 matcher 参数类型与事件名范围 */
+  tagName: T;
+  /** 事件名，载荷须是 {@link StanzaTypeMap}[T] 的子类型 */
+  eventName: EventNameFor<T>;
+  /** 匹配器，返回 true 则派发 eventName */
+  matcher: (stanza: StanzaTypeMap[T]) => boolean;
 }
+
+/** 事件插件表元素：注册时的约束由 EventPluginMap 保证，表内统一存储 */
+interface EventPluginEntry {
+  /** 事件名 */
+  eventName: EventNameFor<keyof StanzaTypeMap>;
+  /**
+   * 匹配器。声明为方法签名，参数因此可双变：注册时可存入参数更窄的匹配器
+   * （如 `(stanza: Message) => boolean`）；派发时按运行时标签只会传入对应实例。
+   */
+  matcher(stanza: StanzaTypeMap[keyof StanzaTypeMap]): boolean;
+}
+
+// 插件实例以属性形式合并到连接实例上
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type, @typescript-eslint/no-unsafe-declaration-merging
+export interface Connection extends PluginRegistry {}
 // 声明合并
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
-export class Connection extends EventEmitter {
+export class Connection extends Emitter<SocketEventMap> {
   jid: JID;
   password: string;
   /** 连接协议，按此值从 `transports` 注册表选择传输实现 */
@@ -94,9 +129,9 @@ export class Connection extends EventEmitter {
   private reconnectInterval = 1000;
   /** 最大重连间隔，默认30000ms */
   private reconnectMaxInterval = 30000;
-  /** 最大重连次数 */
+  /** 最大连续重连次数 */
   private reconnectMaxAttempts = 3;
-  /** 当前重连次数 */
+  /** 当前连续失败的重连次数，绑定成功后清零 */
   private reconnectAttempts = 0;
   /** 重连定时器 */
   private reconnectTimer?: ReturnType<typeof setTimeout>;
@@ -116,23 +151,25 @@ export class Connection extends EventEmitter {
   };
 
   /**
-   * 会话是否可用：资源绑定成功至流关闭/断线之间为 true。
-   * 自动重连期间为 false，重连成功后恢复 true。
+   * 会话状态三态：
+   * - `undefined`：本次连接从未绑定成功（首连中、首连失败或已终结）
+   * - `true`：会话可用（资源绑定成功至流关闭/断线之间）
+   * - `false`：曾绑定成功、当前不可用（自动重连中，或 session:end 派发期间）
    */
-  private sessionActive = false;
+  private sessionActive?: boolean;
 
   /** {@link sessionActive} 的只读视图，供插件判断是否需要继续后台任务 */
   get isSessionActive(): boolean {
-    return this.sessionActive;
+    return this.sessionActive === true;
   }
 
   /** 插件列表，键是插件名 */
   private readonly pendingPlugins = new Map<
     string,
     {
-      func?: PluginConstructor;
-      loader?: () => Promise<PluginConstructor>;
-      options?: object;
+      func?: PluginFactory;
+      loader?: () => Promise<PluginFactory>;
+      options?: unknown;
     }
   >();
 
@@ -140,16 +177,15 @@ export class Connection extends EventEmitter {
   private readonly stanzaPlugins = new Map<
     string,
     (stanza: XMPPElement) => Record<string, unknown>
-  >([]);
+  >();
 
-  private readonly eventPlugins: {
-    [K in keyof EventHandlerMap]: EventPluginMap<K>[];
-  } = {
-    message: [],
-    iq: [],
-    presence: [],
-    others: [],
-  } as const;
+  private readonly eventPlugins: Record<keyof StanzaTypeMap, EventPluginEntry[]> =
+    {
+      message: [],
+      iq: [],
+      presence: [],
+      others: [],
+    };
 
   /** 发送/接收管线：stanza 在共享数据上就地传递，处理器不调 next 即短路；插件直接 use 注册 */
   readonly pipeline = new SyncPipeline<{
@@ -157,8 +193,16 @@ export class Connection extends EventEmitter {
     receive: { stanza: XMPPElement };
   }>();
 
-  // [plugin: keyof typeof plugins]: Plugin | undefined;
-  [name: string]: unknown;
+  /** 等待响应的请求，键为 stanza id */
+  private readonly pendingRequests = new Map<
+    string,
+    {
+      /** 兑现响应；调用即结束等待（停计时器、删表项） */
+      resolve: (stanza: XMPPElement) => void;
+      /** 以错误结束等待；断开时批量调用 */
+      reject: (error: Error) => void;
+    }
+  >();
 
   /**
    * 创建一个连接
@@ -174,50 +218,31 @@ export class Connection extends EventEmitter {
     this.jid = new JID(jid);
     this.password = password;
 
-    if (options?.protocol) {
-      this.protocol = options.protocol;
-    }
-    if (options?.host) {
-      this.host = options.host;
-    } else {
-      log.debug("未指定service，将尝试从域名获取");
-    }
-    if (options?.port) {
-      this.port = options.port;
-    } else {
-      log.info("未指定port，将使用默认端口");
-    }
-    if (options?.path) {
-      this.path = options.path;
-    }
-    if (options?.tls != null) {
-      this.tls = options.tls;
-    }
-    if (options?.reconnect) {
-      this.autoReconnect = options.reconnect;
-    }
-    if (options?.reconnectInterval) {
-      this.reconnectInterval = options.reconnectInterval;
-    }
-    if (options?.reconnectMaxInterval) {
-      this.reconnectMaxInterval = options.reconnectMaxInterval;
-    }
-    if (options?.reconnectMaxAttempts) {
-      this.reconnectMaxAttempts = options.reconnectMaxAttempts;
-    }
+    this.protocol = options?.protocol ?? this.protocol;
+    this.host = options?.host ?? this.host;
+    if (!this.host) log.debug("未指定service，将尝试从域名获取");
+    this.port = options?.port ?? this.port;
+    if (!this.port) log.debug("未指定port，将使用默认端口");
+    this.path = options?.path ?? this.path;
+    this.tls = options?.tls ?? this.tls;
+    this.autoReconnect = options?.reconnect ?? this.autoReconnect;
+    this.reconnectInterval = options?.reconnectInterval ?? this.reconnectInterval;
+    this.reconnectMaxInterval =
+      options?.reconnectMaxInterval ?? this.reconnectMaxInterval;
+    this.reconnectMaxAttempts =
+      options?.reconnectMaxAttempts ?? this.reconnectMaxAttempts;
 
-    // 先注册写出终端，保证未 connect 时 send 也会走到它（未连接即抛错）
-    // connect 时 instantiatePlugins() 会清空管线，initPlugins() 再把它重新注册到所有插件之后
-    this.pipeline.use("send", this.write);
+    // 写出是发送管线的终端：拦截器在 next() 返回后即可确认 stanza 已交给传输层
+    this.pipeline.terminal("send", this.write);
   }
 
   /**
-   * 发送管线最内层：先放行让插件改写，再写出最终 stanza；未连接即抛错。
+   * 发送管线终端：写出最终 stanza；未连接即抛错。
    *
-   * 注册在所有插件之后（链尾），插件可在 `next()` 之前改写、`next()` 返回后即已写出。
+   * 必须是终端而不是普通中间件：拦截器与流恢复依赖 `next()` 返回后即可确认
+   * stanza 已写出；终端不被 `pipeline.clear()` 清除，无需随插件重建。
    */
-  private readonly write = (ctx: { stanza: XMPPElement }, next: () => void) => {
-    next();
+  private readonly write = (ctx: { stanza: XMPPElement }) => {
     if (!this.transport) {
       throw new Error("连接已断开");
     }
@@ -230,23 +255,30 @@ export class Connection extends EventEmitter {
    * @param func 插件构造函数
    * @param options 传给插件构造函数的配置，省略时插件使用自身默认值
    */
-  registerPlugin(name: string, func: PluginConstructor, options?: object): void;
+  registerPlugin<C extends PluginFactory>(
+    name: string,
+    func: C,
+    options?: PluginOptionsOf<C>,
+  ): void;
   /**
    * 注册内置插件
    * @param name 内置插件名称
    * @param options 传给插件构造函数的配置，省略时插件使用自身默认值
    */
-  registerPlugin(name: keyof typeof pluginLoaders, options?: object): void;
+  registerPlugin<K extends keyof typeof pluginLoaders>(
+    name: K,
+    options?: PluginOptions<K>,
+  ): void;
 
   registerPlugin(
     name: string,
-    funcOrOptions?: PluginConstructor | object,
-    options?: object,
+    funcOrOptions?: PluginFactory | object,
+    options?: unknown,
   ): void {
     // 第二参数可能是自定义构造函数，也可能是内置插件的配置
     if (typeof funcOrOptions === "function") {
       this.pendingPlugins.set(name, {
-        func: funcOrOptions as PluginConstructor,
+        func: funcOrOptions as PluginFactory,
         options,
       });
       return;
@@ -274,7 +306,7 @@ export class Connection extends EventEmitter {
     const loader =
       reg?.loader ?? pluginLoaders[name as keyof typeof pluginLoaders];
     // 已注册的自定义插件没有 loader，但它缓存的构造函数同样可用
-    let func: PluginConstructor | undefined = reg?.func;
+    let func: PluginFactory | undefined = reg?.func;
     if (!func) {
       if (!loader) {
         throw new Error(
@@ -300,42 +332,20 @@ export class Connection extends EventEmitter {
   /** 调用插件 init()：此时 transport 已创建，可注册管线与事件处理器 */
   private initPlugins() {
     for (const name of this.pendingPlugins.keys()) {
-      (this[name] as InstanceType<PluginConstructor>).init();
+      // pendingPlugins 的键即插件属性名，实例已在 instantiatePlugins 中挂到 this 上
+      this[name as keyof PluginRegistry]?.init();
     }
-    // 写出终端最后注册，位于管线最内层：插件可在 next() 前改写、next() 后读到已写出的 stanza
-    this.pipeline.use("send", this.write);
   }
 
   /**
-   * 卸载插件，会自动卸载依赖于该插件的插件，应该由插件自己调用
-   * 他只是帮你卸载依赖，记得自己取消监听器
-   * @experimental 问题很大，你还需要卸载各种节处理器和事件处理器
-   * @param name 插件名称，XEP0000格式
-   */
-  deregisterPlugin(name: keyof typeof pluginLoaders): void {
-    if (!this.pendingPlugins.has(name)) return;
-    // 连带卸载依赖它的插件，依赖关系在解析构造函数后已缓存
-    for (const [n, reg] of Array.from(this.pendingPlugins)) {
-      if (reg.func?.dependencies?.includes(name)) {
-        this.deregisterPlugin(n as keyof typeof pluginLoaders);
-      }
-    }
-    this.pendingPlugins.delete(name);
-    // 使用Proxy创建错误处理器
-    // HACK: 如果要卸载我不得不忽略readonly属性
-    this[name as string] = new Proxy(
-      {},
-      {
-        get() {
-          throw new Error(`Plugin ${name} has been unregistered`);
-        },
-      },
-    );
-  }
-  /**
    * 注册stanza处理插件
+   *
+   * handler 负责解析自己命名空间下的内容：把本 NS 的元素解析到不能再解析为止，
+   * 返回纯数据；属于其他命名空间的子元素原样放进返回值，由框架递归交给对应的
+   * handler（如 carbons → forwarded → delay 的链式解析）。返回值里若保留了本 NS
+   * 的元素，它会被再次交给同一个 handler。
    * @param NS 命名空间
-   * @param handler 处理函数
+   * @param handler 处理函数，返回合并到 stanza 实例上的字段
    */
   registerStanzaPlugin(
     NS: string,
@@ -346,21 +356,25 @@ export class Connection extends EventEmitter {
 
   /**
    * 注册事件插件
-   * @template K "message" | "iq" | "presence" | "others"
+   *
+   * 事件载荷必须与标签对应的 stanza 类型兼容（`Message & { ... }` 这类扩展也算），
+   * 因此生命周期事件、自定义载荷事件无法注册到 stanza 标签上。
    * @param eventName 事件名称
    * @param option 选项
-   * @param option.tagName 标签名
+   * @param option.tagName 标签名，决定 matcher 参数与可注册的事件范围
    * @param option.matcher 匹配器，返回true则触发事件
    */
-  registerEventPlugin<K extends keyof EventHandlerMap>(
-    eventName: keyof SocketEventMap,
-    option: {
-      tagName: K;
-      matcher: EventHandlerMap[K];
-    },
+  registerEventPlugin<T extends keyof StanzaTypeMap>(
+    eventName: EventNameFor<T>,
+    option: Omit<EventPluginMap<T>, "eventName">,
   ) {
     const { tagName, matcher } = option;
-    this.eventPlugins[tagName].push({ eventName, matcher });
+    // 表内按所有标签宽化存储：T 是联合的子集，EventNameFor<T> 必然包含于
+    // EventNameFor<keyof StanzaTypeMap>，属安全的向上转型
+    this.eventPlugins[tagName].push({
+      eventName: eventName as EventNameFor<keyof StanzaTypeMap>,
+      matcher,
+    });
   }
 
   async connect() {
@@ -371,9 +385,11 @@ export class Connection extends EventEmitter {
     // 手动连接：取消等待中的自动重连，避免其定时器与本次连接竞争
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
-    // 复位重连计数与会话状态
+    // 复位重连计数，本次连接从零开始
     this.reconnectAttempts = 0;
-    // 清掉上一次的注册（含写出终端），避免重复调用时叠加
+    // 新连接从「未绑定」开始：首次绑定发 session:start 而非 reconnected
+    this.sessionActive = undefined;
+    // 清掉上一次插件注册的中间件，避免重复调用时叠加（终端由管线自身保留）
     this.pipeline.clear();
     // 插件实例化先于传输创建：构造函数可注册传输或补全连接配置
     await this.instantiatePlugins();
@@ -381,17 +397,37 @@ export class Connection extends EventEmitter {
     if (!create) {
       throw new Error(`未知的协议: ${this.protocol}`);
     }
-    this.transport = await create({
-      jid: this.jid,
-      password: this.password,
-      tls: this.tls,
-      host: this.host,
-      port: this.port,
-      path: this.path,
-    });
+    let transport: TransportSocket;
+    try {
+      transport = await create({
+        jid: this.jid,
+        password: this.password,
+        tls: this.tls,
+        host: this.host,
+        port: this.port,
+        path: this.path,
+        sink: this._createSink(),
+      });
+    } catch (error) {
+      throw this.reportError(error);
+    }
+    this.transport = transport;
     this.initPlugins();
-    this._setupSocketEvents();
-    await this.transport.connect();
+    try {
+      await transport.connect();
+    } catch (error) {
+      throw this.reportError(error);
+    }
+  }
+
+  /**
+   * 把连接失败归一化为 Error 并以 error 事件公开。
+   * 调用方仍会收到 reject，可根据自身需要选择监听事件或等待 Promise。
+   */
+  private reportError(error: unknown): Error {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    this.emit("error", failure);
+    return failure;
   }
 
   /**
@@ -407,7 +443,13 @@ export class Connection extends EventEmitter {
     );
     // 先全部实例化，保证 init() 里能访问到依赖实例
     for (const [name, { func, options }] of this.pendingPlugins) {
-      this[name] = new func!(this, options);
+      // options 的类型已在 registerPlugin 处按具体构造函数校验；
+      // PluginFactory 的构造签名不关心第二参数，这里按运行期实际传参调用
+      const create = func as unknown as new (
+        connection: Connection,
+        options?: unknown,
+      ) => Plugin;
+      Object.assign(this, { [name]: new create(this, options) });
     }
   }
 
@@ -425,70 +467,65 @@ export class Connection extends EventEmitter {
   }
 
   /**
-   * 监听socket事件
-   * @private 仅供内部使用
+   * 创建传输层通知接收者，随传输实例一并传入工厂。
+   *
+   * 传输实例由本连接创建并一对一持有，通知同步按调用顺序处理；
+   * 会话状态在派发对应公开事件前先行更新（监听器内读到的是新状态）。
+   * @private 仅供内部使用（测试用它给假传输层注入 sink）
    */
-  _setupSocketEvents() {
-    if (!this.transport) return;
-    // socket: open —— 底层连接就绪（此时 XMPP 流尚未协商）
-    this.transport.on("open", () => {
-      log.info("底层连接已建立");
-      this.emit("connect");
-    });
-    // socket: binded —— XMPP 会话可用
-    this.transport.on("binded", () => {
-      // RFC 6120 §4.3.6 / §7.7.1：以服务器返回的 bound JID 为准
-      if (this.transport && "jid" in this.transport && this.transport.jid) {
-        this.jid = this.transport.jid as typeof this.jid;
-      }
-      // 会话可用，通知前先置位，保证监听器内读到的是新状态
-      this.sessionActive = true;
-      if (this.reconnectAttempts > 0) {
-        // 会话已存在 → 本次是重连成功，只通知重连
-        this.emit("reconnected");
-        // 绑定成功即视为连接可用，重置退避计数
+  _createSink(): TransportSink {
+    return {
+      // XMPP 会话可用
+      onBinded: () => {
+        // RFC 6120 §4.3.6 / §7.7.1：以服务器返回的 bound JID 为准
+        const boundJid = this.transport?.jid;
+        if (boundJid && boundJid.full !== this.jid.full) this.jid = boundJid;
+        // 绑定成功即视为连接可用，重置连续失败计数
         this.reconnectAttempts = 0;
-      } else {
-        this.emit("session:start");
-      }
-    });
-    const msgHandler = (stanza: XMPPElement) => this.onMessage(stanza);
-    this.transport.on("stanza", msgHandler);
-    // socket: error —— 传输层错误（连接/协商/认证失败、超时等），断开收尾由 close 监听处理
-    this.transport.on("error", (error: Error) => {
-      log.error("连接错误:", error);
-    });
-    // socket: stream:end —— 流尾（本端发出或收到对端）：会话正式结束；自动重连期间静默
-    this.transport.on("stream:end", () => {
-      log.info("XMPP 流已关闭");
-      // 流已关闭即会话不可用；自动重连期间不广播事件，但状态须先降级
-      this.sessionActive = false;
-      if (
-        !this.autoReconnect ||
-        this.reconnectAttempts >= this.reconnectMaxAttempts
-      ) {
-        this.emit("session:end");
-      }
-    });
-    // socket: close —— 套接字关闭；可自动重连时静默，重连无望才正式断开
-    this.transport.on("close", () => {
-      log.info("连接已关闭");
-      // 套接字关闭：会话必然不可用（自动重连成功后会重新置位）
-      this.sessionActive = false;
-      // this.socket?.off("stanza", msgHandler);
-      if (
-        this.autoReconnect &&
-        this.reconnectAttempts < this.reconnectMaxAttempts
-      ) {
-        // 仅在刚进入断线态时通知一次，后续重试失败会反复触发 close
-        if (this.reconnectAttempts === 0) this.emit("connection:lost");
-        this.scheduleReconnect();
-      } else {
-        // 真断开
-        this.emit("disconnect");
-        this._cleanup();
-      }
-    });
+        // 先置位再派发，保证监听器内读到新状态（可在回调里直接发 stanza）
+        if (this.sessionActive === undefined) {
+          this.sessionActive = true;
+          this.emit("session:start");
+        } else {
+          this.sessionActive = true;
+          this.emit("reconnected");
+        }
+      },
+      // 协商完成后的业务 stanza
+      onStanza: (stanza) => this.onMessage(stanza),
+      // 传输层错误（连接/协商/认证失败、超时等），直接交给上层；断开收尾由 onClose 处理
+      onError: (error: Error) => {
+        log.error("连接错误:", error);
+        this.emit("error", error);
+        // 传输层用 retryable 标记可重试的临时错误（超时、system-shutdown 等），
+        // 其余协议错误重试无意义，直接终结会话
+        if (error instanceof ProtocolError && !error.retryable) {
+          this.finishSession();
+        }
+      },
+      // 套接字关闭：网络类断开自动重连（含 socket 已建立但首连未完成）；协商失败已在 onError 中终结
+      onClose: () => {
+        // 已终结（finishSession 置空 transport）或陈旧 close（新连接已开始）：不再处理
+        if (!this.transport || this.transport.status !== Status.DISCONNECTED)
+          return;
+        log.info("连接已关闭");
+        // 连续失败计数：绑定成功即清零，用尽后彻底退出
+        const canReconnect =
+          this.autoReconnect &&
+          this.reconnectAttempts < this.reconnectMaxAttempts;
+        // 套接字关闭：会话必然不可用（自动重连成功后会重新置位）
+        if (this.sessionActive === true) {
+          this.sessionActive = false;
+          // 仅在已建立会话的首次断线时通知；后续重试失败会反复触发 onClose
+          if (canReconnect) this.emit("connection:lost");
+        }
+        if (canReconnect) {
+          this.scheduleReconnect();
+          return;
+        }
+        this.finishSession();
+      },
+    };
   }
 
   /**
@@ -497,21 +534,35 @@ export class Connection extends EventEmitter {
    * 插件不必重新 registerPlugin，connect() 会用保留的插件列表自动重建
    */
   disconnect() {
-    // 手动断开：把计数顶到上限，让 close 触发的调度判定为已达上限而不重连
-    this.reconnectAttempts = Infinity;
     // 清理待执行的重连，避免陈旧定时器抢先
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
+    const transport = this.transport;
     // 未连接或已断开：无需等待事件，直接通知并清理
-    if (!this.transport || this.transport.status === Status.DISCONNECTED) {
-      this.emit("session:end");
-      this.emit("disconnect");
-      this._cleanup();
+    if (!transport || transport.status === Status.DISCONNECTED) {
+      this.finishSession();
       return;
     }
-    // 先断开，让 session:end / disconnect 事件到达监听器，close 后再清理
-    // this.socket.once("close", () => this._cleanup());
-    this.transport.disconnect();
+    // 先终结会话（transport 置空，后续 close 不再调度重连），再关闭流
+    this.finishSession();
+    transport.disconnect();
+  }
+
+  /**
+   * 终结本次会话：先降级会话状态，再派发 session:end，最后清理。
+   *
+   * 错误由 onError 直接上报，本方法不再携带错误；
+   * 会话从未建立时没有配对的 session:start，不发 session:end。
+   * 先置 `false` 再派发：监听器内 `isSessionActive` 必须读到「会话已结束」，
+   * `send()` 也会按会话不可用拒绝业务 stanza；`_cleanup()` 随后归为 `undefined`。
+   */
+  private finishSession() {
+    // 从未绑定成功就没有配对的 session:start，不发 session:end
+    if (this.sessionActive !== undefined) {
+      this.sessionActive = false;
+      this.emit("session:end");
+    }
+    this._cleanup();
   }
 
   /**
@@ -523,13 +574,18 @@ export class Connection extends EventEmitter {
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
     this.reconnectAttempts = 0;
-    this.sessionActive = false;
+    // 终结：回到「从未绑定」，并释放传输引用（close 回调据此判断已终结）
+    this.sessionActive = undefined;
+    this.transport = null;
+    // 断开后不会再收到响应，结束所有等待中的请求
+    for (const pending of this.pendingRequests.values()) {
+      pending.reject(new Error("连接已断开"));
+    }
+    this.pendingRequests.clear();
     // 清除所有监听器（含应用层与插件注册的）
     this.removeAllListeners();
-    // 清空插件的注册表项，避免重建插件时重复注册
+    // 清空插件注册的中间件（终端由管线自身保留），避免重建插件时重复注册
     this.pipeline.clear();
-    // 重建写出终端（clear 会一并清掉），保证断开后 send 仍能抛「连接已断开」
-    this.pipeline.use("send", this.write);
     for (const plugins of Object.values(this.eventPlugins)) {
       plugins.length = 0;
     }
@@ -548,9 +604,7 @@ export class Connection extends EventEmitter {
     if (this.reconnectAttempts >= this.reconnectMaxAttempts) {
       log.warn("已达到最大重连次数，停止重连");
       // reconnect() 建立 socket 前就抛错时其 rollback 会移除 close 监听，close 不再触发，需在此补终结
-      this.emit("session:end");
-      this.emit("disconnect");
-      this._cleanup();
+      this.finishSession();
       return;
     }
 
@@ -577,60 +631,51 @@ export class Connection extends EventEmitter {
   private onMessage(stanza: XMPPElement) {
     log.debug("receive", () => stanza.toXMLString());
 
-    // 拦截器
-    const ctx = this.pipeline.run("receive", { stanza });
-    stanza = ctx.stanza;
+    // 拦截器（就地传递，处理器不调 next 即短路）
+    stanza = this.pipeline.run("receive", { stanza }).stanza;
 
-    const tagName = ["message", "iq", "presence"].includes(stanza.tagName)
-      ? (stanza.tagName as keyof StanzaHandlerMap)
-      : "others";
-    const stanzaInstance = this.stanzaInstanceFactory(stanza);
+    const tagName = isStanzaTag(stanza.tagName) ? stanza.tagName : "others";
+    // 先兑现等待中的请求；命中后仍继续派发，普通监听器仍能看到该节
+    const requestId = stanza.getAttribute("id");
+    if (requestId) {
+      const pending = this.pendingRequests.get(requestId);
+      if (pending) {
+        this.pendingRequests.delete(requestId);
+        pending.resolve(stanza);
+      }
+    }
+    const stanzaInstance = this.stanzaInstanceFactory(stanza, tagName);
     // 发出节事件
+    for (const eventPlugin of this.eventPlugins[tagName]) {
+      if (eventPlugin.matcher(stanzaInstance)) {
+        this.emit(eventPlugin.eventName, stanzaInstance);
+      }
+    }
     this.emit(tagName, stanzaInstance);
   }
 
-  private stanzaInstanceFactory(stanza: XMPPElement) {
-    const tagName = ["message", "iq", "presence"].includes(stanza.tagName)
-      ? (stanza.tagName as keyof StanzaHandlerMap)
-      : "others";
-
-    let stanzaInstance;
+  /**
+   * 构造 stanza 实例，转换扩展元素并派发事件插件。
+   *
+   * 事件插件表按标签分组，注册时已保证每项的事件名与标签对应，
+   * 故此处按运行时 `tagName` 取组即可。
+   * @param stanza 原始元素
+   * @param tagName 由 {@link isStanzaTag} 判定的标签分组
+   */
+  private stanzaInstanceFactory(
+    stanza: XMPPElement,
+    tagName: keyof StanzaTypeMap,
+  ) {
+    let stanzaInstance: StanzaTypeMap[keyof StanzaTypeMap];
 
     if (tagName === "message") {
-      stanzaInstance = new Message(stanza, this);
-      this.transformExtensions(stanzaInstance);
-      for (const eventPlugin of this.eventPlugins[tagName]) {
-        if (eventPlugin.matcher(stanzaInstance)) {
-          this.emit(eventPlugin.eventName, stanzaInstance);
-        }
-      }
+      stanzaInstance = this.transformExtensions(new Message(stanza, this));
     } else if (tagName === "iq") {
-      stanzaInstance = new Iq(stanza, this);
-      this.transformExtensions(stanzaInstance);
-      for (const eventPlugin of this.eventPlugins[tagName]) {
-        if (eventPlugin.matcher(stanzaInstance)) {
-          this.emit(eventPlugin.eventName, stanzaInstance);
-        }
-      }
-      // this.emit("iq", stanzaInstance);
+      stanzaInstance = this.transformExtensions(new Iq(stanza, this));
     } else if (tagName === "presence") {
-      stanzaInstance = new Presence(stanza, this);
-      this.transformExtensions(stanzaInstance);
-      for (const eventPlugin of this.eventPlugins[tagName]) {
-        if (eventPlugin.matcher(stanzaInstance)) {
-          this.emit(eventPlugin.eventName, stanzaInstance);
-        }
-      }
-      // this.emit("presence", stanzaInstance);
+      stanzaInstance = this.transformExtensions(new Presence(stanza, this));
     } else {
-      stanzaInstance = new StanzaBase(stanza, this);
-      this.transformExtensions(stanzaInstance);
-      for (const eventPlugin of this.eventPlugins[tagName]) {
-        if (eventPlugin.matcher(stanzaInstance)) {
-          this.emit(eventPlugin.eventName, stanzaInstance);
-        }
-      }
-      // this.emit("others", stanzaInstance);
+      stanzaInstance = this.transformExtensions(new StanzaBase(stanza, this));
     }
 
     return stanzaInstance;
@@ -697,57 +742,46 @@ export class Connection extends EventEmitter {
    * @throws 未连接或已断开；业务 stanza 在会话未就绪时也抛出 Error
    */
   send(stanza: XMPPElement | string) {
-    // 初始化和断开清理会移除写出终端，状态检查不能只依赖链尾的 write。
+    // 未连接或已断开时在入口拦下：链尾终端只负责写出，不判断会话可用性
     if (!this.transport || this.transport.status === Status.DISCONNECTED) {
       throw new Error("连接已断开");
     }
     if (typeof stanza === "string") {
       stanza = Parser.parse(stanza);
     }
-    // id、必备属性、默认命名空间与 xml:lang 都只对三大节有意义，流层元素不受这些约束
-    if (!["message", "iq", "presence"].includes(stanza.tagName)) {
-      this.pipeline.run("send", { stanza });
-      return;
-    }
-    if (!this.isSessionActive) {
-      throw new Error("会话尚未就绪");
-    }
-    // 检查必须的流属性
-    // XXX: 我不清楚需要进行那些检查,多余, 或者缺失
-
-    // 一个拥有特定接收者的节必须拥有一个'to'属性
-    // 一个从客户端发送到服务器的由该服务器直接处理的节(例如, presence状态信息)不能拥有'to'属性
-    if (stanza.tagName === "message" && !stanza.getAttribute("to")) {
-      throw new Error(`message stanza缺少to属性：${stanza.toXMLString()}`);
-    }
-    // 如果节是groupchat，那么必须使用bare JID作为to属性
-    if (
-      stanza.tagName === "message" &&
-      stanza.getAttribute("type") === "groupchat"
-    ) {
-      const to = stanza.getAttribute("to");
-      if (to?.includes("/")) {
-        log.warn(
-          "groupchat类型的message stanza的to属性应该是bare JID，正在自动转换",
-        );
-        stanza.setAttribute("to", to.split("/")[0]);
+    if (isStanzaTag(stanza.tagName)) {
+      if (!this.isSessionActive) {
+        throw new Error("会话尚未就绪");
+      }
+      // 一个拥有特定接收者的节必须拥有一个'to'属性；
+      // 从客户端发往服务器、由服务器直接处理的节（如 presence）不能有 'to'
+      if (stanza.tagName === "message" && !stanza.getAttribute("to")) {
+        throw new Error(`message stanza缺少to属性：${stanza.toXMLString()}`);
+      }
+      // 如果节是groupchat，那么必须使用bare JID作为to属性
+      if (
+        stanza.tagName === "message" &&
+        stanza.getAttribute("type") === "groupchat"
+      ) {
+        const to = stanza.getAttribute("to");
+        if (to?.includes("/")) {
+          log.warn(
+            "groupchat类型的message stanza的to属性应该是bare JID，正在自动转换",
+          );
+          stanza.setAttribute("to", to.split("/")[0]);
+        }
+      }
+      if (stanza.tagName === "iq" && !stanza.getAttribute("type")) {
+        throw new Error(`iq stanza缺少type属性：${stanza.toXMLString()}`);
+      }
+      if (!stanza.getAttribute("id")) {
+        stanza.setAttribute("id", crypto.randomUUID());
+      }
+      if (!stanza.namespaceURI) {
+        stanza.setAttribute("xmlns", "jabber:client");
       }
     }
-    if (stanza.tagName === "iq" && !stanza.getAttribute("type")) {
-      throw new Error(`iq stanza缺少type属性：${stanza.toXMLString()}`);
-    }
-    if (!stanza.getAttribute("id")) {
-      stanza.setAttribute("id", crypto.randomUUID());
-    }
-    if (!stanza.namespaceURI) {
-      stanza.setAttribute("xmlns", "jabber:client");
-    }
-    // 一个节应该拥有'xml:lang'属性，如果这个节包含了XML字符串数据打算展示给用户
-    if (stanza.tagName === "message" && !stanza.getAttribute("xml:lang")) {
-      stanza.setAttribute("xml:lang", "en");
-    }
-
-    /** 写出终端再次检查传输状态，防止拦截器执行期间断开 {@link write} */
+    /** 终端会再次检查传输是否仍在，防止拦截器执行期间被置空 {@link write} */
     this.pipeline.run("send", { stanza });
   }
 
@@ -756,77 +790,42 @@ export class Connection extends EventEmitter {
    * @param stanza 要发送的stanza
    * @param timeout 超时时间，默认30秒
    * @returns 同 id 的响应；会话未就绪、发送失败或超时均 reject
-   * @throws 超时时抛出 TimeoutError
+   * @throws 超时时抛出 name 为 "TimeoutError" 的 DOMException
    */
   sendAsync(stanza: XMPPElement, timeout = 30000) {
-    // 检查必须的流属性
-    // XXX: 我不清楚需要进行那些检查,多余, 或者缺失
-
-    // 一个拥有特定接收者的节必须拥有一个'to'属性
-    // 一个从客户端发送到服务器的由该服务器直接处理的节(例如, presence状态信息)不能拥有'to'属性
-    // if (stanza.tagName === "message" && !stanza.getAttribute("to")) {
-    //   throw new Error("message stanza缺少to属性");
-    // }
-    // if (stanza.tagName === "iq" && !stanza.getAttribute("type")) {
-    //   throw new Error("iq stanza缺少type属性");
-    // }
-    // 如果没有, 服务器会自动填充
-    // if (!stanza.getAttribute("from")) {
-    //   stanza.setAttribute("from", this.jid.full);
-    // }
+    // 未带 id 时补一个，响应按 id 匹配到本次等待
     if (!stanza.getAttribute("id")) {
       stanza.setAttribute("id", crypto.randomUUID());
     }
-    // if (!stanza.namespaceURI) {
-    //   stanza.setAttribute("xmlns", "jabber:client");
-    // }
-    // 一个节应该拥有'xml:lang'属性，如果这个节包含了XML字符串数据打算展示给用户
-    // if (stanza.tagName === "message" && !stanza.getAttribute("xml:lang")) {
-    //   stanza.setAttribute("xml:lang", "en");
-    // }
     const id = stanza.getAttribute("id")!;
-    const tagName = (
-      ["message", "iq", "presence"].includes(stanza.tagName)
-        ? stanza.tagName
-        : "others"
-    ) as "message" | "iq" | "presence" | "others";
     return new Promise<XMPPElement>((resolve, reject) => {
-      const handler = (response: StanzaBase) => {
-        if (response.id === id) {
-          this.off(tagName, handler);
-          clearTimeout(timer);
-          resolve(response.xml);
-        }
+      /** 结束等待：停计时器、删表项，再 settle */
+      const finish = (action: () => void) => {
+        clearTimeout(timer);
+        this.pendingRequests.delete(id);
+        action();
       };
-      const timer = setTimeout(() => {
-        this.off(tagName, handler);
-        reject(new TimeoutError("发送stanza超时"));
-      }, timeout);
+      const timer = setTimeout(
+        () =>
+          finish(() =>
+            reject(new DOMException("发送stanza超时", "TimeoutError")),
+          ),
+        timeout,
+      );
       timer.unref?.();
-      // 先注册监听器再发送,避免漏掉立即到达的响应
-      this.on(tagName, handler);
+      this.pendingRequests.set(id, {
+        resolve: (response) => finish(() => resolve(response)),
+        reject: (error) => finish(() => reject(error)),
+      });
       try {
         this.send(stanza);
       } catch (err) {
-        // send 抛错时清理监听器与定时器，防止泄漏
-        this.off(tagName, handler);
-        clearTimeout(timer);
-        reject(err instanceof Error ? err : new Error(String(err)));
-        return;
+        finish(() =>
+          reject(err instanceof Error ? err : new Error(String(err))),
+        );
       }
     });
-    // return this.socket.sendAsync(stanza, timeout);
   }
 }
-
-import { pluginLoaders } from "./plugins/index";
-import type { PluginConstructor } from "./plugins/types";
-import { Parser } from "./ltx/Parser";
-
-type PluginRegistry = {
-  [K in keyof typeof pluginLoaders]?: InstanceType<
-    Awaited<ReturnType<(typeof pluginLoaders)[K]>>
-  >;
-};
 
 export default Connection;

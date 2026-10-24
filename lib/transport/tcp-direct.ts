@@ -1,6 +1,6 @@
 import { connect as tlsConnect, type TLSSocket } from "node:tls";
 import { XMPPConnection } from "./tcp";
-import type { TransportEndpoint } from "./typing";
+import type { TransportEndpoint, TransportSink } from "./typing";
 import type { JID } from "../JID";
 
 /**
@@ -16,8 +16,13 @@ export class XMPPSConnection extends XMPPConnection {
   protected override readonly srvService = undefined;
 
   /** @param endpoint 直连 TLS 端点；未提供时由传输层按默认端口解析 */
-  constructor(jid: JID, password: string, endpoint?: TransportEndpoint) {
-    super(jid, password, true, endpoint);
+  constructor(
+    jid: JID,
+    password: string,
+    sink: TransportSink,
+    endpoint?: TransportEndpoint,
+  ) {
+    super(jid, password, sink, true, endpoint);
   }
 
   /** TLS 握手完成后才能发送流头 */

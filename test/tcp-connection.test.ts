@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash, createHmac, pbkdf2Sync } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { Socket } from "node:net";
 import { connect as tlsConnect } from "node:tls";
 import { JID } from "../lib/JID";
 import { Parser } from "../lib/ltx/Parser";
-import { Status } from "../lib/transport/typing";
+import { ProtocolError } from "../lib/errors";
+import { Status, type TransportSink } from "../lib/transport/typing";
+import type { TransportEndpoint } from "../lib/transport/typing";
 import { resolveSrv } from "../lib/dns";
 
 // SRV 查询恒返回空，避免测试触发真实 DNS
@@ -66,17 +69,40 @@ const BIND_FEATURES = `<stream:features xmlns:stream="http://etherx.jabber.org/s
   <bind xmlns="urn:ietf:params:xml:ns:xmpp-bind"/>
 </stream:features>`;
 
+/** 传输实例 → 测试用事件发射器：sink 是回调接口，转成事件以便 Promise 等待 */
+const sinkEvents = new WeakMap<XMPPConnection, EventEmitter>();
+
+/** 创建测试用连接：sink 与实例一并构造，通知转成事件便于等待 */
+function createClient(
+  jid: JID,
+  tls: boolean,
+  endpoint?: TransportEndpoint,
+): XMPPConnection {
+  const events = new EventEmitter();
+  const sink: TransportSink = {
+    onBinded: () => events.emit("binded"),
+    onStanza: (stanza) => events.emit("stanza", stanza),
+    onClose: (closeEvent) => events.emit("close", closeEvent),
+    onError: (error) => events.emit("error", error),
+  };
+  const connection = new XMPPConnection(jid, TEST_PASSWORD, sink, tls, endpoint);
+  sinkEvents.set(connection, events);
+  return connection;
+}
+
 /**
- * 等待客户端触发指定事件，返回 Promise.
- * @param client - XMPP 连接实例.
- * @param event - 期望等待的事件名.
- * @returns 解析为事件携带的数据的 Promise.
+ * 等待客户端收到指定通知，返回 Promise.
+ * @param client - XMPP 连接实例（需由 createClient 创建）.
+ * @param event - 期望等待的通知名.
+ * @returns 解析为通知携带数据的 Promise.
  */
 function waitForEvent<T>(
   client: XMPPConnection,
-  event: "authenticated" | "binded" | "stanza" | "stream:start" | "stream:end" | "close" | "error",
+  event: "binded" | "stanza" | "close" | "error",
 ): Promise<T> {
-  return new Promise((resolve) => client.once(event, resolve as never));
+  const events = sinkEvents.get(client);
+  if (!events) throw new Error("测试未通过 createClient 创建连接");
+  return new Promise((resolve) => events.once(event, resolve as never));
 }
 
 function createScramServerExchange(clientAuthBase64: string) {
@@ -152,11 +178,9 @@ async function completeHandshake(
   server.send(AUTH_FEATURES);
   await waitForReceived(server, "<auth");
 
-  // 等待客户端触发 authenticated 事件后再发送新流
-  const authenticated = waitForEvent(client, "authenticated");
+  // 认证成功后客户端重启流：等到第二个流头发出再进行资源绑定
   server.send(`<success xmlns="urn:ietf:params:xml:ns:xmpp-sasl"/>`);
-  await authenticated;
-  server.expectReceived("<stream:stream");
+  await waitForReceived(server, "<stream:stream");
 
   // ---- 第三步：资源绑定 ----
   server.send(BIND_FEATURES);
@@ -188,7 +212,7 @@ describe("XMPPConnection 传输层集成测试", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     serverRef.current = null;
-    client = new XMPPConnection(TEST_JID, TEST_PASSWORD, false, SERVER_ENDPOINT);
+    client = createClient(TEST_JID, false, SERVER_ENDPOINT);
   });
 
   // 每个测试后尝试断开连接，确保不残留 socket 和事件监听器
@@ -222,11 +246,9 @@ describe("XMPPConnection 传输层集成测试", () => {
     const auth = Parser.parse(await waitForReceived(server, "<auth"));
     expect(auth.getAttribute("mechanism")).toBe("PLAIN");
 
-    // 发送 SASL 成功响应，等待客户端触发 authenticated 事件
-    const authenticated = waitForEvent<void>(client, "authenticated");
+    // 发送 SASL 成功响应，等待客户端重启流
     server.send(`<success xmlns="urn:ietf:params:xml:ns:xmpp-sasl"/>`);
-    await authenticated;
-    server.expectReceived("<stream:stream");
+    await waitForReceived(server, "<stream:stream");
 
     // 验证资源绑定请求的格式
     server.send(BIND_FEATURES);
@@ -255,9 +277,8 @@ describe("XMPPConnection 传输层集成测试", () => {
 
   // 资源名可能含 XML 特殊字符，绑定请求必须转义，避免注入（RFC 6120 §7.7.1）
   it("转义资源绑定请求中的资源名", async () => {
-    const escapedClient = new XMPPConnection(
+    const escapedClient = createClient(
       new JID("juliet@capulet.lit/bad</resource><x/>"),
-      TEST_PASSWORD,
       false,
     );
     const server = await connectClient(escapedClient);
@@ -267,10 +288,8 @@ describe("XMPPConnection 传输层集成测试", () => {
     server.send(AUTH_FEATURES);
     await waitForReceived(server, "<auth");
 
-    const authenticated = waitForEvent(escapedClient, "authenticated");
     server.send(`<success xmlns="urn:ietf:params:xml:ns:xmpp-sasl"/>`);
-    await authenticated;
-    server.expectReceived("<stream:stream");
+    await waitForReceived(server, "<stream:stream");
     server.send(BIND_FEATURES);
 
     const xml = await waitForReceived(server, "<iq");
@@ -301,13 +320,10 @@ describe("XMPPConnection 传输层集成测试", () => {
     const response = Parser.parse(responseXml);
     expect(response.textContent).toBe(exchange.expectedResponse);
 
-    const authenticated = waitForEvent<void>(client, "authenticated");
     server.send(
       `<success xmlns="urn:ietf:params:xml:ns:xmpp-sasl">${exchange.success}</success>`,
     );
-    await authenticated;
-
-    server.expectReceived("<stream:stream");
+    await waitForReceived(server, "<stream:stream");
     expect(client.status).toBe(Status.AUTHENTICATED);
   });
 
@@ -357,6 +373,8 @@ describe("XMPPConnection 传输层集成测试", () => {
 
     await expect(error).resolves.toMatchObject({
       message: expect.stringContaining("not-authorized") as string,
+      scope: "sasl",
+      condition: "not-authorized",
     });
   });
 
@@ -377,6 +395,8 @@ describe("XMPPConnection 传输层集成测试", () => {
 
     await expect(error).resolves.toMatchObject({
       message: expect.stringContaining("policy-violation") as string,
+      scope: "stream",
+      condition: "policy-violation",
     });
   });
 
@@ -399,40 +419,39 @@ describe("XMPPConnection 传输层集成测试", () => {
 
     await expect(error).resolves.toMatchObject({
       message: expect.stringContaining("policy-violation") as string,
+      scope: "stream",
+      condition: "policy-violation",
     });
   });
 
   /**
    * 验证收到服务端流尾（</stream:stream>）时：
    * - 客户端按 RFC 6120 §4.4 回发流尾
-   * - 触发 stream:end 与 close，最终状态切换为 DISCONNECTED
+   * - 关闭连接，最终状态切换为 DISCONNECTED
    */
   it("收到服务端流尾时回发流尾并关闭连接", async () => {
     const server = await completeHandshake(client);
-    const streamEnded = waitForEvent<void>(client, "stream:end");
     const closed = waitForEvent<void>(client, "close");
 
     server.send("</stream:stream>");
 
     await waitForReceived(server, "</stream:stream>");
-    await Promise.all([streamEnded, closed]);
+    await closed;
     expect(client.status).toBe(Status.DISCONNECTED);
   });
 
   /**
    * 验证服务端断开 TCP 连接时：
-   * - 客户端先触发 stream:end 事件（会话关闭）
-   * - 再触发 close 事件（连接关闭）
+   * - 触发 close 通知（会话与连接一并结束）
    * - 最终状态切换为 DISCONNECTED
    */
   it("服务端断开连接时结束会话", async () => {
     const server = await completeHandshake(client);
-    const streamEnded = waitForEvent<void>(client, "stream:end");
     const closed = waitForEvent<void>(client, "close");
 
     server.close();
 
-    await Promise.all([streamEnded, closed]);
+    await closed;
     expect(client.status).toBe(Status.DISCONNECTED);
   });
 
@@ -457,7 +476,7 @@ describe("XMPPConnection 传输层集成测试", () => {
    * - TLS 握手完成后重启流
    */
   it("TLS 模式通过 STARTTLS 升级建立连接", async () => {
-    client = new XMPPConnection(TEST_JID, TEST_PASSWORD, true, SERVER_ENDPOINT);
+    client = createClient(TEST_JID, true, SERVER_ENDPOINT);
 
     const server = await connectClient(client);
     server.acceptConnection();
@@ -468,7 +487,6 @@ describe("XMPPConnection 传输层集成测试", () => {
     await waitForReceived(server, "<starttls");
 
     // 服务端同意升级，客户端应通过 tls.connect 包装现有 socket
-    const upgraded = waitForEvent<void>(client, "stream:start");
     server.send(`<proceed xmlns="urn:ietf:params:xml:ns:xmpp-tls"/>`);
 
     // tls.connect 创建了新 socket，需重新获取对应的 Mock 服务端并完成 TLS 握手
@@ -478,7 +496,8 @@ describe("XMPPConnection 传输层集成测试", () => {
       throw new Error("TLS socket 尚未创建");
     });
     tlsServer.secureConnect();
-    await upgraded;
+    // TLS 建立后客户端重启流
+    await waitForReceived(tlsServer, "<stream:stream");
 
     expect(tlsConnect).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -487,9 +506,6 @@ describe("XMPPConnection 传输层集成测试", () => {
         ALPNProtocols: ["xmpp-client"],
       }),
     );
-
-    // TLS 建立后客户端重启流，继续协商
-    tlsServer.expectReceived("<stream:stream");
   });
 
   /**
@@ -498,7 +514,7 @@ describe("XMPPConnection 传输层集成测试", () => {
    * 被当作 bind 响应处理而断开连接。
    */
   it("TLS 模式完整握手（STARTTLS → SASL → 资源绑定）", async () => {
-    client = new XMPPConnection(TEST_JID, TEST_PASSWORD, true, SERVER_ENDPOINT);
+    client = createClient(TEST_JID, true, SERVER_ENDPOINT);
 
     const server = await connectClient(client);
     server.acceptConnection();
@@ -521,10 +537,8 @@ describe("XMPPConnection 传输层集成测试", () => {
     const auth = Parser.parse(await waitForReceived(tlsServer, "<auth"));
     expect(auth.getAttribute("mechanism")).toBe("PLAIN");
 
-    const authenticated = waitForEvent<void>(client, "authenticated");
     tlsServer.send(`<success xmlns="urn:ietf:params:xml:ns:xmpp-sasl"/>`);
-    await authenticated;
-    tlsServer.expectReceived("<stream:stream");
+    await waitForReceived(tlsServer, "<stream:stream");
 
     // 认证后二次流特性：资源绑定
     tlsServer.send(BIND_FEATURES);
@@ -550,7 +564,7 @@ describe("XMPPConnection 传输层集成测试", () => {
    * - 错误消息提示服务器未宣告 starttls 功能
    */
   it("TLS 模式但服务器未宣告 starttls 时拒绝降级", async () => {
-    client = new XMPPConnection(TEST_JID, TEST_PASSWORD, true, SERVER_ENDPOINT);
+    client = createClient(TEST_JID, true, SERVER_ENDPOINT);
 
     const server = await connectClient(client);
     const error = waitForEvent<Error>(client, "error");
@@ -566,7 +580,7 @@ describe("XMPPConnection 传输层集成测试", () => {
 
   /**
    * 验证 TCP 连接超时（30 秒未建立）时：
-   * - 客户端触发 error 事件（TimeoutError）
+   * - 客户端触发 error 事件（name 为 TimeoutError 的 DOMException）
    * - 连接被断开，状态回到 DISCONNECTED（不再永久停留在 CONNECTING）
    */
   it("TCP 连接超时（30 秒未建立）时报告错误并断开", async () => {
@@ -585,6 +599,79 @@ describe("XMPPConnection 传输层集成测试", () => {
       message: expect.stringContaining("连接超时") as string,
     });
     expect(client.status).toBe(Status.DISCONNECTED);
+  });
+
+  /**
+   * 验证流协商阶段 30 秒没有任何入站数据时：
+   * - 报告 name 为 TimeoutError 的 DOMException（消息含「协商超时」）
+   * - 主动断开，状态回到 DISCONNECTED，不会永久停在 STREAM_START
+   */
+  it("流协商阶段 30 秒无数据时报告超时并断开", async () => {
+    const error = waitForEvent<Error>(client, "error");
+    const closed = waitForEvent(client, "close");
+
+    vi.useFakeTimers();
+    try {
+      await client.connect();
+      // 完成 TCP 连接并发出流头，但服务端不再发送任何数据
+      getServer().acceptConnection();
+      vi.advanceTimersByTime(30_000);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const failure = await error;
+    expect(failure).toBeInstanceOf(ProtocolError);
+    expect(failure).toMatchObject({ retryable: true });
+    expect(failure.message).toContain("协商超时");
+    // close 通知是会话层调度自动重连的依据
+    await closed;
+    expect(client.status).toBe(Status.DISCONNECTED);
+  });
+
+  /**
+   * 验证看门狗按「有无数据」重置而不看阶段：
+   * 启动后 20 秒收到 features，再等 20 秒仍未超时（累计已超过 30 秒）。
+   */
+  it("协商阶段收到数据会重置看门狗", async () => {
+    vi.useFakeTimers();
+    try {
+      await client.connect();
+      const server = getServer();
+      server.acceptConnection();
+
+      vi.advanceTimersByTime(20_000);
+      server.send(AUTH_FEATURES);
+      await vi.advanceTimersByTimeAsync(20_000);
+
+      // 若未在收到 features 时重置，此时已超过首次启动后的 30 秒
+      expect(client.status).toBe(Status.AUTHENTICATING);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * 验证资源绑定完成后看门狗停止：之后长时间无数据也不会触发协商超时。
+   */
+  it("资源绑定完成后停止协商看门狗", async () => {
+    const events = sinkEvents.get(client);
+    if (!events) throw new Error("测试未通过 createClient 创建连接");
+    const errors: Error[] = [];
+    events.on("error", (error: Error) => errors.push(error));
+
+    await completeHandshake(client);
+    expect(client.status).toBe(Status.BINDED);
+
+    vi.useFakeTimers();
+    try {
+      vi.advanceTimersByTime(60_000);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(errors).toHaveLength(0);
+    expect(client.status).toBe(Status.BINDED);
   });
 
   /**
@@ -629,10 +716,8 @@ describe("XMPPConnection 传输层集成测试", () => {
     server.send(AUTH_FEATURES);
     await waitForReceived(server, "<auth");
 
-    const authenticated = waitForEvent<void>(client, "authenticated");
     server.send(`<success xmlns="urn:ietf:params:xml:ns:xmpp-sasl"/>`);
-    await authenticated;
-    server.expectReceived("<stream:stream");
+    await waitForReceived(server, "<stream:stream");
 
     server.send(BIND_FEATURES);
     const bindRequest = Parser.parse(await waitForReceived(server, "<iq"));
@@ -683,7 +768,7 @@ describe("XMPPConnection 传输层集成测试", () => {
    * 显式端点必须完整：host 与 port 同时提供才采纳，否则视为未指定并走 SRV 发现。
    */
   it("构造时指定的 host/port 优先于 SRV 发现", async () => {
-    client = new XMPPConnection(TEST_JID, TEST_PASSWORD, false, {
+    client = createClient(TEST_JID, false, {
       host: "explicit.example",
       port: 5223,
     });
@@ -695,7 +780,7 @@ describe("XMPPConnection 传输层集成测试", () => {
   });
 
   it("端点缺少 port 时不采纳，回退 SRV 与默认端口", async () => {
-    client = new XMPPConnection(TEST_JID, TEST_PASSWORD, false, {
+    client = createClient(TEST_JID, false, {
       host: "partial.example",
     });
     await client.connect();
@@ -706,7 +791,7 @@ describe("XMPPConnection 传输层集成测试", () => {
   });
 
   it("端点缺少 host 时不采纳，回退 SRV 与默认端口", async () => {
-    client = new XMPPConnection(TEST_JID, TEST_PASSWORD, false, { port: 5223 });
+    client = createClient(TEST_JID, false, { port: 5223 });
     await client.connect();
 
     expect(client.host).toBe("capulet.lit");

@@ -1,14 +1,13 @@
-import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Client } from "../lib/client";
 import { Connection } from "../lib/connection";
 import { pluginLoaders } from "../lib/plugins";
-import { Status } from "../lib/transport/typing";
+import { Status, type TransportSink, type TransportSocket } from "../lib/transport/typing";
 import { Pipeline } from "../lib/transport/pipeline";
 import type { TransportPipelineEvents } from "../lib/transport/stream-connection";
 import { XMPPElement } from "../lib/ltx/Element";
 import { Parser } from "../lib/ltx/Parser";
-import { Message } from "../lib/stanza";
+import { JID } from "../lib/JID";
 
 /**
  * Client 便捷方法单元测试：注入假传输层与假插件实例，不建立 socket。
@@ -21,14 +20,17 @@ import { Message } from "../lib/stanza";
 const SELF = "juliet@capulet.lit/balcony";
 const PEER = "romeo@montague.lit/orchard";
 
-/** 假传输层：只实现 Connection 访问的字段与事件 */
-class FakeTransport extends EventEmitter {
-  status: number = Status.BINDED;
+/** 假传输层：只实现 Connection 访问的字段与通知接收者 */
+class FakeTransport {
+  status: TransportSocket["status"] = Status.BINDED;
+  jid: JID = new JID(SELF);
   host = "localhost";
   port = "5222";
   streamFeatures = new Set<string>();
   pipeline = new Pipeline<TransportPipelineEvents>();
   readonly sent: Array<string | XMPPElement> = [];
+
+  constructor(readonly sink: TransportSink) {}
 
   send(data: string | XMPPElement): void {
     this.sent.push(data);
@@ -46,11 +48,10 @@ function setup(sessionActive = true) {
     port: 5222,
     tls: false,
   });
-  const transport = new FakeTransport();
+  const transport = new FakeTransport(client._createSink());
   client.transport = transport;
-  client._setupSocketEvents();
   if (sessionActive) {
-    transport.emit("binded");
+    transport.sink.onBinded();
   } else {
     transport.status = Status.DISCONNECTED;
   }
@@ -76,7 +77,9 @@ describe("Client", () => {
     await lifecycle.instantiatePlugins();
     lifecycle.initPlugins();
 
-    for (const name of Object.keys(pluginLoaders)) {
+    for (const name of Object.keys(pluginLoaders) as Array<
+      keyof typeof pluginLoaders
+    >) {
       expect(client[name]).toBeDefined();
       expect(typeof (client[name] as { init: unknown }).init).toBe("function");
     }
@@ -100,13 +103,9 @@ describe("Client", () => {
 
     const pending = client.postMsg(PEER, "hi");
     const request = transport.sent[0] as XMPPElement;
-    client.emit(
-      "message",
-      new Message(
-        Parser.parse(
-          `<message xmlns="jabber:client" id="${request.getAttribute("id")}" from="${PEER}" to="${SELF}"/>`,
-        ),
-        client,
+    transport.sink.onStanza(
+      Parser.parse(
+        `<message xmlns="jabber:client" id="${request.getAttribute("id")}" from="${PEER}" to="${SELF}"/>`,
       ),
     );
 

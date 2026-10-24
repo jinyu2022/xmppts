@@ -3,7 +3,7 @@ import { Pipeline, SyncPipeline } from "../../lib/transport/pipeline";
 
 /**
  * Pipeline / SyncPipeline 单元测试。
- * 覆盖处理器顺序、共享数据引用、短路、错误传播与 error 接管、clear 语义。
+ * 覆盖处理器顺序、共享数据引用、短路、错误传播、终端与 clear 语义。
  */
 
 interface Events {
@@ -68,57 +68,74 @@ describe("Pipeline（异步）", () => {
     expect(later).not.toHaveBeenCalled();
   });
 
-  it("注册 error 后错误交给处理器，链中断且不抛出", async () => {
+  it("clear 移除处理器", async () => {
     const pipeline = new Pipeline<Events>();
-    const onError = vi.fn();
     const later = vi.fn();
-    pipeline.error(onError);
-    pipeline.use("ev", () => {
-      throw new Error("handled");
-    });
     pipeline.use("ev", (_d, next) => {
       later();
       return next();
     });
 
-    const data = { trace: [] };
-    await expect(pipeline.run("ev", data)).resolves.toBe(data);
-    expect(later).not.toHaveBeenCalled();
-    expect(onError).toHaveBeenCalledWith(expect.any(Error), "ev", data);
-  });
-
-  it("clear 移除处理器但保留 error 接管", async () => {
-    const pipeline = new Pipeline<Events>();
-    const onError = vi.fn();
-    pipeline.error(onError);
-    pipeline.use("ev", () => {
-      throw new Error("first");
-    });
-
     pipeline.clear();
     await expect(pipeline.run("ev", { trace: [] })).resolves.toEqual({ trace: [] });
-    expect(onError).not.toHaveBeenCalled();
-
-    pipeline.use("ev", () => {
-      throw new Error("second");
-    });
-    await pipeline.run("ev", { trace: [] });
-    expect(onError).toHaveBeenCalledWith(expect.any(Error), "ev", { trace: [] });
+    expect(later).not.toHaveBeenCalled();
   });
 
-  it("异步错误处理器被 await，处理器完成后 run 才完成", async () => {
+  it("终端固定在中间件之后，clear 后仍保留", async () => {
     const pipeline = new Pipeline<Events>();
-    const order: string[] = [];
-    pipeline.error(async () => {
-      await Promise.resolve();
-      order.push("handled");
+    pipeline.terminal("ev", (d, next) => {
+      d.trace.push("terminal");
+      return next();
     });
-    pipeline.use("ev", () => {
-      throw new Error("slow");
+    pipeline.use("ev", (d, next) => {
+      d.trace.push("middleware");
+      return next();
+    });
+
+    const data = { trace: [] as string[] };
+    await pipeline.run("ev", data);
+    expect(data.trace).toEqual(["middleware", "terminal"]);
+
+    pipeline.clear();
+    const afterClear = { trace: [] as string[] };
+    await pipeline.run("ev", afterClear);
+    expect(afterClear.trace).toEqual(["terminal"]);
+  });
+
+  it("中间件在 next() 返回后即可确认终端已完成", async () => {
+    const pipeline = new Pipeline<Events>();
+    let written = false;
+    pipeline.terminal("ev", (_d, next) => {
+      written = true;
+      return next();
+    });
+    let observedAfterNext = false;
+    pipeline.use("ev", async (_d, next) => {
+      await next();
+      observedAfterNext = written;
     });
 
     await pipeline.run("ev", { trace: [] });
-    expect(order).toEqual(["handled"]);
+    expect(observedAfterNext).toBe(true);
+  });
+
+  it("同一事件点重复注册终端抛错", () => {
+    const pipeline = new Pipeline<Events>();
+    pipeline.terminal("ev", (_d, next) => next());
+    expect(() => pipeline.terminal("ev", (_d, next) => next())).toThrow(
+      "已存在终端",
+    );
+  });
+
+  it("终端抛错向上抛出", async () => {
+    const pipeline = new Pipeline<Events>();
+    pipeline.terminal("ev", () => {
+      throw new Error("terminal boom");
+    });
+
+    await expect(pipeline.run("ev", { trace: [] })).rejects.toThrow(
+      "terminal boom",
+    );
   });
 });
 
@@ -152,11 +169,9 @@ describe("SyncPipeline（同步）", () => {
     expect(done).toBe(true);
   });
 
-  it("不调用 next 短路；抛错中断并可被 error 接管", () => {
+  it("不调用 next 短路；抛错中断并向上抛出", () => {
     const pipeline = new SyncPipeline<Events>();
-    const onError = vi.fn();
     const later = vi.fn();
-    pipeline.error(onError);
     pipeline.use("ev", (d) => {
       d.trace.push("stop");
       throw new Error("sync boom");
@@ -166,25 +181,70 @@ describe("SyncPipeline（同步）", () => {
       next();
     });
 
-    expect(() => pipeline.run("ev", { trace: [] })).not.toThrow();
+    expect(() => pipeline.run("ev", { trace: [] })).toThrow("sync boom");
     expect(later).not.toHaveBeenCalled();
-    expect(onError).toHaveBeenCalledWith(expect.any(Error), "ev", { trace: ["stop"] });
   });
 
-  it("use 链式、未注册事件直接返回、clear 保留 error", () => {
+  it("use 链式、未注册事件直接返回、clear 清空中间件", () => {
     const pipeline = new SyncPipeline<Events>();
     expect(pipeline.use("ev", (_d, next) => next())).toBe(pipeline);
 
     const data = { n: 2 };
     expect(pipeline.run("other", data)).toBe(data);
 
-    const onError = vi.fn();
-    pipeline.error(onError);
-    pipeline.clear();
-    pipeline.use("ev", () => {
-      throw new Error("after clear");
+    const later = vi.fn();
+    pipeline.use("ev", (_d, next) => {
+      later();
+      next();
     });
+    pipeline.clear();
     pipeline.run("ev", { trace: [] });
-    expect(onError).toHaveBeenCalledTimes(1);
+    expect(later).not.toHaveBeenCalled();
+  });
+
+  it("终端固定在中间件之后，clear 后仍保留", () => {
+    const pipeline = new SyncPipeline<Events>();
+    pipeline.terminal("ev", (d, next) => {
+      d.trace.push("terminal");
+      next();
+    });
+    pipeline.use("ev", (d, next) => {
+      d.trace.push("middleware");
+      next();
+    });
+
+    const data = { trace: [] as string[] };
+    pipeline.run("ev", data);
+    expect(data.trace).toEqual(["middleware", "terminal"]);
+
+    pipeline.clear();
+    const afterClear = { trace: [] as string[] };
+    pipeline.run("ev", afterClear);
+    expect(afterClear.trace).toEqual(["terminal"]);
+  });
+
+  it("中间件在 next() 返回后即可确认终端已完成", () => {
+    const pipeline = new SyncPipeline<Events>();
+    let written = false;
+    pipeline.terminal("ev", (_d, next) => {
+      written = true;
+      next();
+    });
+    let observedAfterNext = false;
+    pipeline.use("ev", (_d, next) => {
+      next();
+      observedAfterNext = written;
+    });
+
+    pipeline.run("ev", { trace: [] });
+    expect(observedAfterNext).toBe(true);
+  });
+
+  it("同一事件点重复注册终端抛错", () => {
+    const pipeline = new SyncPipeline<Events>();
+    pipeline.terminal("ev", (_d, next) => next());
+    expect(() => pipeline.terminal("ev", (_d, next) => next())).toThrow(
+      "已存在终端",
+    );
   });
 });

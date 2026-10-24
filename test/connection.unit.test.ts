@@ -1,32 +1,31 @@
-import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Connection } from "../lib/connection";
 import { JID } from "../lib/JID";
 import { XMPPElement } from "../lib/ltx/Element";
 import { Parser } from "../lib/ltx/Parser";
 import { Iq, Message } from "../lib/stanza";
-import { TimeoutError } from "../lib/errors";
+import { ProtocolError } from "../lib/errors";
 import { Pubsub } from "../lib/plugins/xep0060/pubsub";
 import XEP0060 from "../lib/plugins/xep0060";
 import { XEP0297 } from "../lib/plugins/XEP0297";
 import XEP0402 from "../lib/plugins/xep0402";
 import { Pipeline } from "../lib/transport/pipeline";
-import { Status } from "../lib/transport/typing";
+import { Status, type TransportSink, type TransportSocket } from "../lib/transport/typing";
 import type { TransportPipelineEvents } from "../lib/transport/stream-connection";
 import type { Options } from "../lib/types";
 
 /**
  * Connection 单元测试：注入假传输层，不建立任何 socket。
- * 覆盖发送校验与拦截、接收路由与插件转换、会话事件时序、自动重连调度、插件依赖解析与卸载。
+ * 覆盖发送校验与拦截、接收路由与插件转换、会话事件时序、自动重连调度、插件依赖解析与重建。
  * 用例按行为分组，一个 it 内覆盖同组多条断言。
  */
 
-/** 假传输层：只实现 Connection 访问的字段与事件 */
-class FakeTransport extends EventEmitter {
-  status: number = Status.BINDED;
+/** 假传输层：只实现 Connection 访问的字段与通知接收者 */
+class FakeTransport {
+  status: TransportSocket["status"] = Status.BINDED;
   host = "localhost";
   port = "5222";
-  jid?: JID;
+  jid: JID = new JID("test@example.com/resource");
   streamFeatures = new Set<string>();
   pipeline = new Pipeline<TransportPipelineEvents>();
   readonly sent: Array<string | XMPPElement> = [];
@@ -34,13 +33,15 @@ class FakeTransport extends EventEmitter {
   readonly reconnect = vi.fn(async () => {});
   readonly disconnect = vi.fn();
 
+  constructor(readonly sink: TransportSink) {}
+
   send(data: string | XMPPElement): void {
     this.sent.push(data);
   }
 }
 
-/** 建立带假传输层的连接，并挂上传输层事件监听 */
-function setup(options: Options = {}) {
+/** 建立带假传输层的连接；`bind` 为 false 时保持会话未就绪 */
+function setup(options: Options = {}, bind = true) {
   const connection = new Connection("test@example.com/resource", "test123", {
     protocol: "xmpp",
     host: "localhost",
@@ -48,10 +49,9 @@ function setup(options: Options = {}) {
     tls: false,
     ...options,
   });
-  const transport = new FakeTransport();
+  const transport = new FakeTransport(connection._createSink());
   connection.transport = transport;
-  connection._setupSocketEvents();
-  transport.emit("binded");
+  if (bind) transport.sink.onBinded();
   return { connection, transport };
 }
 
@@ -61,7 +61,7 @@ describe("Connection（单元测试，假传输层）", () => {
     vi.restoreAllMocks();
   });
 
-  it("send：拒绝缺少必备属性的 stanza，其余自动补全 id/xmlns/xml:lang 并归一化 groupchat 的 to", () => {
+  it("send：拒绝缺少必备属性的 stanza，其余自动补全 id/xmlns 并归一化 groupchat 的 to", () => {
     const { connection, transport } = setup();
 
     expect(() => connection.send("<message><body>hi</body></message>")).toThrow(
@@ -126,14 +126,16 @@ describe("Connection（单元测试，假传输层）", () => {
     const answered = connection.sendAsync(
       Parser.parse('<iq type="get" id="ping-1"><ping xmlns="urn:xmpp:ping"/></iq>'),
     );
-    connection.emit("iq", new Iq(Parser.parse('<iq type="result" id="ping-1"/>'), connection));
+    transport.sink.onStanza(Parser.parse('<iq type="result" id="ping-1"/>'));
     await expect(answered).resolves.toBeInstanceOf(XMPPElement);
 
     const timedOut = connection.sendAsync(
       Parser.parse('<iq type="get" id="ping-2"/>'),
       1000,
     );
-    const rejection = expect(timedOut).rejects.toBeInstanceOf(TimeoutError);
+    const rejection = expect(timedOut).rejects.toMatchObject({
+      name: "TimeoutError",
+    });
     await vi.advanceTimersByTimeAsync(1000);
     await rejection;
 
@@ -144,6 +146,22 @@ describe("Connection（单元测试，假传输层）", () => {
       connection.sendAsync(Parser.parse('<iq type="get" id="ping-3"/>')),
     ).rejects.toThrow("连接已断开");
     expect(connection.listenerCount("iq")).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("sendAsync：断开时立即结束所有等待中的请求", async () => {
+    vi.useFakeTimers();
+    const { connection, transport } = setup();
+    const request = connection.sendAsync(
+      Parser.parse('<iq type="get" id="pending-1"/>'),
+    );
+    const rejection = expect(request).rejects.toThrow("连接已断开");
+
+    // 真实传输层在通知 close 前已把状态置为 DISCONNECTED
+    transport.status = Status.DISCONNECTED;
+    transport.sink.onClose();
+
+    await rejection;
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -176,8 +194,7 @@ describe("Connection（单元测试，假传输层）", () => {
 
   it("send：协商期间拒绝业务 stanza，流层元素仍可发送；绑定后恢复业务发送", async () => {
     vi.useFakeTimers();
-    const { connection, transport } = setup();
-    transport.emit("stream:end");
+    const { connection, transport } = setup({}, false);
     transport.status = Status.AUTHENTICATED;
     for (const stanza of ['<message to="a@example.com"/>', '<iq type="get"/>', '<presence/>']) {
       expect(() => connection.send(stanza)).toThrow("会话尚未就绪");
@@ -189,7 +206,7 @@ describe("Connection（单元测试，假传输层）", () => {
     connection.send('<enable xmlns="urn:xmpp:sm:3"/>');
     expect(transport.sent).toHaveLength(1);
     transport.status = Status.BINDED;
-    transport.emit("binded");
+    transport.sink.onBinded();
     connection.send('<presence/>');
     expect(transport.sent).toHaveLength(2);
   });
@@ -219,14 +236,13 @@ describe("Connection（单元测试，假传输层）", () => {
     connection.on("presence", (stanza) => presence.push(stanza.tagName));
     connection.on("others", (stanza) => others.push(stanza.tagName));
 
-    transport.emit(
-      "stanza",
+    transport.sink.onStanza(
       Parser.parse(
         '<message from="romeo@montague.lit/orchard" to="juliet@capulet.lit"><x xmlns="urn:test:caps"/></message>',
       ),
     );
-    transport.emit("stanza", Parser.parse('<presence from="romeo@montague.lit/orchard"><show>away</show></presence>'));
-    transport.emit("stanza", Parser.parse('<r xmlns="urn:xmpp:sm:3"/>'));
+    transport.sink.onStanza(Parser.parse('<presence from="romeo@montague.lit/orchard"><show>away</show></presence>'));
+    transport.sink.onStanza(Parser.parse('<r xmlns="urn:xmpp:sm:3"/>'));
 
     expect(order).toEqual(["message", "presence", "r"]);
     expect(messages).toHaveLength(1);
@@ -242,8 +258,7 @@ describe("Connection（单元测试，假传输层）", () => {
     const messages: Message[] = [];
     connection.on("message", (message) => messages.push(message));
 
-    transport.emit(
-      "stanza",
+    transport.sink.onStanza(
       Parser.parse(
         `<message xmlns="jabber:client" from="romeo@montague.lit/orchard" to="juliet@capulet.lit">
           <x xmlns="vcard-temp:x:update"><photo/></x>
@@ -278,8 +293,7 @@ describe("Connection（单元测试，假传输层）", () => {
     });
 
     // XEP-0060 §8.4.2 Example 160：delete 分支带 <redirect/>，二次解析会丢掉该字段
-    transport.emit(
-      "stanza",
+    transport.sink.onStanza(
       Parser.parse(
         `<message from="pubsub.shakespeare.lit" to="juliet@capulet.lit">
           <event xmlns="http://jabber.org/protocol/pubsub#event">
@@ -310,7 +324,7 @@ describe("Connection（单元测试，假传输层）", () => {
         </items>
       </event>
     </message>`;
-    expect(() => transport.emit("stanza", Parser.parse(bookmarkMessage))).not.toThrow();
+    expect(() => transport.sink.onStanza(Parser.parse(bookmarkMessage))).not.toThrow();
     expect(updates).toHaveLength(1);
     expect(
       updates[0].event?.item?.conference?.extensions?.map((el) => el.localName),
@@ -324,8 +338,7 @@ describe("Connection（单元测试，假传输层）", () => {
     connection.on("message", (message) => messages.push(message));
     connection.on("iq", (iq) => iqs.push(iq));
 
-    transport.emit(
-      "stanza",
+    transport.sink.onStanza(
       Parser.parse(
         `<message xmlns="jabber:client" from="pubsub.shakespeare.lit" to="juliet@capulet.lit" type="error">
           <thread>t1</thread>
@@ -349,8 +362,7 @@ describe("Connection（单元测试，假传输层）", () => {
     // thread 已解析为字段，不受 error 解析影响
     expect(messages[0].thread).toBe("t1");
 
-    transport.emit(
-      "stanza",
+    transport.sink.onStanza(
       Parser.parse(
         `<iq xmlns="jabber:client" from="pubsub.shakespeare.lit" to="juliet@capulet.lit" type="error" id="i1">
           <error type="modify"><bad-request xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/></error>
@@ -366,8 +378,7 @@ describe("Connection（单元测试，假传输层）", () => {
     connection.on("iq", (iq) => iqs.push(iq));
     new XEP0060(connection).init();
 
-    transport.emit(
-      "stanza",
+    transport.sink.onStanza(
       Parser.parse(
         `<iq xmlns="jabber:client" from="pubsub.shakespeare.lit" type="error" id="i2">
           <error type="cancel">
@@ -391,8 +402,7 @@ describe("Connection（单元测试，假传输层）", () => {
     const messages: Message[] = [];
     connection.on("message", (message) => messages.push(message));
 
-    transport.emit(
-      "stanza",
+    transport.sink.onStanza(
       Parser.parse(
         `<message from="juliet@capulet.lit" to="romeo@montague.lit">
           <forwarded xmlns="urn:xmpp:forward:0">
@@ -409,46 +419,63 @@ describe("Connection（单元测试，假传输层）", () => {
     expect((forwarded.message as XMPPElement).tagName).toBe("message");
   });
 
-  it("会话事件：open→connect、binded→session:start 并采纳服务端 JID、stream:end→session:end、close→disconnect 并清理监听", () => {
-    const { connection, transport } = setup();
+  it("会话事件：binded→session:start 并采纳服务端 JID、close→session:end 并清理监听", () => {
+    const { connection, transport } = setup({}, false);
     const events: string[] = [];
-    connection.on("connect", () => events.push("connect"));
     connection.on("session:start", () => events.push("session:start"));
     connection.on("session:end", () => events.push("session:end"));
-    connection.on("disconnect", () => events.push("disconnect"));
 
-    transport.emit("open");
     transport.jid = new JID("juliet@capulet.lit/from-server");
-    transport.emit("binded");
+    transport.sink.onBinded();
     expect(connection.jid.toString()).toBe("juliet@capulet.lit/from-server");
 
-    transport.emit("stream:end");
-    transport.emit("close");
+    transport.status = Status.DISCONNECTED;
+    transport.sink.onClose();
 
-    expect(events).toEqual(["connect", "session:start", "session:end", "disconnect"]);
+    expect(events).toEqual(["session:start", "session:end"]);
     // 真断开后 _cleanup 清空全部监听器
     expect(connection.listenerCount("session:start")).toBe(0);
   });
 
+  it("session:end 派发前先降级会话状态：监听器内不可再发送业务 stanza", () => {
+    const { connection, transport } = setup();
+    let activeDuringEnd: boolean | undefined;
+
+    connection.on("session:end", () => {
+      activeDuringEnd = connection.isSessionActive;
+      expect(() =>
+        connection.send('<message to="a@example.com"><body>x</body></message>'),
+      ).toThrow("会话尚未就绪");
+    });
+
+    connection.disconnect();
+
+    expect(activeDuringEnd).toBe(false);
+    expect(transport.disconnect).toHaveBeenCalledTimes(1);
+  });
+
   it("自动重连：断线只发一次 connection:lost，重连成功后 reconnected 且不再发 session:start", async () => {
     vi.useFakeTimers();
-    const { connection, transport } = setup({ reconnect: true, reconnectInterval: 10 });
+    const { connection, transport } = setup(
+      { reconnect: true, reconnectInterval: 10 },
+      false,
+    );
     const events: string[] = [];
     connection.on("session:start", () => events.push("session:start"));
     connection.on("connection:lost", () => events.push("connection:lost"));
     connection.on("reconnecting", () => events.push("reconnecting"));
     connection.on("reconnected", () => events.push("reconnected"));
 
-    transport.emit("binded");
+    transport.sink.onBinded();
     transport.status = Status.DISCONNECTED;
-    transport.emit("close");
+    transport.sink.onClose();
     expect(events).toEqual(["session:start", "connection:lost"]);
 
     await vi.advanceTimersByTimeAsync(10);
     expect(transport.reconnect).toHaveBeenCalledTimes(1);
     expect(events).toEqual(["session:start", "connection:lost", "reconnecting"]);
 
-    transport.emit("binded");
+    transport.sink.onBinded();
     expect(events).toEqual([
       "session:start",
       "connection:lost",
@@ -457,26 +484,156 @@ describe("Connection（单元测试，假传输层）", () => {
     ]);
   });
 
-  it("插件：自动递归注册依赖插件，deregisterPlugin 连带卸载依赖它的插件", async () => {
-    const { connection } = setup();
-    connection.registerPlugin("XEP0280");
-    // 直接调用私有初始化，避免 connect() 建立真实 socket
-    const lifecycle = connection as unknown as {
-      instantiatePlugins(): Promise<void>;
-      initPlugins(): void;
-    };
-    await lifecycle.instantiatePlugins();
-    lifecycle.initPlugins();
+  it("首连未建立会话即关闭：上报 error 并按网络断开重连，不发 session:end", async () => {
+    vi.useFakeTimers();
+    const { connection, transport } = setup(
+      { reconnect: true, reconnectInterval: 10 },
+      false,
+    );
+    const events: string[] = [];
+    connection.on("session:end", () => events.push("session:end"));
+    connection.on("connection:lost", () => events.push("connection:lost"));
+    connection.on("error", (error) => events.push(`error:${error.message}`));
 
-    // XEP0280 依赖 XEP0030/XEP0297，XEP0297 又依赖 XEP0203
-    for (const name of ["XEP0280", "XEP0297", "XEP0203", "XEP0030"] as const) {
-      expect(connection[name], `${name} 未自动注册`).toBeDefined();
-    }
+    transport.status = Status.DISCONNECTED;
+    transport.sink.onError(new Error("连接被拒绝"));
+    transport.sink.onClose();
 
-    connection.deregisterPlugin("XEP0030");
-    // 卸载后的实例是 Proxy，只拦截成员读取（取属性本身不触发）
-    expect(() => connection.XEP0030!.init()).toThrow(/unregistered/);
-    expect(() => connection.XEP0280!.init()).toThrow(/unregistered/);
-    expect(connection.XEP0203).toBeDefined();
+    // 从未建立会话：不发 session:end / connection:lost
+    expect(events).toEqual(["error:连接被拒绝"]);
+    expect(connection.isSessionActive).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(transport.reconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("首连协商超时：上报 TimeoutError 并按网络断开重连，重连成功后发 session:start", async () => {
+    vi.useFakeTimers();
+    const { connection, transport } = setup(
+      { reconnect: true, reconnectInterval: 10 },
+      false,
+    );
+    const events: string[] = [];
+    connection.on("session:start", () => events.push("session:start"));
+    connection.on("connection:lost", () => events.push("connection:lost"));
+    connection.on("reconnecting", () => events.push("reconnecting"));
+    connection.on("error", (error) => events.push(`error:${error.name}`));
+
+    // 传输层协商看门狗：retryable 的协议错误，随后关闭连接
+    transport.status = Status.DISCONNECTED;
+    transport.sink.onError(
+      new ProtocolError({
+        scope: "stream",
+        message: "协商超时: 30 秒内未收到服务器数据",
+        retryable: true,
+      }),
+    );
+    transport.sink.onClose();
+
+    // 未建立会话：不区分“超时”与网络断开，直接按可重试错误处理
+    expect(events).toEqual(["error:ProtocolError"]);
+    expect(connection.isSessionActive).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(transport.reconnect).toHaveBeenCalledTimes(1);
+    expect(events).toEqual(["error:ProtocolError", "reconnecting"]);
+
+    transport.sink.onBinded();
+    expect(events).toEqual([
+      "error:ProtocolError",
+      "reconnecting",
+      "session:start",
+    ]);
+  });
+
+  it("首连在绑定前关闭且无传输错误：不发 session:end，按网络断开重连", async () => {
+    vi.useFakeTimers();
+    const { connection, transport } = setup(
+      { reconnect: true, reconnectInterval: 10 },
+      false,
+    );
+    const events: string[] = [];
+    connection.on("error", (error) => events.push(error.message));
+    connection.on("session:end", () => events.push("session:end"));
+    connection.on("connection:lost", () => events.push("connection:lost"));
+
+    transport.status = Status.DISCONNECTED;
+    transport.sink.onClose();
+
+    expect(events).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(transport.reconnect).toHaveBeenCalledTimes(1);
+    expect(events).toEqual([]);
+  });
+
+  it("首连失败后重连成功：仍发 session:start，不发 reconnected", async () => {
+    vi.useFakeTimers();
+    const { connection, transport } = setup(
+      { reconnect: true, reconnectInterval: 10 },
+      false,
+    );
+    const events: string[] = [];
+    connection.on("session:start", () => events.push("session:start"));
+    connection.on("reconnected", () => events.push("reconnected"));
+    connection.on("connection:lost", () => events.push("connection:lost"));
+
+    transport.status = Status.DISCONNECTED;
+    transport.sink.onClose();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(transport.reconnect).toHaveBeenCalledTimes(1);
+
+    // 首次绑定成功：从未发过 session:start，重连成功也应发它
+    transport.sink.onBinded();
+    expect(events).toEqual(["session:start"]);
+  });
+
+  it("已建立会话遇到 system-shutdown：不终结会话，按网络断开重连", async () => {
+    vi.useFakeTimers();
+    const { connection, transport } = setup({
+      reconnect: true,
+      reconnectInterval: 10,
+    });
+    const events: string[] = [];
+    connection.on("error", () => events.push("error"));
+    connection.on("session:end", () => events.push("session:end"));
+    connection.on("connection:lost", () => events.push("connection:lost"));
+
+    transport.status = Status.DISCONNECTED;
+    transport.sink.onError(
+      new ProtocolError({
+        scope: "stream",
+        message: "流错误: system-shutdown",
+        condition: "system-shutdown",
+        retryable: true,
+      }),
+    );
+    transport.sink.onClose();
+
+    // 可重试：不发 session:end，按网络断开处理
+    expect(events).toEqual(["error", "connection:lost"]);
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(transport.reconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("已建立会话遇到不可重试错误：上报 error、结束会话且不再重连", () => {
+    const { connection, transport } = setup({ reconnect: true });
+    const events: string[] = [];
+    connection.on("error", (error) => events.push(`error:${error.message}`));
+    connection.on("session:end", () => events.push("session:end"));
+
+    transport.status = Status.DISCONNECTED;
+    transport.sink.onError(
+      new ProtocolError({
+        scope: "sasl",
+        message: "认证失败: not-authorized",
+        condition: "not-authorized",
+      }),
+    );
+    transport.sink.onClose();
+
+    expect(events).toEqual(["error:认证失败: not-authorized", "session:end"]);
+    expect(transport.reconnect).not.toHaveBeenCalled();
   });
 });

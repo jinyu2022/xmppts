@@ -20,14 +20,18 @@ type PipelineMiddleware<T extends object> = (
  * 同一数据引用，按注册顺序执行（可调用 next 放行、短路）；
  * 调用方无需认识任何具体插件。
  *
- * use/run 时依据事件名推导对应的载荷类型。
+ * use/terminal/run 时依据事件名推导对应的载荷类型。
  */
 export class Pipeline<T extends Record<string, object>> {
   private readonly middlewares = new Map<
     Extract<keyof T, string>,
     PipelineMiddleware<T[Extract<keyof T, string>]>[]
   >();
-  private errorHandler: PipelineErrorHandler<T> | null = null;
+  /** 事件点到终端的映射：终端固定在中间件之后，不参与 {@link Pipeline.clear} */
+  private readonly terminals = new Map<
+    Extract<keyof T, string>,
+    PipelineMiddleware<T[Extract<keyof T, string>]>
+  >();
 
   /**
    * 注册数据处理器。
@@ -51,16 +55,26 @@ export class Pipeline<T extends Record<string, object>> {
   }
 
   /**
-   * 注册错误处理器：链中任一处理器抛错时被调用。
+   * 注册事件点的终端：固定在全部中间件之后执行，不参与 {@link clear}。
    *
-   * 未注册时错误直接向上抛出；注册后错误不会逃逸，
-   * 由处理器决定是终止连接还是降级继续。
-   *
-   * @param handler 错误处理器
+   * 终端是洋葱模型的内层终点，用于「中间件在 `next()` 返回后即可确认终端已完成」
+   * 的语义（如写出终端：拦截器在 `next()` 返回后已知 stanza 已交给传输层）。
+   * @param event 要挂载的事件点
+   * @param middleware 终端处理器，data 参数的类型由事件名推导
+   * @throws 该事件点已注册终端
    * @returns this，支持链式调用
    */
-  error(handler: PipelineErrorHandler<T>): this {
-    this.errorHandler = handler;
+  terminal<E extends Extract<keyof T, string>>(
+    event: E,
+    middleware: PipelineMiddleware<T[E]>,
+  ): this {
+    if (this.terminals.has(event)) {
+      throw new Error(`事件点 ${event} 已存在终端`);
+    }
+    this.terminals.set(
+      event,
+      middleware as PipelineMiddleware<T[Extract<keyof T, string>]>,
+    );
     return this;
   }
 
@@ -74,46 +88,31 @@ export class Pipeline<T extends Record<string, object>> {
    * @param data 初始数据，所有处理器共享此引用并就地修改
    * @returns 同一数据引用（处理器就地修改后的结果）
    * @remarks 处理器可不调用 next 短路后续链；
-   * 任一处理器抛错会中断整条链；
-   * 已注册 {@link Pipeline.error} 时交给错误处理器，否则向上抛出。
+   * 任一处理器抛错会中断整条链并向上抛出。
    */
   async run<E extends Extract<keyof T, string>>(
     event: E,
     data: T[E],
   ): Promise<T[E]> {
     const middlewares = this.middlewares.get(event) ?? [];
+    const terminal = this.terminals.get(event);
+    // 终端并入链副本：不改原数组，避免同一事件点的并发 run 互相干扰
+    const chain = terminal ? [...middlewares, terminal] : middlewares;
     const dispatch = async (index: number): Promise<void> => {
-      if (index >= middlewares.length) return;
-      try {
-        await middlewares[index](data, () => dispatch(index + 1));
-      } catch (error) {
-        if (this.errorHandler) {
-          await this.errorHandler(error, event, data);
-          return; // 错误处理器接管，链中断
-        }
-        throw error;
-      }
+      if (index >= chain.length) return;
+      await chain[index](data, () => dispatch(index + 1));
     };
     await dispatch(0);
     return data;
   }
 
-  /** 清空所有事件点的处理器（保留 {@link Pipeline.error} 注册的错误处理器） */
+  /**
+   * 清空所有事件点的中间件，{@link terminal} 注册的终端保留。
+   */
   clear(): void {
     for (const list of this.middlewares.values()) list.length = 0;
   }
 }
-
-/**
- * 管线错误处理器：链中任一处理器抛错时被调用（参考 xmpp.js middleware 的 errorHandler）。
- *
- * @typeParam Events 事件点到载荷类型的映射，data 参数取其联合类型
- */
-type PipelineErrorHandler<T extends Record<string, object>> = (
-  error: unknown,
-  event: Extract<keyof T, string>,
-  data: T[Extract<keyof T, string>],
-) => void | Promise<void>;
 
 /**
  * 同步数据处理器：与 {@link PipelineMiddleware} 语义相同，但 `next` 同步放行、无返回值。
@@ -128,17 +127,6 @@ type SyncPipelineMiddleware<T extends object> = (
 ) => void;
 
 /**
- * 同步管线错误处理器：链中任一处理器抛错时被调用。
- *
- * @typeParam Events 事件点到载荷类型的映射，data 参数取其联合类型
- */
-type SyncPipelineErrorHandler<T extends Record<string, object>> = (
-  error: unknown,
-  event: Extract<keyof T, string>,
-  data: T[Extract<keyof T, string>],
-) => void;
-
-/**
  * 同步管线：{@link Pipeline} 的同步版，供必须同步返回的调用链（如 `Connection.send`）使用。
  *
  * 处理器须全为同步函数，调用 `next()` 同步执行下游，`run` 返回时整条链已走完。
@@ -148,7 +136,11 @@ export class SyncPipeline<T extends Record<string, object>> {
     Extract<keyof T, string>,
     SyncPipelineMiddleware<T[Extract<keyof T, string>]>[]
   >();
-  private errorHandler: SyncPipelineErrorHandler<T> | null = null;
+  /** 事件点到终端的映射：终端固定在中间件之后，不参与 {@link SyncPipeline.clear} */
+  private readonly terminals = new Map<
+    Extract<keyof T, string>,
+    SyncPipelineMiddleware<T[Extract<keyof T, string>]>
+  >();
 
   /**
    * 注册数据处理器。
@@ -171,16 +163,26 @@ export class SyncPipeline<T extends Record<string, object>> {
   }
 
   /**
-   * 注册错误处理器：链中任一处理器抛错时被调用。
+   * 注册事件点的终端：固定在全部中间件之后执行，不参与 {@link clear}。
    *
-   * 未注册时错误直接向上抛出；注册后错误不会逃逸，
-   * 由处理器决定是终止连接还是降级继续。
-   *
-   * @param handler 错误处理器
+   * 终端是洋葱模型的内层终点，用于「中间件在 `next()` 返回后即可确认终端已完成」
+   * 的语义（如写出终端：拦截器在 `next()` 返回后已知 stanza 已交给传输层）。
+   * @param event 要挂载的事件点
+   * @param middleware 终端处理器，data 参数的类型由事件名推导
+   * @throws 该事件点已注册终端
    * @returns this，支持链式调用
    */
-  error(handler: SyncPipelineErrorHandler<T>): this {
-    this.errorHandler = handler;
+  terminal<E extends Extract<keyof T, string>>(
+    event: E,
+    middleware: SyncPipelineMiddleware<T[E]>,
+  ): this {
+    if (this.terminals.has(event)) {
+      throw new Error(`事件点 ${event} 已存在终端`);
+    }
+    this.terminals.set(
+      event,
+      middleware as SyncPipelineMiddleware<T[Extract<keyof T, string>]>,
+    );
     return this;
   }
 
@@ -191,28 +193,24 @@ export class SyncPipeline<T extends Record<string, object>> {
    * @param data 初始数据，所有处理器共享此引用并就地修改
    * @returns 同一数据引用（处理器就地修改后的结果）
    * @remarks 处理器可不调用 next 短路后续链；
-   * 任一处理器抛错会中断整条链；
-   * 已注册 {@link SyncPipeline.error} 时交给错误处理器，否则向上抛出。
+   * 任一处理器抛错会中断整条链并向上抛出。
    */
   run<E extends Extract<keyof T, string>>(event: E, data: T[E]): T[E] {
     const middlewares = this.middlewares.get(event) ?? [];
+    const terminal = this.terminals.get(event);
+    // 终端并入链副本：不改原数组，避免同一事件点的并发 run 互相干扰
+    const chain = terminal ? [...middlewares, terminal] : middlewares;
     const dispatch = (index: number): void => {
-      if (index >= middlewares.length) return;
-      try {
-        middlewares[index](data, () => dispatch(index + 1));
-      } catch (error) {
-        if (this.errorHandler) {
-          this.errorHandler(error, event, data);
-          return; // 错误处理器接管，链中断
-        }
-        throw error;
-      }
+      if (index >= chain.length) return;
+      chain[index](data, () => dispatch(index + 1));
     };
     dispatch(0);
     return data;
   }
 
-  /** 清空所有事件点的处理器（保留 {@link SyncPipeline.error} 注册的错误处理器） */
+  /**
+   * 清空所有事件点的中间件，{@link terminal} 注册的终端保留。
+   */
   clear(): void {
     for (const list of this.middlewares.values()) list.length = 0;
   }

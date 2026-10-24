@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import XMPPConnection from "../lib/transport/tcp";
 import { JID } from "../lib/JID";
 import { Status } from "../lib/transport/typing";
+import type { TransportSink } from "../lib/transport/typing";
 import logger from "../lib/log";
 logger.setLevel("debug");
 // 占位符：请替换为您的真实 XMPP 账号信息
@@ -25,23 +26,21 @@ describe("XMPPConnection TCP/TLS 连接测试", () => {
     }
 
     const jid = new JID(TEST_JID_STRING);
-    const connection = new XMPPConnection(jid, TEST_PASSWORD, true); // 默认使用 TLS
 
-    // 使用 Promise 包装 connect 事件，以便等待连接完成
+    // 等待 binded 通知，以便确认连接完成
+    let onReady!: () => void;
+    let onFail!: (error: Error) => void;
     const connectPromise = new Promise<void>((resolve, reject) => {
-      connection.once("binded", () => {
-        resolve();
-      });
-      connection.once("error", (error) => {
-        reject(error);
-      });
-      connection.once("close", () => {
-        reject(new Error("连接意外断开"));
-      });
+      onReady = resolve;
+      onFail = reject;
     });
-    connection.on("stanza", (stanza) => {
-      console.log("收到 stanza:", stanza.toXMLString());
-    });
+    const sink: TransportSink = {
+      onBinded: () => onReady(),
+      onError: onFail,
+      onClose: () => onFail(new Error("连接意外断开")),
+      onStanza: (stanza) => console.log("收到 stanza:", stanza.toXMLString()),
+    };
+    const connection = new XMPPConnection(jid, TEST_PASSWORD, sink, true); // 默认使用 TLS
     // 开始连接（未指定端点，按 SRV 记录解析）
     void connection.connect();
 

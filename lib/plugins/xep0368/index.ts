@@ -23,7 +23,7 @@ class XEP0368 implements Plugin {
     // 构造函数先于传输创建：覆盖默认 xmpp 传输，在 create() 中决定直连 TLS 或明文 TCP
     connection.registerTransport(
       "xmpp",
-      async ({ jid, password, tls, ...endpoint }) => {
+      async ({ jid, password, tls, sink, ...endpoint }) => {
         // 覆盖了 defaultTransports.xmpp，Node 环境守卫需在本工厂内重做
         if (typeof process === "undefined") {
           throw new Error("xmpp 协议仅支持 Node.js 环境");
@@ -38,13 +38,13 @@ class XEP0368 implements Plugin {
             log.debug(
               `使用直连 TLS 端点: ${discovered.host}:${discovered.port}`,
             );
-            return new XMPPSConnection(jid, password, discovered);
+            return new XMPPSConnection(jid, password, sink, discovered);
           }
         }
         const { default: XMPPConnection } = await import(
           "../../transport/tcp.js"
         );
-        return new XMPPConnection(jid, password, tls, endpoint);
+        return new XMPPConnection(jid, password, sink, tls, endpoint);
       },
     );
   }
@@ -62,4 +62,5 @@ class XEP0368 implements Plugin {
     return resolveSrv(`${XEP0368.SRV_SERVICE}.${domain}`);
   }
 }
+
 export default XEP0368;

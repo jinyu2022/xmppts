@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Connection, type SocketEventMap } from "../lib/connection";
+import { ProtocolError } from "../lib/errors";
 import { Parser } from "../lib/ltx/Parser";
 import { Status } from "../lib/transport/typing";
 import {
@@ -42,7 +43,11 @@ const SASL_SUCCESS = `<success xmlns="urn:ietf:params:xml:ns:xmpp-sasl"/>`;
 
 /** 创建非 TLS 直连 localhost 的连接 */
 function createConnection(
-  options: { reconnect?: boolean; reconnectMaxAttempts?: number } = {},
+  options: {
+    reconnect?: boolean;
+    reconnectMaxAttempts?: number;
+    reconnectInterval?: number;
+  } = {},
 ): Connection {
   return new Connection("juliet@capulet.lit/balcony", "test123", {
     protocol: "xmpp",
@@ -127,21 +132,21 @@ describe("Connection 会话生命周期", () => {
     expect(active.transport?.status).toBe(Status.BINDED);
   });
 
-  it("未启用自动重连：服务端断开后依次触发 session:end 与 disconnect", async () => {
+  it("未启用自动重连：服务端断开后触发 session:end", async () => {
     const active = createConnection();
     connection = active;
     const server = await connectAndNegotiate(active);
 
     const events: string[] = [];
     active.on("session:end", () => events.push("session:end"));
-    active.on("disconnect", () => events.push("disconnect"));
-    const disconnected = waitForEvent(active, "disconnect");
+    const ended = waitForEvent(active, "session:end");
 
     server.close();
-    await disconnected;
+    await ended;
 
-    expect(events).toEqual(["session:end", "disconnect"]);
-    expect(active.transport?.status).toBe(Status.DISCONNECTED);
+    expect(events).toEqual(["session:end"]);
+    // 会话终结后释放传输引用
+    expect(active.transport).toBeNull();
   });
 
   it("启用自动重连：断线触发 connection:lost，重连成功后触发 reconnected 且不再触发 session:start", async () => {
@@ -175,7 +180,7 @@ describe("Connection 会话生命周期", () => {
     expect(active.transport?.status).toBe(Status.BINDED);
   });
 
-  it("重连达到上限：最终触发 session:end 与 disconnect 并停止重连", async () => {
+  it("重连达到上限：最终触发 session:end 并停止重连", async () => {
     const active = createConnection({
       reconnect: true,
       reconnectMaxAttempts: 1,
@@ -185,8 +190,7 @@ describe("Connection 会话生命周期", () => {
 
     const events: string[] = [];
     active.on("session:end", () => events.push("session:end"));
-    active.on("disconnect", () => events.push("disconnect"));
-    const disconnected = waitForEvent(active, "disconnect");
+    const ended = waitForEvent(active, "session:end");
 
     server.close();
 
@@ -195,10 +199,39 @@ describe("Connection 会话生命周期", () => {
       timeout: 5000,
     });
     getServer().close();
-    await disconnected;
+    await ended;
 
-    expect(events).toEqual(["session:end", "disconnect"]);
+    expect(events).toEqual(["session:end"]);
     expect(stats.connections).toBe(2);
-    expect(active.transport?.status).toBe(Status.DISCONNECTED);
+    // 重连次数耗尽：会话终结并释放传输引用
+    expect(active.transport).toBeNull();
+  });
+
+  it("认证失败：会话未建立时不重连，通过 error 事件上报", async () => {
+    const active = createConnection({ reconnect: true, reconnectInterval: 10 });
+    connection = active;
+    const errors: Error[] = [];
+    active.on("error", (error) => errors.push(error));
+    const failed = waitForEvent(active, "error");
+
+    await active.connect();
+    const server = await awaitServer();
+    server.acceptConnection();
+    await waitForReceived(server, "<stream:stream");
+    server.send(AUTH_FEATURES);
+    await waitForReceived(server, "<auth");
+    server.send(
+      `<failure xmlns="urn:ietf:params:xml:ns:xmpp-sasl"><not-authorized/></failure>`,
+    );
+    await failed;
+
+    expect(errors[0]).toBeInstanceOf(ProtocolError);
+    expect((errors[0] as ProtocolError).scope).toBe("sasl");
+    expect((errors[0] as ProtocolError).condition).toBe("not-authorized");
+    expect(errors[0]?.message).toContain("not-authorized");
+    // 留出重连调度时间，确认没有发起新连接
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(stats.connections).toBe(1);
+    expect(active.isSessionActive).toBe(false);
   });
 });
