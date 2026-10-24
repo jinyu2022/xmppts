@@ -242,6 +242,35 @@ describe("XEP0198 流管理", () => {
     server.send(`<a xmlns="urn:xmpp:sm:3" h="5"/>`);
   });
 
+  it("会话就绪时发出的业务 stanza 排在启用请求之前，且启用请求仍会发出", async () => {
+    const active = createConnection();
+    connection = active;
+    // 用户监听器在 connect() 前注册，插件监听器在 initPlugins() 中注册，故二者顺序为：先业务 stanza、后 <enable/>
+    const sessionStart = new Promise<void>((resolve) => {
+      active.once("session:start", () => {
+        active.send("<presence/>");
+        resolve();
+      });
+    });
+
+    await active.connect();
+    const server = getServer();
+    await negotiate(server);
+    await answerBind(server);
+    await sessionStart;
+
+    // <enable/> 之前的 stanza 不计入流管理（XEP-0198 §4），但启用请求必须照常发出
+    const received = server.received.join("\n");
+    const enableAt = received.indexOf("<enable");
+    const presenceAt = received.indexOf("<presence");
+    expect(enableAt).toBeGreaterThanOrEqual(0);
+    expect(presenceAt).toBeGreaterThanOrEqual(0);
+    expect(presenceAt).toBeLessThan(enableAt);
+
+    // 结束启用流程，避免残留监听器
+    await answerEnable(server);
+  });
+
   it("收到服务器的确认请求时回复已处理数量", async () => {
     const active = createConnection();
     connection = active;

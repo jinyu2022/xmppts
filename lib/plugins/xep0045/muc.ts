@@ -1,6 +1,6 @@
 import { JID } from "../../JID";
 import { XMPPElement } from "../../ltx/Element";
-import { Form, DataForm } from "../xep0004/form";
+import { Form, type DataForm } from "../xep0004/form";
 import { Disco } from "../xep0030/disco";
 import type { MUCItem, MUCUserPres } from "./typing";
 import logger from "@/log";

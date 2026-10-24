@@ -61,7 +61,7 @@ const cEl = XEP0115.createCapsElement({ node: "http://lekexmpp.chat", ver, hash:
 
 ## 注意事项
 
-- 自身能力哈希在 `connect` 事件时生成（仅一次，重连不重算），依赖 XEP-0030 已填充 `identities`/`features`；若之后动态 `addFeature`，已生成的 `ver` 会过期（§6.1：特性变化 MUST 重算、SHOULD 重发 presence）。
+- 自身能力哈希在 `session:start` 事件时生成（每个插件实例仅一次，自动重连不重算），依赖 XEP-0030 已填充 `identities`/`features`；若之后动态 `addFeature`，已生成的 `ver` 会过期（§6.1：特性变化 MUST 重算、SHOULD 重发 presence）。
 - `ver → capabilities` 映射表尚未实现（TODO），无法据他人 `ver` 反查其能力；对方 presence 里的 caps 信息事实上被丢弃。
 - 发送拦截器会在所有 presence 上附加 `<c/>`（含定向与 MUC presence，§6.1/§8.3 允许）。
 - `generateCapsVerification` 会**原地排序**传入的 `features` 数组（`identities` 则先拷贝），调用方复用同一数组时注意。

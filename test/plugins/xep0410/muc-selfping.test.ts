@@ -4,7 +4,7 @@ import MucSelfPing from "../../../lib/plugins/xep0410/MucSelfPing";
 import XEP0410 from "../../../lib/plugins/xep0410";
 import { XMPPElement } from "../../../lib/ltx/Element";
 import { JID } from "../../../lib/JID";
-import { TimeoutError, XMPPError } from "../../../lib/errors";
+import { XMPPError } from "../../../lib/errors";
 import Ping from "../../../lib/plugins/xep0199/ping";
 import type Connection from "../../../lib/connection";
 
@@ -214,7 +214,7 @@ describe("XEP0410 失活检测", () => {
 
   it("self-ping 超时后不重入房间", async () => {
     vi.useFakeTimers();
-    const ping = vi.fn().mockRejectedValue(new TimeoutError("ping timeout"));
+    const ping = vi.fn().mockRejectedValue(new DOMException("ping timeout", "TimeoutError"));
     const { connection, join } = createPlugin({ ping });
 
     connection.emit("session:start");

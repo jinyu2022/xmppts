@@ -19,7 +19,7 @@
 
 1. **抢占恢复** — 在 `stream:negotiated` 阶段，若本次为意外断线后的重连、此前已启用、持有恢复 ID、服务器允许恢复且未超出保留窗口（窗口取自服务器 `max`，未宣告时默认 5 分钟，超窗 `reset()` 并 warn），则把绑定请求替换为 `<resume/>`。
 2. **处理恢复结果** — 在 `binding` 阶段收到 `<resumed/>` 则沿用原绑定并置为已绑定；收到 `<failed/>` 则回退为常规绑定。
-3. **自动启用** — `binded` 时若服务器宣告 `urn:xmpp:sm:3`，发送 `<enable resume='true'/>`。
+3. **自动启用** — 会话就绪后（首次连接走 `session:start`，自动重连走 `reconnected`）若服务器宣告 `urn:xmpp:sm:3`，发送 `<enable resume='true'/>`。
 4. **计数与确认** — 启用后通过发送/接收管线计数，达到 `interval` 整数倍时请求确认；收到 `<r/>` 自动回 `<a/>`。
 
 ### 状态机
@@ -33,10 +33,6 @@
 ## 扩展字段
 
 不扩展 stanza。使用独立的 `<r/>` / `<a/>` / `<enable/>` / `<resume/>` 元素。
-
-## 可监听事件
-
-无专门事件。流管理完全自动化运行。
 
 ## 公开 API
 
@@ -66,4 +62,5 @@ XEP0198.interval = 10;
 - 服务器返回的 `h` 与本地 `outbound` 不一致时：`<resumed/>` 路径 warn 并采用服务器值（未重传，见 debug S1）；`<a/>` 路径只 warn（见 debug M1）。
 - 恢复失败会回退为常规绑定，连接不中断。
 - 未实现：§5 恢复后按序重传 `h+1…outbound`（debug S1，消息可能丢）；§6 对端 `h` 过高时发 `handled-count-too-high` 流错误；§4 关闭流前主动发 `<a/>`、收到 `<a/>` 后记录最新 `h`、`h` 达 2^32-1 回绕（debug M10）；`<resumed/>` 的 `previd` 校验（debug M3）。
-- 副作用：`<enabled/>` 携带的 `location` 会回写 `transport.host/port`（影响重连目标）；`<enable/>` 被 `<failed/>` 时 reject 的 `XMPPError` 只被全局 catch 打日志，调用方无感知。
+- 副作用：`<enabled/>` 携带的 `location` 会回写 `transport.host/port`（影响重连目标）；`<enable/>` 被 `<failed/>` 时 reject 的 `XMPPError` 只被 `.catch` 记日志，调用方无感知。
+- 会话就绪时同步发出的 stanza 排在 `<enable/>` 之前，不计入流管理（XEP-0198 §4：计数自 `<enable/>` 起算），规范允许；恢复时服务器保留原 presence 状态，无需重发。

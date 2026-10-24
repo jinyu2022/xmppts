@@ -23,6 +23,10 @@ import type { TransportPipelineEvents } from "../../../lib/transport/stream-conn
 const BIND_REQUEST =
   "<iq type='set' id='bind-1'><bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'><resource>resource</resource></bind></iq>";
 
+/** 资源绑定成功响应（测试只需其出现，不校验内容） */
+const BIND_RESULT =
+  "<iq type='result' id='bind-1'><bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'><jid>juliet@capulet.lit/resource</jid></bind></iq>";
+
 /** 假传输层：只提供插件用到的管线、流特性与端点字段 */
 class FakeTransport extends EventEmitter {
   readonly pipeline = new Pipeline<TransportPipelineEvents>();
@@ -68,12 +72,12 @@ function createPlugin(streamFeatures = new Set([XEP0198.NS])) {
   return connection;
 }
 
-/** 完成「binded → <enable/> → <enabled/>」的启用流程 */
-function enableSm(
+/** 完成「绑定成功 → session:start → <enable/> → <enabled/>」的启用流程 */
+async function enableSm(
   connection: FakeConnection,
   attrs = `id="sid-1" resume="true"`,
-): void {
-  connection.transport.emit("binded");
+): Promise<void> {
+  await finishBind(connection);
   connection.receive(`<enabled xmlns="urn:xmpp:sm:3" ${attrs}/>`);
 }
 
@@ -84,15 +88,28 @@ async function negotiate(connection: FakeConnection) {
   return ctx;
 }
 
-/** 触发绑定/恢复响应事件，返回管线载荷 */
-async function settleBinding(connection: FakeConnection, xml: string) {
+/**
+ * 触发绑定/恢复响应事件，返回管线载荷
+ * @param status 传给管线的连接状态；模拟传输层已完成绑定即传 BINDED
+ */
+async function settleBinding(
+  connection: FakeConnection,
+  xml: string,
+  status: (typeof Status)[keyof typeof Status] = Status.BINDING,
+) {
   const ctx = {
     stanza: Parser.parse(xml),
-    status: Status.BINDING,
+    status,
     outgoing: undefined as string | undefined,
   };
   await connection.transport.pipeline.run("binding", ctx);
   return ctx;
+}
+
+/** 模拟绑定成功并触发会话就绪事件（插件在 session:start 之后发送 <enable/>） */
+async function finishBind(connection: FakeConnection): Promise<void> {
+  await settleBinding(connection, BIND_RESULT, Status.BINDED);
+  connection.emit("session:start");
 }
 
 describe("XEP0198（单元测试，假连接）", () => {
@@ -100,20 +117,20 @@ describe("XEP0198（单元测试，假连接）", () => {
     vi.useRealTimers();
   });
 
-  it("资源绑定后向宣告流管理的服务器发送 enable，未宣告时不发送", () => {
+  it("资源绑定后向宣告流管理的服务器发送 enable，未宣告时不发送", async () => {
     const connection = createPlugin();
-    connection.transport.emit("binded");
+    await finishBind(connection);
     expect(connection.count("<enable")).toBe(1);
     expect(connection.sent.join()).toContain('resume="true"');
 
     const plain = createPlugin(new Set<string>());
-    plain.transport.emit("binded");
+    await finishBind(plain);
     expect(plain.sent).toHaveLength(0);
   });
 
   it("enable 窗口内发送的 stanza 计入发送计数，且不被 <enabled/> 清零", async () => {
     const connection = createPlugin();
-    connection.transport.emit("binded");
+    await finishBind(connection);
 
     // 窗口内（已写出 <enable/>、未收到 <enabled/>）发送 4 条：只累计计数，不请求确认
     for (let i = 0; i < 4; i++) {
@@ -129,20 +146,20 @@ describe("XEP0198（单元测试，假连接）", () => {
     expect(connection.count("<r xmlns")).toBe(1);
   });
 
-  it("未收到 <enabled/> 时断线，复位后重连绑定会重新发送 enable", () => {
+  it("未收到 <enabled/> 时断线，复位后重连绑定会重新发送 enable", async () => {
     const connection = createPlugin();
-    connection.transport.emit("binded");
+    await finishBind(connection);
     expect(connection.count("<enable")).toBe(1);
 
     // 未确认的启用请求随本流作废，状态复位后才允许下一次尝试
     connection.emit("connection:lost");
-    connection.transport.emit("binded");
+    await finishBind(connection);
     expect(connection.count("<enable")).toBe(2);
   });
 
   it("启用后记录 id/max/location，断线重连时改发 resume", async () => {
     const connection = createPlugin();
-    enableSm(
+    await enableSm(
       connection,
       `id="sid-1" resume="true" max="60" location="alt.example.com:5223"`,
     );
@@ -161,20 +178,20 @@ describe("XEP0198（单元测试，假连接）", () => {
   it("服务器未允许恢复或未经历断线时不改发 resume", async () => {
     // 服务器只回 <enabled/>：不应发 <resume/>
     const refused = createPlugin();
-    enableSm(refused, `id="sid-1"`);
+    await enableSm(refused, `id="sid-1"`);
     refused.emit("connection:lost");
     expect((await negotiate(refused)).outgoing).toBe(BIND_REQUEST);
 
     // 服务器允许恢复，但本次是首次连接而非断线重连
     const fresh = createPlugin();
-    enableSm(fresh);
+    await enableSm(fresh);
     expect((await negotiate(fresh)).outgoing).toBe(BIND_REQUEST);
   });
 
   it("距断开超过服务器宣告的 max 后放弃恢复", async () => {
     vi.useFakeTimers();
     const connection = createPlugin();
-    enableSm(connection, `id="sid-1" resume="true" max="60"`);
+    await enableSm(connection, `id="sid-1" resume="true" max="60"`);
     connection.emit("connection:lost");
 
     vi.advanceTimersByTime(61_000);
@@ -183,7 +200,7 @@ describe("XEP0198（单元测试，假连接）", () => {
 
   it("启用后按发送间隔请求确认，并按已处理数量应答服务器的确认请求", async () => {
     const connection = createPlugin();
-    enableSm(connection);
+    await enableSm(connection);
 
     // 未到间隔：不发 <r/>
     for (let i = 0; i < 4; i++) {
@@ -219,7 +236,7 @@ describe("XEP0198（单元测试，假连接）", () => {
 
   it("resumed 沿用原绑定并把连接置为已绑定", async () => {
     const connection = createPlugin();
-    enableSm(connection);
+    await enableSm(connection);
     connection.emit("connection:lost");
     await negotiate(connection);
 
@@ -232,7 +249,7 @@ describe("XEP0198（单元测试，假连接）", () => {
 
   it("failed 回退为原始绑定请求并复位恢复状态", async () => {
     const connection = createPlugin();
-    enableSm(connection);
+    await enableSm(connection);
     connection.emit("connection:lost");
     await negotiate(connection);
 
