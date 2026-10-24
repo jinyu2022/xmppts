@@ -96,7 +96,7 @@ export class XEP0084 extends Avatar implements Plugin {
     }
 }
 import type { Message } from "@/stanza";
-declare module "@/connection" {
+declare module "../../connection" {
     interface SocketEventMap {
         "pep:avatar"?: Message;
     }

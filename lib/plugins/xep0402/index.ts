@@ -173,7 +173,7 @@ export default class XEP0402 extends Bookmarks implements Plugin {
     }
 }
 
-declare module "@/plugins/xep0060/pubsub" {
+declare module "../xep0060/pubsub" {
     export interface PubsubEventItem {
         /** XEP0402：conference 的解析结果；房间 JID 在 `<item id>` 上，不在 conference 内 */
         conference?: Omit<Conference, "jid">;
@@ -181,7 +181,7 @@ declare module "@/plugins/xep0060/pubsub" {
 }
 
 import type { Message } from "@/stanza";
-declare module "@/connection" {
+declare module "../../connection" {
     interface SocketEventMap {
         /** XEP0402：匹配器已保证来自本账号、node 为书签节点、首个 item 带 item id 与 conference */
         "bookmark:update": Message & {

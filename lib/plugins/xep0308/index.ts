@@ -91,14 +91,14 @@ export class XEP0308 extends Correction implements Plugin {
     }
 }
 
-declare module "@/stanza" {
+declare module "../../stanza" {
     interface Message {
         /** XEP0308: 消息更正标记，包含被更正的原消息 ID */
         replace?: { id: string };
     }
 }
 
-declare module "@/connection" {
+declare module "../../connection" {
     interface SocketEventMap {
         /** XEP0308: 收到消息更正 */
         "message:correct": Message & { replace: { id: string } };

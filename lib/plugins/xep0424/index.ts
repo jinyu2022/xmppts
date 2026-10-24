@@ -50,7 +50,7 @@ export class XEP0424 extends Retraction implements Plugin {
     }
 }
 
-declare module "@/stanza" {
+declare module "../../stanza" {
     interface Message {
         /** XEP0424: 请求消息撤回（`reason` 不在规范 schema 中，见 `parseRetractionEl`） */
         retract?: { id: string; reason?: string };
@@ -59,7 +59,7 @@ declare module "@/stanza" {
     }
 }
 
-declare module "@/connection" {
+declare module "../../connection" {
     interface SocketEventMap {
         /** XEP0424 请求消息撤回*/
         "message:retract": Message & { retract: { id: string; reason?: string } };

@@ -21,7 +21,7 @@ export class XEP0359 extends StanzaID implements Plugin {
     }
 }
 
-declare module "@/stanza" {
+declare module "../../stanza" {
     interface Message {
         /** XEP0359: 服务器分配的稳定 ID */
         stanzaID?: Required<StableStanzaID>;

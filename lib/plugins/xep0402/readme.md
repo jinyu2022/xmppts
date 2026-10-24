@@ -54,13 +54,13 @@
 ## 扩展字段
 
 ```typescript
-declare module "@/plugins/xep0060/pubsub" {
+declare module "../xep0060/pubsub" {
   interface PubsubEventItem {
     conference?: Omit<Conference, "jid">; // XEP-0402 添加；房间 JID 在 <item id> 上
   }
 }
 
-declare module "@/connection" {
+declare module "../../connection" {
   interface SocketEventMap {
     // 匹配器已保证来源、节点与载荷存在，故回调里无需断言
     "bookmark:update": Message & {
