@@ -20,7 +20,7 @@
 以下类型实际定义在 [xep0060/pubsub.ts](../xep0060/pubsub.ts)（本插件只注册解析器）：
 
 ```typescript
-declare module "@/stanza" {
+declare module "../../stanza" {
   interface Message {
     event?: PubsubEvent;
   }

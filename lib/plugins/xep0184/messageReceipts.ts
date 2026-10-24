@@ -44,7 +44,7 @@ export class MessageReceipts {
     }
 }
 
-declare module "@/stanza" {
+declare module "../../stanza" {
     interface Message {
         receipts?: Receipts
     }

@@ -164,7 +164,7 @@ class RFC6121 implements Plugin {
   }
 }
 
-declare module "@/connection" {
+declare module "../../connection" {
   export interface SocketEventMap {
     /** RFC6121，你自己根据subscription判断是添还是删除 */
     "roster:update": Iq;

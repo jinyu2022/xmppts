@@ -902,14 +902,14 @@ export class Pubsub {
     }
 }
 
-declare module "@/stanza" {
+declare module "../../stanza" {
     interface Message {
         /**XEP0060 */
         event?: PubsubEvent;
     }
 }
 
-declare module "@/errors" {
+declare module "../../errors" {
     interface StanzaError {
         /** XEP0060：`pubsub#errors` 附加条件（§11、§17.2），由 XEP0060 的解析器写入 */
         pubsub?: PubsubErrorConditionInfo;

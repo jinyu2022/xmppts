@@ -82,14 +82,14 @@ export class XEP0425 extends Moderation implements Plugin {
     }
 }
 
-declare module "@/stanza" {
+declare module "../../stanza" {
     interface Message {
         /** XEP0425: 消息已被审核标记 */
         moderated?: { by?: string; reason?: string };
     }
 }
 
-declare module "@/connection" {
+declare module "../../connection" {
     interface SocketEventMap {
         /** XEP0425: 消息已被审核 */
         "message:moderated": Message & { moderated: { by?: string; reason?: string } };
