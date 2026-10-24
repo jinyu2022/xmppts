@@ -1,4 +1,4 @@
-import { EventEmitter } from "events";
+import { Emitter } from "../emitter";
 import { XMPPElement } from "./Element.js";
 import { LtxParser } from "./LtxParser.js";
 
@@ -13,18 +13,6 @@ interface ParserEvents {
   /** 流结束标记（</stream:stream>）：对端关闭流，负责触发本端关闭 */
   streamEnd: [];
 }
-// 扩展 EventEmitter 类型定义
-// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
-export interface Parser {
-  on<K extends keyof ParserEvents>(
-    event: K,
-    listener: (...args: ParserEvents[K]) => void
-  ): this;
-  emit<K extends keyof ParserEvents>(
-    event: K,
-    ...args: ParserEvents[K]
-  ): boolean;
-}
 
 /**
  * 基于 LtxParser 的 XML 解析器，构建 XMPPElement 树。
@@ -35,8 +23,7 @@ export interface Parser {
  * - 'streamEnd': 解析到流结束标记（</stream:stream>）时触发，对端关闭流的信号。
 
  */
-// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
-export class Parser extends EventEmitter {
+export class Parser extends Emitter<ParserEvents> {
   public tree: XMPPElement | null = null;
   public error: Error | null = null;
   private parser?: LtxParser;

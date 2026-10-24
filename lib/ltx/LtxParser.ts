@@ -1,4 +1,4 @@
-import { EventEmitter } from "events";
+import { Emitter } from "../emitter";
 import { unescapeXML } from "./escape.js";
 
 // 状态常量：用于状态机区分当前解析上下文
@@ -44,24 +44,11 @@ interface LtxParserEvents {
   error: [error: Error];
 }
 
-// 声明合并以支持类型安全的事件监听和触发
-// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
-export interface LtxParser {
-  on<K extends keyof LtxParserEvents>(
-    event: K,
-    listener: (...args: LtxParserEvents[K]) => void,
-  ): this;
-  emit<K extends keyof LtxParserEvents>(
-    event: K,
-    ...args: LtxParserEvents[K]
-  ): boolean;
-}
 /**
  * LtxParser 类：基于状态机的流式 XML 解析器（SAX-like）。
- * 继承自 EventEmitter，触发 'startElement', 'endElement', 'text' 事件。
+ * 继承自 Emitter，触发 'startElement', 'endElement', 'text' 事件。
  */
-// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
-export class LtxParser extends EventEmitter {
+export class LtxParser extends Emitter<LtxParserEvents> {
   private state: number = STATE_TEXT;
   private remainder: string | null = null;
   /** 下次 write 时从 remainder 开头重新扫描（其中可能含有未完成的 CDATA/`<!` 前缀） */
