@@ -2,7 +2,7 @@
 
 基于 TypeScript 的 XMPP 协议库，目标环境为 Node.js 与浏览器，扩展协议以插件形式实现。
 
-> 当前可运行路径为 Node.js + 明文 TCP / STARTTLS；浏览器与 WSS 尚未接线。
+> 当前可运行的传输为 Node.js 的明文 TCP / STARTTLS、直连 TLS 与 WebSocket；浏览器环境尚未实测（WebSocket 分帧仍依赖 Node 的 `Buffer`），BOSH 未实现。
 
 ## 功能特性
 
@@ -17,7 +17,7 @@
 import { Client } from "xmppjs";
 
 const client = new Client("user@example.com", "password", {
-  protocol: "xmpp", // 目前仅 "xmpp"（Node）可用；直连 TLS 由 XEP-0368 插件在连接前接入，无需改此项
+  protocol: "xmpp", // "xmpp"（Node TCP / STARTTLS）或 "ws"（WebSocket）；直连 TLS 由 XEP-0368 插件在连接前接入，无需改此项
 });
 client.registerDefaultPlugins();
 client.on("session:start", () => {
@@ -61,4 +61,11 @@ await client.connect();
 
 ## 许可证
 
-[Mozilla Public License 2.0](./LICENSE)
+本项目以 [Mozilla Public License 2.0](./LICENSE)（MPL-2.0）发布。
+
+MPL-2.0 是**文件级**弱著佐权（copyleft）许可，介于 MIT 与 GPL 之间：
+
+- 可以自由使用、修改、分发并用于商业项目，也可以与闭源代码组合（只要不在同一个文件内）。
+- 如果你修改了本项目已有的文件（`lib/`、`index.ts` 等），这些文件必须继续以 MPL-2.0 开源。
+- 新增的独立文件沿用你自己的许可，不受本许可约束。
+- 分发可执行形式（如打包后的 `dist/`）时，需同时以合理方式提供对应的源码。
