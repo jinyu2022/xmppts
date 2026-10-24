@@ -45,7 +45,7 @@ connection.registerPlugin("XEP0199", {
 
 | 方法 | 说明 |
 |------|------|
-| `ping(to, timeout?)` | 向指定实体发送 ping → `Promise<number>`（往返耗时 ms）；超时抛 `TimeoutError`，错误应答抛 `XMPPError` |
+| `ping(to, timeout?)` | 向指定实体发送 ping → `Promise<number>`（往返耗时 ms）；超时抛 name 为 `TimeoutError` 的 `DOMException`，错误应答抛 `XMPPError` |
 | `keepAlivePing()` | 立即启动/重排 Keep-Alive 定时器（已存在则先清除）；通常无需手动调用 |
 | `XEP0199.NS`（静态） | `"urn:xmpp:ping"` |
 | `XEP0199.createSendPingIq(to)`（静态） | 构造 ping 请求 IQ（get） |
@@ -56,7 +56,7 @@ connection.registerPlugin("XEP0199", {
 Keep-Alive 自动运行，通常只需按需手动 ping：
 
 ```typescript
-// → Promise<number>（往返耗时 ms）；超时抛 TimeoutError，错误应答抛 XMPPError
+// → Promise<number>（往返耗时 ms）；超时抛 name 为 TimeoutError 的 DOMException，错误应答抛 XMPPError
 const rtt = await client.XEP0199!.ping("example.com");
 console.log(`RTT ${rtt}ms`);
 ```

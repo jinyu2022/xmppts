@@ -2,7 +2,7 @@ import { StreamManagement } from "./streamManagement";
 import type { Plugin } from "../types";
 import type Connection from "@/connection";
 import { StanzaBase } from "@/stanza";
-import { TimeoutError, XMPPError } from "@/errors";
+import { XMPPError } from "@/errors";
 import { Status } from "@/transport/typing";
 import type { BindingContext, SendContext } from "@/transport/stream-connection";
 import logger from "@/log";
@@ -45,8 +45,6 @@ export default class XEP0198 extends StreamManagement implements Plugin {
     private max = 5 * 60 * 1000;
     /** 断开时刻（ms），用于判定恢复是否已超出服务器保留窗口 */
     private disconnectedAt = 0;
-    /** 恢复响应超时定时器 */
-    private resumeTimer?: ReturnType<typeof setTimeout>;
     /** 被<resume/>顶替的原始绑定请求，恢复失败时由 applyResumeResponse 写回 outgoing */
     private bindRequest?: XMPPElement | string;
     /** 计数与确认处理器是否已注册 */
@@ -57,14 +55,9 @@ export default class XEP0198 extends StreamManagement implements Plugin {
         this.connection = connection;
     }
 
-    /** 传输层 socket（带管线与恢复出口，见 {@link PipelineSocket}） */
-    // private get socket(): PipelineSocket | null {
-    //     return this.connection.socket as PipelineSocket | null;
-    // }
-
     init() {
         log.debug('初始化 XEP-0198 Stream Management 插件');
-        // 流管理属流层：管线与就绪信号统一取传输层，不与会话层事件混用
+        // 流管理属流层：协商管线取传输层；启用时机跟随高层会话就绪事件
         const transport = this.connection.transport;
         if (!transport) {
             log.warn('传输层未提供连接管线，流管理无法协商');
@@ -73,11 +66,12 @@ export default class XEP0198 extends StreamManagement implements Plugin {
             transport.pipeline
                 .use("stream:negotiated", this.resumeSession.bind(this))
                 .use("binding", this.applyResumeResponse.bind(this));
-            // binded 是唯一覆盖首连/自动重连/恢复回退三条路径的就绪信号
-            transport.on("binded", () =>
-                void this.enable().catch((error: unknown) => log.error('启用流管理失败', error)),
-            );
         }
+        // 会话就绪后启用：首连走 session:start，自动重连（含恢复失败后的全量重绑定）走 reconnected
+        const onSessionReady = () =>
+            void this.enable().catch((error: unknown) => log.error('启用流管理失败', error));
+        this.connection.on("session:start", onSessionReady);
+        this.connection.on("reconnected", onSessionReady);
         // 断线 → 记录时刻，供恢复时判定是否超出服务器保留窗口
         this.connection.on("connection:lost", () => {
             this.disconnectedAt = Date.now();
@@ -132,12 +126,6 @@ export default class XEP0198 extends StreamManagement implements Plugin {
         this.bindRequest = ctx.outgoing;
         // 直接替换为恢复请求，响应由 applyResumeResponse 处理器接收
         ctx.outgoing = `<resume xmlns='${XEP0198.NS}' h='${this.inbound}' previd='${this.previd}'/>`;
-        // this.resumeTimer = setTimeout(() => {
-        //     this.resumeTimer = undefined;
-        //     log.error('恢复会话超时，改为常规绑定');
-        //     this.reset();
-        //     this.startBind();
-        // }, 30_000);
         return next();
     }
 
@@ -147,8 +135,6 @@ export default class XEP0198 extends StreamManagement implements Plugin {
         if (this.status !== StreamStatus.ENABLE || !this.previd) return next();
         const stanza = ctx.stanza;
         if (stanza.namespaceURI !== XEP0198.NS) return next();
-        if (this.resumeTimer) clearTimeout(this.resumeTimer);
-        this.resumeTimer = undefined;
         if (stanza.tagName === "resumed") {
             const h = Number.parseInt(stanza.getAttribute("h") ?? "0");
             if (h !== this.outbound) {
@@ -160,7 +146,6 @@ export default class XEP0198 extends StreamManagement implements Plugin {
             }
             log.info('会话恢复成功');
             ctx.status = Status.BINDED;
-            // connection上面和socket有关的东西都要重新绑定，对象换了 
         } else if (stanza.tagName === "failed") {
             log.warn('服务器拒绝恢复会话，改为常规绑定');
             // 回退为原始绑定请求，由连接层发送
@@ -172,7 +157,7 @@ export default class XEP0198 extends StreamManagement implements Plugin {
     }
 
     /**
-     * 阶段：资源绑定完成（binded）。服务器宣告流管理时发出 <enable/> 启用，并等待服务器的响应
+     * 阶段：会话就绪（session:start / reconnected）。服务器宣告流管理时发出 <enable/> 启用，并等待服务器的响应
      * @returns 服务器的<enabled/>响应；已启用或服务器未宣告时无返回值
      */
     private async enable(): Promise<XMPPElement | undefined> {
@@ -235,7 +220,7 @@ export default class XEP0198 extends StreamManagement implements Plugin {
                 resolve(xml);
             };
 
-            // 未确认的 <enable/> 随本流作废：断线时摘掉本次监听并复位，由下次 binded 重发
+            // 未确认的 <enable/> 随本流作废：断线时摘掉本次监听并复位，由下次会话就绪后重发
             const onLost = () => {
                 cleanup();
                 this.status = StreamStatus.DISABLE;
@@ -253,7 +238,13 @@ export default class XEP0198 extends StreamManagement implements Plugin {
             this.outbound = 0;
             this.status = StreamStatus.ENABLE_SENT;
             this.registerTracking();
-            this.connection.send(`<enable xmlns='${XEP0198.NS}' resume='true'/>`);
+            try {
+                this.connection.send(`<enable xmlns='${XEP0198.NS}' resume='true'/>`);
+            } catch (error) {
+                cleanup();
+                this.reset();
+                reject(error instanceof Error ? error : new Error(String(error)));
+            }
 
         });
     }
@@ -305,7 +296,7 @@ export default class XEP0198 extends StreamManagement implements Plugin {
      * 手动请求确认：发送 `<r/>` 并等待服务器回 `<a/>`
      *
      * @returns 服务器已处理的 stanza 数量（`<a/>` 的 h 值）
-     * @throws {TimeoutError} 30 秒内未收到 `<a/>`
+     * @throws 30 秒内未收到 `<a/>` 时抛出 name 为 "TimeoutError" 的 DOMException
      */
     private requestAck(): Promise<number> {
         log.debug(`请求服务器确认，当前发送消息数: ${this.outbound}`);
@@ -323,7 +314,7 @@ export default class XEP0198 extends StreamManagement implements Plugin {
             const timer = setTimeout(() => {
                 cleanup();
                 log.error('请求确认超时');
-                reject(new TimeoutError("请求确认超时"));
+                reject(new DOMException("请求确认超时", "TimeoutError"));
             }, 30_000);
             timer.unref?.();
             const cleanup = () => {
@@ -333,7 +324,12 @@ export default class XEP0198 extends StreamManagement implements Plugin {
 
             // 先监听后发送，避免漏掉立即返回的响应
             this.connection.on("others", onResponse);
-            this.connection.send(`<r xmlns='${XEP0198.NS}'/>`);
+            try {
+                this.connection.send(`<r xmlns='${XEP0198.NS}'/>`);
+            } catch (error) {
+                cleanup();
+                reject(error instanceof Error ? error : new Error(String(error)));
+            }
         });
     }
 }

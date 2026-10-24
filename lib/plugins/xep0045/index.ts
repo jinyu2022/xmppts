@@ -1,7 +1,7 @@
 import type { Connection } from "@/connection";
-import { Plugin } from "../types";
-import { MUC, JoinOptions, MUCStatusCode } from "./muc";
-import { XMPPError, TimeoutError } from "@/errors";
+import type { Plugin } from "../types";
+import { MUC, type JoinOptions, MUCStatusCode } from "./muc";
+import { XMPPError } from "@/errors";
 import { XEP0004 } from "../xep0004";
 import { JID } from "@/JID";
 import type { DataForm } from "../xep0004/form";
@@ -160,7 +160,7 @@ export class XEP0045 extends MUC implements Plugin {
                 // 确保房间存在（昵称变更后旧 nick 的 unavailable 已保留房间）
                 if (!this.rooms.has(room)) {
                     this.rooms.set(room, {
-                        nick: pres.from.resource!,
+                        nick: pres.from.resource!, // 这里不对呀，保证是自己？
                         occupants: new Map(),
                     });
                 }
@@ -222,7 +222,7 @@ export class XEP0045 extends MUC implements Plugin {
                 timer = setTimeout(() => {
                     cleanup();
                     this.rooms.delete(room.bare);
-                    reject(new TimeoutError("加入房间超时：收到首个 presence 后未能在超时时间内收到 self-presence"));
+                    reject(new DOMException("加入房间超时：收到首个 presence 后未能在超时时间内收到 self-presence", "TimeoutError"));
                 }, timeout);
                 timer.unref?.();
             };
@@ -266,8 +266,14 @@ export class XEP0045 extends MUC implements Plugin {
             };
             // 使用 prependListener 确保在 init() 中注册的全局 presence 处理器之前触发
             this.connection.prependListener("presence", handler);
-            this.connection.send(pres);
+            // 先启动计时再发送：同步响应会在 handler 内 cleanup，不会再创建新计时器
             resetTimer();
+            try {
+                this.connection.send(pres);
+            } catch (error) {
+                cleanup();
+                reject(error instanceof Error ? error : new Error(String(error)));
+            }
         });
     }
 
@@ -287,7 +293,7 @@ export class XEP0045 extends MUC implements Plugin {
         return new Promise<void>((resolve, reject) => {
             const timeoutId = setTimeout(() => {
                 cleanup();
-                reject(new TimeoutError("离开房间超时"));
+                reject(new DOMException("离开房间超时", "TimeoutError"));
             }, 10_000);
             timeoutId.unref?.();
 
@@ -315,7 +321,12 @@ export class XEP0045 extends MUC implements Plugin {
             };
 
             this.connection.on("presence", handler);
-            this.connection.send(pres);
+            try {
+                this.connection.send(pres);
+            } catch (error) {
+                cleanup();
+                reject(error instanceof Error ? error : new Error(String(error)));
+            }
         });
     }
 
@@ -327,7 +338,7 @@ export class XEP0045 extends MUC implements Plugin {
         return new Promise<Presence>((resolve, reject) => {
             const timeoutId = setTimeout(() => {
                 cleanup();
-                reject(new TimeoutError("设置昵称超时"));
+                reject(new DOMException("设置昵称超时", "TimeoutError"));
             }, 10_000);
             timeoutId.unref?.();
             const cleanup = () => {
@@ -353,7 +364,12 @@ export class XEP0045 extends MUC implements Plugin {
                 }
             };
             this.connection.on("presence", handler);
-            this.connection.send(pres);
+            try {
+                this.connection.send(pres);
+            } catch (error) {
+                cleanup();
+                reject(error instanceof Error ? error : new Error(String(error)));
+            }
         });
     }
 
@@ -530,7 +546,7 @@ export class XEP0045 extends MUC implements Plugin {
 
 import type { Message, Presence } from "@/stanza";
 
-declare module "@/stanza" {
+declare module "../../stanza" {
     interface Presence {
         muc?: MUCUserPres;
     }
@@ -540,7 +556,7 @@ declare module "@/stanza" {
     }
 }
 
-declare module "@/connection" {
+declare module "../../connection" {
     interface SocketEventMap {
         /** 有住户加入房间（含本人；本人 presence 的 statuses 含 110） */
         "muc:join": Presence & { type: null; muc: { item: MUCItem; statuses?: string[] } };

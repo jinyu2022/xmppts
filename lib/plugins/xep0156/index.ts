@@ -1,6 +1,5 @@
 import { Parser } from "../../ltx/Parser";
 import type { TransportEndpoint } from "../../transport/typing";
-import { TimeoutError } from "@/errors";
 import logger from "@/log";
 const log = logger.getLogger("XEP0156");
 
@@ -26,7 +25,7 @@ class XEP0156 {
    * @param domain 账号域
    * @param timeout 请求超时（毫秒）
    * @returns 连接方式 URL，按关系索引
-   * @throws HTTP 非 2xx、请求超时（{@link TimeoutError}）或网络错误
+   * @throws HTTP 非 2xx、请求超时（name 为 "TimeoutError" 的 DOMException）或网络错误
    */
   static async discoverAltXMPP(
     domain: string,
@@ -71,8 +70,8 @@ class XEP0156 {
 
       return result;
     } catch (error) {
-      // abort 是超时的唯一触发源，统一归一为 TimeoutError
-      if (controller.signal.aborted) throw new TimeoutError("请求超时");
+      // abort 是超时的唯一触发源，统一归一为 TimeoutError 语义
+      if (controller.signal.aborted) throw new DOMException("请求超时", "TimeoutError");
       throw error;
     } finally {
       clearTimeout(timeoutId);

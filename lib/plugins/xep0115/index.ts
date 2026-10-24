@@ -35,7 +35,7 @@ export default class XEP0115 extends EntityCaps implements Plugin {
             // TODO: 通过ver查找文件中对应的实体能力，然后加入到discos中
         });
 
-        this.connection.once("connect", async () => {
+        this.connection.once("session:start", async () => {
             const identities  = this.connection.XEP0030!.identities;
             // 要排序，所以转成数组
             const features = [...this.connection.XEP0030!.features];

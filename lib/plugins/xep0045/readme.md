@@ -131,7 +131,7 @@ interface Message {
 | `muc:decline` | message 携带 `<x><decline/>`（§7.8.3） | Message（`muc.decline`） |
 | `muc:voice-request` | 收到发言权审批表单（type=form 且 FORM_TYPE 为 `muc#request`，§8.6） | Message |
 
-存在类事件（`muc:join` / `muc:leave` / `muc:kick` / `muc:ban`）对全房间任何住户触发，**包括本人**；判断是否本人看 presence 的 `statuses` 是否含 110，或 `from` 是否等于自身的 occupant JID。其中 `muc:join` / `muc:leave` 依据 `rooms.occupants` 判定真实的“首次出现/消失”，显示状态更新不会误报；改名会成对触发 `muc:leave`（旧昵称）+ `muc:join`（新昵称），可用 303 识别。该判定依赖事件插件 matcher 先于全局 `presence` 处理器执行（[connection.ts#L583-L587](../connection.ts#L583-L587) 的 matcher 在 [connection.ts#L553](../connection.ts#L553) 的 `emit("presence")` 之前），调整注册顺序会导致 matcher 读到更新后的状态。
+存在类事件（`muc:join` / `muc:leave` / `muc:kick` / `muc:ban`）对全房间任何住户触发，**包括本人**；判断是否本人看 presence 的 `statuses` 是否含 110，或 `from` 是否等于自身的 occupant JID。其中 `muc:join` / `muc:leave` 依据 `rooms.occupants` 判定真实的“首次出现/消失”，显示状态更新不会误报；改名会成对触发 `muc:leave`（旧昵称）+ `muc:join`（新昵称），可用 303 识别。该判定依赖事件插件 matcher 先于全局 `presence` 处理器执行（[connection.ts#L650-L653](../connection.ts#L650-L653) 的 matcher 在 [connection.ts#L656](../connection.ts#L656) 的 `emit("presence")` 之前），调整注册顺序会导致 matcher 读到更新后的状态。
 
 ## API
 
@@ -157,7 +157,7 @@ interface Message {
 
 ```typescript
 // 加入：以收到 self-presence（status 110）为成功标志
-// → Promise<...>；超时抛 TimeoutError，错误应答抛 XMPPError
+// → Promise<...>；超时抛 name 为 TimeoutError 的 DOMException，错误应答抛 XMPPError
 await client.XEP0045!.join("room@conference.example.com", "小明", { password: "s3cret" });
 
 // → Promise<void>

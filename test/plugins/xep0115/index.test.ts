@@ -32,7 +32,7 @@ describe("XEP0115 插件入口", () => {
     expect(connection.stanzaPlugins.get(EntityCaps.NS)).toBe(EntityCaps.parseCaps);
   });
 
-  it("connect 后生成的自身能力被附加到发出的 presence", async () => {
+  it("会话就绪后生成的自身能力被附加到发出的 presence", async () => {
     const connection = setup();
     const to = "benvolio@capulet.lit/230193";
 
@@ -41,7 +41,7 @@ describe("XEP0115 插件入口", () => {
     connection.pipeline.run("send", { stanza: before });
     expect(before.getElementsByTagNameNS(EntityCaps.NS, "c")).toHaveLength(0);
 
-    connection.emit("connect");
+    connection.emit("session:start");
     await vi.waitFor(() => {
       const presence = Presence.createPresence(to);
       connection.pipeline.run("send", { stanza: presence });

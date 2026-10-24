@@ -2,7 +2,7 @@ import { JID } from "@/JID";
 import { MucSelfPing } from "./MucSelfPing";
 import type { Plugin } from "../types";
 import type Connection from "@/connection";
-import { XMPPError, TimeoutError } from "@/errors";
+import { XMPPError } from "@/errors";
 import logger from "@/log";
 import type { Message, Presence } from "@/stanza";
 
@@ -14,7 +14,7 @@ const log = logger.getLogger("XEP0410");
  *
  * - `ok: true`：收到 IQ result 响应，服务端确认我们仍在房间内。
  * - `ok: false`：收到 IQ error 或请求超时；`error` 保留原始错误类型，
- *   `classify` 依赖 `TimeoutError` / `XMPPError` 区分后按 XEP-0410 §3.2 判定。
+ *   `classify` 依赖超时错误（name 为 "TimeoutError" 的 DOMException）/ `XMPPError` 区分后按 XEP-0410 §3.2 判定。
  */
 export type PingResult =
   | { ok: true; duration: number }
@@ -153,9 +153,8 @@ export class XEP0410 extends MucSelfPing implements Plugin {
     this.connection.on("muc:groupchat", handleRoomActivity);
     this.connection.on("presence", handleRoomActivity);
 
-    // 会话不可用（结束或断线）时停止一切检查。
+    // 会话结束（重连无望）时停止一切检查。
     this.connection.on("session:end", () => this.stop());
-    this.connection.on("disconnect", () => this.stop());
 
     // 自动重连期间的暂停/恢复由 Connection.isSessionActive 自动反映，无需在此监听
   }
@@ -206,7 +205,7 @@ export class XEP0410 extends MucSelfPing implements Plugin {
 
   /**
    * 停止定时器并清空全部状态。
-   * 在 session:start（重建前）、session:end、disconnect 时调用。
+   * 在 session:start（重建前）、session:end 时调用。
    */
   private stop(): void {
     if (this.tickTimer) {
@@ -328,7 +327,10 @@ export class XEP0410 extends MucSelfPing implements Plugin {
     if (status.ok) return "fresh";
 
     const error = status.error;
-    if (error instanceof TimeoutError || !(error instanceof XMPPError)) {
+    if (
+      (error instanceof DOMException && error.name === "TimeoutError") ||
+      !(error instanceof XMPPError)
+    ) {
       return "retry";
     }
 
@@ -439,7 +441,7 @@ export class XEP0410 extends MucSelfPing implements Plugin {
   }
 }
 
-declare module "@/connection" {
+declare module "../../connection" {
   interface SocketEventMap {
     /**
      * 房间被判定为失活（stale）：连续超过 config.inactivityTimeout
