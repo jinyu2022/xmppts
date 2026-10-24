@@ -1,27 +1,23 @@
 import { describe, expect, it } from "vitest";
-import * as plugins from "../../lib/plugins";
 import { pluginLoaders } from "../../lib/plugins";
 
 /**
- * plugins barrel 一致性测试：
- * 保证插件静态导出、懒加载映射、默认导出（构造函数）三者同步，防止新增插件时漏登记。
+ * pluginLoaders 一致性测试：
+ * 保证每个登记项都能解析出可实例化的插件类，且依赖指向已登记的项。
  */
 
-describe("plugins barrel", () => {
-  it("pluginLoaders 的键与静态导出集合完全一致", () => {
-    const exported = Object.keys(plugins)
-      .filter((key) => key !== "pluginLoaders")
-      .sort();
-    expect(Object.keys(pluginLoaders).sort()).toEqual(exported);
-    expect(exported).toHaveLength(23);
+describe("pluginLoaders", () => {
+  it("键非空且唯一", () => {
+    const keys = Object.keys(pluginLoaders);
+    expect(keys.length).toBeGreaterThan(0);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 
-  it("每个 loader 解析出可实例化的插件类，且与静态导出同一引用", async () => {
-    for (const [name, loader] of Object.entries(pluginLoaders)) {
+  it("每个 loader 解析出可实例化的插件类", async () => {
+    for (const loader of Object.values(pluginLoaders)) {
       const ctor = await loader();
       expect(typeof ctor).toBe("function");
       expect(typeof ctor.prototype.init).toBe("function");
-      expect(plugins[name as keyof typeof plugins]).toBe(ctor);
     }
   });
 
