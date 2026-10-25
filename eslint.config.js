@@ -11,6 +11,8 @@ export default [
       "**/*.config.{js,ts}",
       // 技能自带脚本（不在 tsconfig include 内，无 project service）
       ".agents/**",
+      // 独立基准脚本，用 node 直接运行、不进类型检查（同 .agents 的理由）
+      "benchmarks/**",
     ],
   },
   {
