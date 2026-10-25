@@ -37,9 +37,8 @@ export function isStreamError(stanza: XMPPElement): boolean {
 export function collectStreamFeatures(features: XMPPElement): Set<string> {
   const namespaces = new Set<string>();
 
-  for (const feature of features.childNodes) {
-    if (!(feature instanceof XMPPElement) || !feature.namespaceURI) continue;
-    namespaces.add(feature.namespaceURI);
+  for (const feature of features.children) {
+    if (feature.namespaceURI) namespaces.add(feature.namespaceURI);
   }
 
   return namespaces;
@@ -370,23 +369,31 @@ export abstract class StreamConnection implements TransportSocket {
     }
   }
 
-  /** 协商与业务 stanza 的统一入口：解析流错误后按状态分发 */
+  /**
+   * 协商与业务 stanza 的统一入口。
+   *
+   * 业务报文的处理异常已在会话层就地隔离，不会走到这里；本方法只把流级错误
+   * 与协商失败（`ProtocolError`）交给 {@link handleFailure}。
+   */
   protected async handleStanza(stanza: XMPPElement): Promise<void> {
-    try {
-      if (isStreamError(stanza)) {
-        // 流错误的条件与 <text/> 都是 <stream:error> 的直接子元素（RFC 6120 §4.9.1）
-        const condition =
-          stanza.firstElementChild?.localName ?? "undefined-condition";
-        const text = stanza.querySelector(":scope > text")?.textContent;
-        // 服务端关闭流多为重启/迁移，按网络断开处理并允许重连
-        throw new ProtocolError({
+    if (isStreamError(stanza)) {
+      // 流错误的条件与 <text/> 都是 <stream:error> 的直接子元素（RFC 6120 §4.9.1）
+      const condition =
+        stanza.firstElementChild?.localName ?? "undefined-condition";
+      const text = stanza.querySelector(":scope > text")?.textContent;
+      // 服务端关闭流多为重启/迁移，按网络断开处理并允许重连
+      this.handleFailure(
+        new ProtocolError({
           scope: "stream",
           message: `流错误: ${condition}`,
           condition,
           text,
-          retryable:condition === "system-shutdown",
-        });
-      }
+          retryable: condition === "system-shutdown",
+        }),
+      );
+      return;
+    }
+    try {
       // 协商与业务 stanza 统一由 route 分发
       await this.route(stanza);
     } catch (error) {

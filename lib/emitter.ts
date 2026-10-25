@@ -1,20 +1,26 @@
 /**
  * 跨环境事件发射器：浏览器与 Node 通用，不依赖 `node:events`。
  *
- * 覆盖项目实际用到的子集：`on` / `addListener` / `prependListener` / `once` / `off` /
- * `removeListener` / `emit` / `removeAllListeners` / `listenerCount` / `listeners` / `eventNames`。
+ * 接口与方法语义遵循 Node.js 内置 `EventEmitter` 的约定（eventemitter3、mitt 等主流事件库沿用
+ * 同一套命名与调用习惯），以保证同一套事件代码在 Node 与浏览器中体验一致。覆盖项目实际用到的
+ * 子集：`on` / `addListener` / `prependListener` / `once` / `off` / `removeListener` / `emit` /
+ * `removeAllListeners` / `listenerCount` / `listeners` / `eventNames`。
  *
  * 与 Node `EventEmitter` 的差异：
  * - `emit("error", err)` 没有监听器时**不抛异常**，交给可覆盖的
  *   {@link Emitter.onUnhandledError}，避免一个上层遗漏的 error 监听器让进程崩溃
+ * - 监听器自身出错（同步抛错，或 async 监听器返回的拒绝）**不向外传播**，交给可覆盖的
+ *   {@link Emitter.onListenerError}，同一事件的其余监听器继续派发。接收链路会把同步冒泡的
+ *   异常当成协议失败断开连接，因此这里必须隔离
+ * - 派发过程中被 `AbortSignal` 中止的监听器会被跳过（Node 仍会投递快照里的副本）
  * - 不实现 `newListener` / `removeListener` 元事件、`maxListeners`、`captureRejections`
  *
  * 保留的 Node 语义：
  * - 同一函数注册多次会注册多条记录，`off` 每次移除最近注册的一条
  * - `emit` 遍历注册时的监听器集合，监听器内增删监听器不影响本次派发
  *   （只有多监听器时才复制数组；单监听器无需快照）
- * - `once` 在调用前移除自身；`off` 传原函数即可移除
- * - 监听器以 emitter 作为 `this`，异常同步向外传播
+ * - `once` 在调用前移除自身，递归派发时也不会重复触发；`off` 传原函数即可移除
+ * - 监听器以 emitter 作为 `this`
  */
 
 import logger from "./log";
@@ -26,11 +32,16 @@ const log = logger.getLogger("emitter");
  *
  * 条件类型用元组包裹以避免对联合做分布式展开：`E[K]` 是联合时整体作为一个参数，
  * 这样「联合事件名 + 联合载荷」的调用（如 `emit(tagName, stanza)`）仍然成立。
+ *
+ * 数组载荷再按 `length` 是否为具体字面量区分：`string[]` 这类普通数组（含变长元组）
+ * 整体作为一个参数，`[a: number, b: string]` 这类定长元组才展开为参数列表。
  */
 type EventArgs<T> = [T] extends [void]
   ? []
-  : [T] extends [readonly unknown[]]
-    ? T
+  : [T] extends [infer U extends readonly unknown[]]
+    ? number extends U["length"]
+      ? [T]
+      : T
     : [T];
 
 /** 事件名：映射的键；事件名只用字符串，排除 `keyof` 可能带来的 number */
@@ -87,23 +98,43 @@ interface ListenerRecord {
   fn: InternalListener;
   /** 是否为一次性监听器 */
   once: boolean;
+  /** once 记录是否已投递：递归派发时外层快照仍持有该记录 */
+  fired?: boolean;
   /** 绑定的中止信号 */
   signal?: AbortSignal;
   /** signal 中止时的清理函数，手动移除时需解绑避免泄漏 */
   onAbort?: () => void;
 }
 
-/** 内部统一按 unknown 参数调用，具体参数类型由泛型映射保证 */
-type InternalListener = (...args: unknown[]) => unknown;
+/**
+ * 内部统一调用的宽函数类型，具体参数由泛型映射保证。
+ *
+ * 参数声明为 `never[]`：函数参数位置逆变，任何具体签名都能赋值给它；
+ * 写成 `unknown[]` 会因长度与元素类型不确定而拒绝元组形态的监听器签名。
+ */
+type InternalListener = (...args: never[]) => unknown;
 
-/** 擦除监听器具体签名；整个模块只在这一处做断言 */
-const asInternal = (listener: unknown): InternalListener =>
-  listener as InternalListener;
+/** 判断监听器返回值是否为 thenable，用于兜住 async 监听器的拒绝 */
+const isThenable = (value: unknown): value is PromiseLike<unknown> => {
+  if (typeof value !== "object" && typeof value !== "function") return false;
+  if (value === null) return false;
+  return typeof (value as { then?: unknown }).then === "function";
+};
 
 export class Emitter<E extends object> implements EmitterLike<E> {
   /** 没有监听器的 `error` 事件的兜底处理；可整体替换，默认走项目日志 */
   static onUnhandledError: (error: unknown) => void = (error) =>
     log.error("未处理的 error 事件:", error);
+
+  /**
+   * 监听器自身出错（同步抛错或 async 监听器返回的拒绝）的兜底处理；可整体替换。
+   *
+   * 单条监听器的错误不影响同事件的其余监听器，也不冒泡进协议处理链。
+   */
+  static onListenerError: (event: string, error: unknown) => void = (
+    event,
+    error,
+  ) => log.error(`事件 ${event} 的监听器抛出异常:`, error);
 
   /** 事件名 → 监听器记录（按注册顺序） */
   private readonly records = new Map<EventName<E>, ListenerRecord[]>();
@@ -154,7 +185,8 @@ export class Emitter<E extends object> implements EmitterLike<E> {
 
   emit<K extends EventName<E>>(event: K, ...args: EventArgs<E[K]>): boolean {
     const list = this.records.get(event);
-    if (!list || list.length === 0) {
+    // 记录在最后一条被移除时整体删除，列表不会以空数组的形式存在
+    if (!list) {
       if (event === "error") {
         Emitter.onUnhandledError(args[0]);
       }
@@ -162,19 +194,43 @@ export class Emitter<E extends object> implements EmitterLike<E> {
     }
     // 单监听器：本次只会调用这一条，无需复制；监听器内新增的监听器留到下次派发
     if (list.length === 1) {
-      const record = list[0];
-      // once 先摘除再调用，监听器内部抛错也不会残留
-      if (record.once) this.removeRecord(event, record);
-      Reflect.apply(record.fn, this, args);
+      this.invoke(event, list[0], args);
       return true;
     }
     // 快照：多监听器时，监听器内增删监听器不影响本次派发
-    for (const record of list.slice()) {
-      // once 先摘除再调用，监听器内部抛错也不会残留
-      if (record.once) this.removeRecord(event, record);
-      Reflect.apply(record.fn, this, args);
-    }
+    for (const record of list.slice()) this.invoke(event, record, args);
     return true;
+  }
+
+  /**
+   * 调用一条监听器记录：先处理 once 与 signal，再隔离本次调用的异常。
+   * @param args 派发参数（由 {@link EventArgs} 保证与事件名对应）
+   */
+  private invoke(
+    event: EventName<E>,
+    record: ListenerRecord,
+    args: readonly unknown[],
+  ): void {
+    // 快照生成后记录可能已被 abort 移除；绑定的信号已中止就不再投递
+    if (record.signal?.aborted) return;
+    if (record.once) {
+      // once 只投递一次；递归派发时外层快照仍持有该记录，靠 fired 阻断
+      if (record.fired) return;
+      record.fired = true;
+      // 先摘除再调用，监听器内部抛错也不会残留
+      this.removeRecord(event, record);
+    }
+    try {
+      const result: unknown = Reflect.apply(record.fn, this, args);
+      // async 监听器的拒绝不会冒泡到调用方，单独兜住避免成为 unhandledRejection
+      if (isThenable(result)) {
+        void Promise.resolve(result).catch((error: unknown) =>
+          Emitter.onListenerError(event, error),
+        );
+      }
+    } catch (error) {
+      Emitter.onListenerError(event, error);
+    }
   }
 
   removeAllListeners(event?: EventName<E>): this {
@@ -221,7 +277,7 @@ export class Emitter<E extends object> implements EmitterLike<E> {
     // 已中止的信号视为立即移除，不再注册
     if (signal?.aborted) return this;
     const record: ListenerRecord = {
-      fn: asInternal(listener),
+      fn: listener,
       once,
       signal,
     };
@@ -248,9 +304,8 @@ export class Emitter<E extends object> implements EmitterLike<E> {
   ): this {
     const list = this.records.get(event);
     if (!list) return this;
-    const target = asInternal(listener);
     for (let i = list.length - 1; i >= 0; i--) {
-      if (list[i].fn === target) {
+      if (list[i].fn === listener) {
         this.removeRecord(event, list[i]);
         break;
       }

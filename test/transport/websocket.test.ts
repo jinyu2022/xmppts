@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WSConnection } from "../../lib/transport/websocket";
 import { JID } from "../../lib/JID";
+import { ProtocolError } from "../../lib/errors";
 import { Status, type TransportSink } from "../../lib/transport/typing";
 
 /**
@@ -283,16 +284,24 @@ describe("WSConnection", () => {
     expect(FakeWebSocket.last().sent.at(-1)).toBe(`<a xmlns="urn:x"/>`);
   });
 
-  it("onerror 与解析失败的 onmessage 都触发 error 通知", async () => {
-    const { ws, events } = await connectOpen();
+  it("onerror 触发 error 通知；非法帧按流级错误上报并断开", async () => {
+    const { connection, ws, events } = await connectOpen();
     const errors: Error[] = [];
     events.on("error", (e: Error) => errors.push(e));
 
     ws.fail();
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
+    expect(errors[0].message).toBe("WebSocket error");
+
+    const closed = new Promise<void>((resolve) => events.once("close", resolve));
     ws.message("<a></b>");
     await vi.waitFor(() => expect(errors).toHaveLength(2));
-    expect(errors[0].message).toBe("WebSocket error");
-    expect(errors[1].message).toContain("Mismatched end tag");
+    expect(errors[1]).toBeInstanceOf(ProtocolError);
+    expect((errors[1] as ProtocolError).scope).toBe("stream");
+    expect(errors[1].message).toContain("WebSocket 帧解析失败");
+
+    await closed;
+    expect(connection.status).toBe(Status.DISCONNECTED);
   });
 
   it("认证 failure 置为 AUTHFAIL 并触发 error 与断开", async () => {

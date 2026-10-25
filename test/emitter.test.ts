@@ -23,11 +23,18 @@ interface ErrorEvents {
   error: [error: unknown];
 }
 
+/** 普通数组载荷：整体作为单个参数 */
+interface ArrayEvents {
+  items: string[];
+}
+
 /** 原始兜底处理器，用例结束后恢复，避免影响其他测试 */
 const originalOnUnhandledError = Emitter.onUnhandledError;
+const originalOnListenerError = Emitter.onListenerError;
 
 afterEach(() => {
   Emitter.onUnhandledError = originalOnUnhandledError;
+  Emitter.onListenerError = originalOnListenerError;
 });
 
 describe("Emitter", () => {
@@ -61,6 +68,23 @@ describe("Emitter", () => {
 
     expect(fn).toHaveBeenCalledTimes(1);
     expect(emitter.listenerCount("event")).toBe(0);
+  });
+
+  it("once：监听器内递归派发同一事件时不会重复触发", () => {
+    const emitter = new Emitter<NoArgEvents>();
+    const onceFn = vi.fn();
+    let reentered = false;
+    emitter.on("event", () => {
+      if (reentered) return;
+      reentered = true;
+      emitter.emit("event");
+    });
+    emitter.once("event", onceFn);
+
+    emitter.emit("event");
+
+    expect(onceFn).toHaveBeenCalledTimes(1);
+    expect(emitter.listenerCount("event")).toBe(1);
   });
 
   it("off：同一函数注册多次时只移除最近的一条", () => {
@@ -192,14 +216,78 @@ describe("Emitter", () => {
     expect(other).toHaveBeenCalledTimes(2);
   });
 
-  it("emit：监听器抛出的异常同步向外传播，且不吞掉后续状态", () => {
+  it("signal：派发过程中被中止的监听器不再执行", () => {
     const emitter = new Emitter<NoArgEvents>();
+    const controller = new AbortController();
+    const aborted = vi.fn();
+    emitter.on("event", () => controller.abort());
+    emitter.on("event", aborted, { signal: controller.signal });
+
+    emitter.emit("event");
+
+    expect(aborted).not.toHaveBeenCalled();
+    expect(emitter.listenerCount("event")).toBe(1);
+  });
+
+  it("signal：once 记录在派发中被中止时不投递", () => {
+    const emitter = new Emitter<NoArgEvents>();
+    const controller = new AbortController();
+    const onceFn = vi.fn();
+    emitter.on("event", () => controller.abort());
+    emitter.once("event", onceFn, { signal: controller.signal });
+
+    emitter.emit("event");
+
+    expect(onceFn).not.toHaveBeenCalled();
+    expect(emitter.listenerCount("event")).toBe(1);
+  });
+
+  it("emit：监听器抛错不向外传播，同事件其余监听器继续执行", () => {
+    const emitter = new Emitter<NoArgEvents>();
+    const onListenerError = vi.fn();
+    Emitter.onListenerError = onListenerError;
+    const after = vi.fn();
     emitter.on("event", () => {
       throw new Error("listener failed");
     });
+    emitter.on("event", after);
 
-    expect(() => emitter.emit("event")).toThrow("listener failed");
-    expect(emitter.listenerCount("event")).toBe(1);
+    expect(() => emitter.emit("event")).not.toThrow();
+    expect(after).toHaveBeenCalledTimes(1);
+    expect(onListenerError).toHaveBeenCalledTimes(1);
+    expect(onListenerError.mock.calls[0][0]).toBe("event");
+    expect(onListenerError.mock.calls[0][1]).toBeInstanceOf(Error);
+  });
+
+  it("emit：单监听器抛错同样被隔离，且 once 记录不残留", () => {
+    const emitter = new Emitter<NoArgEvents>();
+    const onListenerError = vi.fn();
+    Emitter.onListenerError = onListenerError;
+    emitter.once("event", () => {
+      throw new Error("once failed");
+    });
+
+    expect(() => emitter.emit("event")).not.toThrow();
+    expect(onListenerError).toHaveBeenCalledTimes(1);
+    expect(emitter.listenerCount("event")).toBe(0);
+  });
+
+  it("emit：async 监听器的拒绝交给 onListenerError", async () => {
+    const emitter = new Emitter<NoArgEvents>();
+    const onListenerError = vi.fn();
+    Emitter.onListenerError = onListenerError;
+    const after = vi.fn();
+    emitter.on("event", async () => {
+      await Promise.resolve();
+      throw new Error("async failed");
+    });
+    emitter.on("event", after);
+
+    emitter.emit("event");
+    expect(after).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(onListenerError).toHaveBeenCalledTimes(1));
+    expect(onListenerError.mock.calls[0][0]).toBe("event");
+    expect(onListenerError.mock.calls[0][1]).toBeInstanceOf(Error);
   });
 
   it("类型约束：事件名与载荷由映射决定（tsc 校验）", () => {
@@ -210,5 +298,17 @@ describe("Emitter", () => {
     emitter.emit("event", 1, 2);
     // @ts-expect-error 缺少第二个参数
     emitter.emit("event", 1);
+  });
+
+  it("类型约束：数组载荷整体作为单个参数，不做 rest 展开", () => {
+    const emitter = new Emitter<ArrayEvents>();
+    const fn = vi.fn();
+    emitter.on("items", fn);
+
+    emitter.emit("items", ["a", "b"]);
+    expect(fn).toHaveBeenCalledWith(["a", "b"]);
+
+    // @ts-expect-error 数组载荷不能展开成多个参数
+    emitter.emit("items", "a", "b");
   });
 });

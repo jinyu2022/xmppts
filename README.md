@@ -1,20 +1,20 @@
-# xmppjs
+# xmppts
 
 基于 TypeScript 的 XMPP 协议库，目标环境为 Node.js 与浏览器，扩展协议以插件形式实现。
 
-> 当前可运行的传输为 Node.js 的明文 TCP / STARTTLS、直连 TLS 与 WebSocket；浏览器环境尚未实测（WebSocket 分帧仍依赖 Node 的 `Buffer`），BOSH 未实现。
+> 当前可运行的传输为 Node.js 的明文 TCP / STARTTLS、直连 TLS 与 WebSocket；浏览器环境尚未实测，浏览器端请使用 `ws`。浏览器端需运行在安全上下文（HTTPS 或 localhost）：`crypto.subtle` 与 `crypto.randomUUID` 在非安全上下文不可用，`connect()` 会直接报错。
 
 ## 功能特性
 
 - **插件化设计** — 通过 `registerPlugin()` / `registerDefaultPlugins()` 按需加载扩展协议。
 - **类型安全** — 全量 TypeScript，插件可扩充实例类型、Stanza 字段与事件映射。
-- **传输层管线** — 发送 / 接收拦截器可介入 stanza 加工。
+- **管线拦截** — 发送 / 接收拦截器可介入 stanza 加工。
 - **可观测** — 基于 loglevel 的日志系统。
 
 ## 快速开始
 
 ```typescript
-import { Client } from "xmppjs";
+import { Client } from "xmppts";
 
 const client = new Client("user@example.com", "password", {
   protocol: "xmpp", // "xmpp"（Node TCP / STARTTLS）或 "ws"（WebSocket）；直连 TLS 由 XEP-0368 插件在连接前接入，无需改此项
