@@ -75,10 +75,7 @@ describe("XEP0156 静态工具", () => {
 
   it("未公布 websocket 连接方式时抛错", async () => {
     stubFetch(`<?xml version='1.0' encoding='utf-8'?>
-      <XRD xmlns='http://docs.oasis-open.org/ns/xri/xrd-1.0'>
-        <Link rel="urn:xmpp:alt-connections:xbosh"
-              href="https://web.example.com:5280/bosh" />
-      </XRD>`);
+      <XRD xmlns='http://docs.oasis-open.org/ns/xri/xrd-1.0'/>`);
 
     await expect(XEP0156.resolveEndpoint("capulet.lit")).rejects.toThrow(
       "未找到 websocket 连接方法",

@@ -39,7 +39,7 @@ export type TransportFactory = (
 export const defaultTransports: Readonly<Record<string, TransportFactory>> = {
   xmpp: async ({ jid, password, tls, sink, ...endpoint }) => {
     if (typeof process === "undefined") {
-      throw new Error("xmpp 协议仅支持 Node.js 环境");
+      throw new Error("xmpp 协议（TCP/STARTTLS）仅支持 Node.js，浏览器请使用 ws");
     }
     const XMPPConnection = (await import("./tcp.js")).default;
     return new XMPPConnection(jid, password, sink, tls, endpoint);
@@ -47,8 +47,5 @@ export const defaultTransports: Readonly<Record<string, TransportFactory>> = {
   ws: async ({ jid, password, tls, sink, ...endpoint }) => {
     const WSConnection = (await import("./websocket.js")).default;
     return new WSConnection(jid, password, sink, tls, endpoint);
-  },
-  http: () => {
-    throw new Error("暂不支持xbosh");
   },
 };

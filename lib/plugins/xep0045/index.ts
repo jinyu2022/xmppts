@@ -1,4 +1,5 @@
 import type { Connection } from "@/connection";
+import type { Message, Presence } from "@/stanza";
 import type { Plugin } from "../types";
 import { MUC, type JoinOptions, MUCStatusCode } from "./muc";
 import { XMPPError } from "@/errors";
@@ -543,8 +544,6 @@ export class XEP0045 extends MUC implements Plugin {
         }
     }
 }
-
-import type { Message, Presence } from "@/stanza";
 
 declare module "../../stanza" {
     interface Presence {

@@ -36,7 +36,6 @@ export class MucSelfPing {
      * @param queryEl disco#info query 元素
      */
     static hasOptimizationFeature(queryEl: XMPPElement) {
-        if (!queryEl) return false;
         const features = queryEl.getElementsByTagName("feature");
         return Array.from(features).some(
             (f) => f.getAttribute("var") === MucSelfPing.NS,

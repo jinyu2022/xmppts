@@ -48,9 +48,6 @@ export class JID {
     /** 无 localpart 的域 JID 时为空串 */
     const local = match[1] ?? "";
     const domain = match[2];
-    if (!domain) {
-      throw new Error(`无效的 JID 格式: ${jid}`);
-    }
     const resource = match[3];
 
     return {

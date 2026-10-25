@@ -623,17 +623,13 @@ export class XMPPElement {
         : null;
     writer(">");
     for (const child of this._childNodes) {
-      if (child == null) continue;
       if (prettyIndent) {
         writer("\n" + prettyIndent.repeat(level));
       }
       if (child instanceof XMPPElement) {
         child._write(writer, indent, level + 1);
-      } else if (typeof child === "string") {
-        writer(escapeXMLText(child));
       } else {
-        // 兜底：其他类型子节点按字符串形式写出，避免静默丢数据
-        writer(escapeXMLText(String(child)));
+        writer(escapeXMLText(child));
       }
     }
     if (prettyIndent) {

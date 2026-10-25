@@ -1,6 +1,7 @@
-import { Avatar } from "./avatar";
+import { Avatar, type AvatarMetadata } from "./avatar";
 import { PEP } from "../xep0163/pep";
 import type Connection from "@/connection";
+import type { Message } from "@/stanza";
 import { XMPPError } from "@/errors";
 import type { Plugin } from "../types";
 import type { JID } from "@/JID";
@@ -56,13 +57,13 @@ export class XEP0084 extends Avatar implements Plugin {
             if (res.getAttribute("type") === "error")
                 throw new XMPPError(res, "获取头像元数据失败");
 
-            const metadataEL = res.getElementsByTagNameNS(
+            const metadataEl = res.getElementsByTagNameNS(
                 XEP0084.NS.metadata,
                 "metadata"
             )[0];
             // 无 metadata 元素：对方没有头像
-            if (!metadataEL) return undefined;
-            const parsed = XEP0084.parseMetadataEl(metadataEL);
+            if (!metadataEl) return undefined;
+            const parsed = XEP0084.parseMetadataEl(metadataEl);
             // metadata 元素存在但为空（无 info）
             if (parsed.metadata === null) return null;
             metadata = parsed.metadata;
@@ -90,18 +91,17 @@ export class XEP0084 extends Avatar implements Plugin {
         if (dataRes.getAttribute("type") === "error")
             throw new XMPPError(dataRes, "发布头像数据失败");
 
-        const metaRes =  await this.connection.sendAsync(publishMetadataIq);
+        const metaRes = await this.connection.sendAsync(publishMetadataIq);
         if (metaRes.getAttribute("type") === "error")
             throw new XMPPError(metaRes, "发布头像元数据失败");
     }
 }
-import type { Message } from "@/stanza";
+
 declare module "../../connection" {
     interface SocketEventMap {
         "pep:avatar"?: Message;
     }
 }
-import type { AvatarMetadata } from "./avatar";
 
 declare module "../xep0060/pubsub" {
     interface PubsubEventItem {

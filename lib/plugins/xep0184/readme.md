@@ -15,7 +15,7 @@
 
 1. **注册 disco 特性** — 向 XEP-0030 添加 `urn:xmpp:receipts`。
 2. **注册 receipts 解析器** — 解析 `urn:xmpp:receipts` 命名空间的 `<request/>` / `<received/>` 为 `message.receipts`。
-3. **发送拦截** — 给所有含 `<body>` 的 `message` 附加 `<request/>`。
+3. **发送拦截** — 给含 `<body>` 的 `message`（排除 `groupchat` / `error` 类型）附加 `<request/>`。
 4. **自动回复** — 监听 `message`，收到 `receipts.type === 'request'` 且类型非 `groupchat`/`error` 时，回复 `<received id="..."/>`。
 
 ## 扩展字段
@@ -55,5 +55,5 @@ client.on("message", (message) => {
 ## 注意事项
 
 - **完全自动化**，无需手动调用。
-- 接收侧不对 `groupchat`、`error` 类型回复回执；发送侧不区分类型，所有含 `<body>` 的消息都会附加 `<request/>`。
+- 接收侧不对 `groupchat`、`error` 类型回复回执；发送侧同样排除 `groupchat` 与 `error`，其余含 `<body>` 的消息都会附加 `<request/>`。
 - 判断对方是否已送达：监听 `message` 事件检查 `receipts.type === 'received'`。

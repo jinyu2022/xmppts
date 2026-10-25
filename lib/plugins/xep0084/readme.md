@@ -50,7 +50,7 @@ interface AvatarMetadata {
 | `XEP0084.NS`（静态） | `{ data, metadata }` 命名空间常量 |
 | `XEP0084.imageParser(image)`（静态） | 图片 → `{ base64Data, metadata }`（Node 路径 / 浏览器 `File`）；环境判定失败抛 `Error` |
 | `XEP0084.createDataPublishIq(img)`（静态） | 构造 `[dataIq, metadataIq]`；仅接受 PNG |
-| `XEP0084.parseMetadataEl(el)`（静态） | 解析 metadata 元素 → `{ metadata: AvatarMetadata \| null }`；NS 不符抛 `Error` |
+| `XEP0084.parseMetadataEl(el)`（静态） | 解析 metadata 元素 → `{ metadata: AvatarMetadata \| null }`；NS 不符抛 `Error`（会中断 stanza 分发） |
 | `XEP0084.createRetrieveDataIq(to, id)`（静态） | 构造按 ItemID 取 `data` 节点的 IQ |
 
 ## 返回值约定
@@ -92,7 +92,7 @@ client.on("pep:avatar", (message) => {
 
 - 发布头像仅支持 **PNG**（`createDataPublishIq` 直接抛错，不做格式转换）。
 - `getAvatarData()` 不传 `metadata` 时会先检索元数据；返回的 `data` 为 base64。
-- 环境按运行时自动选择图片解析方式；Node 20+ 传 `File` 对象目前会被判失败。
+- 环境按运行时自动选择图片解析方式；Node 20+ 传 `File` 对象目前会被判失败（需 `window` 存在）。
 - 收通知需在 disco/caps 声明 `urn:xmpp:avatar:metadata+notify`；插件已 `addFeature`。
 - 未实现：§3.5 禁用头像（发布空 `<metadata/>`）、§3.4 `url` 的 HTTP 回退、§4.2.2 `<pointer/>`、多 `<info/>`。
 - 头像变更通过 `pep:avatar` 事件接收，需自行处理 UI 更新。

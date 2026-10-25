@@ -80,4 +80,4 @@ const el = XEP0004.createFormEl({
 - `parseFormEl` 结构缺失时抛 `TypeError`，命名空间不符抛普通 `Error`。
 - `instructions` 允许出现多次（§3），当前仅保留/输出首个。
 - `FORM_TYPE`（XEP-0068，`<field var="FORM_TYPE" type="hidden">`）需使用方自行扫 `fields` 读取，无便捷 API。
-- `reported`/`items`：解析取首个 `reported` 与全部 `item`；`items` 无与 `reported` 的列引用（§3.4 要求 item 含 reported 的每个 field）；`createFormEl` 输出 `reported` 字段的 `<value/>`；`reported` 先于 `item` 由输出顺序保证、无校验。
+- `reported`/`items`：解析取首个 `reported` 与全部 `item`；`items` 无与 `reported` 的列引用（§3.4 要求 item 含 reported 的每个 field）；`createFormEl` 输出 `reported` 字段的 `<value/>`（§3.4 SHOULD NOT）；`reported` 先于 `item` 由输出顺序保证、无校验。

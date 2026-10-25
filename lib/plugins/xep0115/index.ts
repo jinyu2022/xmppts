@@ -36,7 +36,7 @@ export default class XEP0115 extends EntityCaps implements Plugin {
         });
 
         this.connection.once("session:start", async () => {
-            const identities  = this.connection.XEP0030!.identities;
+            const identities = this.connection.XEP0030!.identities;
             // 要排序，所以转成数组
             const features = [...this.connection.XEP0030!.features];
             const ver = await EntityCaps.generateCapsVerification(identities, features);

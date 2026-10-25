@@ -34,35 +34,34 @@ export class XEP0280 extends Carbons implements Plugin {
 
     this.connection.registerStanzaPlugin(XEP0280.NS, XEP0280.parseCarbonEl);
 
+    // 碳消息外层的 from 必须为本账号的 bare JID，否则视为伪造并忽略
     this.connection.registerEventPlugin("carbon:received", {
       tagName: "message",
       matcher: (message) => {
-        if (message?.carbon?.type === "received") {
-          if (message.from.bare !== this.connection.jid.bare) {
-            log.warn(
-              `收到伪造的 carbon:received 消息，from=${message.from.toString()}，应为本账号 bare JID=${this.connection.jid.bare}，已忽略`
-            );
-            return false;
-          }
+        if (message.carbon?.type !== "received") return false;
+        if (message.from.bare === this.connection.jid.bare) {
           return true;
+        } else {
+          log.warn(
+            `收到伪造的 carbon:received 消息，from=${message.from.toString()}，应为本账号 bare JID=${this.connection.jid.bare}，已忽略`
+          );
+          return false;
         }
-        return false;
       },
     });
 
     this.connection.registerEventPlugin("carbon:sent", {
       tagName: "message",
       matcher: (message) => {
-        if (message?.carbon?.type === "sent") {
-          if (message.from.bare !== this.connection.jid.bare) {
-            log.warn(
-              `收到伪造的 carbon:sent 消息，from=${message.from.toString()}，应为本账号 bare JID=${this.connection.jid.bare}，已忽略`
-            );
-            return false;
-          }
+        if (message.carbon?.type !== "sent") return false;
+        if (message.from.bare === this.connection.jid.bare) {
           return true;
+        } else {
+          log.warn(
+            `收到伪造的 carbon:sent 消息，from=${message.from.toString()}，应为本账号 bare JID=${this.connection.jid.bare}，已忽略`
+          );
+          return false;
         }
-        return false;
       },
     });
   }

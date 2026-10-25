@@ -81,7 +81,6 @@ export class Bookmarks {
             conferenceEl.tagName !== "conference"
         )
             throw new Error("不是一个conference元素");
-        // const jid = conferenceEl.getAttribute("jid") ?? void 0;
         const name = conferenceEl.getAttribute("name") ?? void 0;
         const autojoin = ["true", "1"].includes(
             conferenceEl.getAttribute("autojoin") ?? ""
@@ -138,7 +137,6 @@ export class Bookmarks {
      * 删除书签意味着撤回由书签的 JID 标识的现有项目
      */
     static createDeleteBookmarkIq(jid: string) {
-        const retract = PEP.createRetractIq(Bookmarks.NS, jid, true);
-        return retract;
+        return PEP.createRetractIq(Bookmarks.NS, jid, true);
     }
 }
