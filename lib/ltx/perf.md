@@ -21,9 +21,9 @@
 | 用途       | 文件                                                       | 命令                                                                                      |
 | ---------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | 场景绝对值 | [test/ltx/perf.test.ts](../../test/ltx/perf.test.ts)       | `npx vitest run test/ltx/perf.test.ts --disable-console-intercept`                        |
-| 逐 API 绝对值 | [test/ltx/bench.test.ts](../../test/ltx/bench.test.ts)  | `$env:LTX_BENCH="full"; npx vitest run test/ltx/bench.test.ts --disable-console-intercept`|
+| 逐 API 绝对值 | [benchmarks/ltx.mjs](../../benchmarks/ltx.mjs)          | `node benchmarks/ltx.mjs`（完整档：`$env:LTX_BENCH="full"; node benchmarks/ltx.mjs`）|
 
-口径：每项自适应定标迭代数后取多轮最小值（perf 5 轮、bench 9 轮），用于压制 JIT/GC 抖动。绝对值对测量上下文极其敏感——**同一文件内前后对比可信，跨文件、跨版本不可直接比较**；这也意味着判断某项改动是否有效，必须在同一文件内做 A/B（bench.test.ts 的 `abInner`）。bench.test.ts 里的宽树（`BIG`，50 个相同子元素）与深链（`chain`）是规模对照用的合成形状，不对应真实 stanza，只用于观察规模效应。
+口径：每项自适应定标迭代数后取多轮最小值（perf 5 轮、bench 9 轮），用于压制 JIT/GC 抖动。绝对值对测量上下文极其敏感——**同一文件内前后对比可信，跨文件、跨版本不可直接比较**；这也意味着判断某项改动是否有效，必须在同一文件内做 A/B（`benchmarks/ltx.mjs` 的 `abInner`）。该基准直接加载 `lib/` 的 TypeScript 源码（Node ≥ 22.18 的类型剥离加一段 `x.js` → `x.ts` 解析钩子），不需要构建产物。其中的宽树（`BIG`，50 个相同子元素）与深链（`chain`）是规模对照用的合成形状，不对应真实 stanza，只用于观察规模效应。
 
 小效应（1%~2% 量级）与表格的分辨力：上面的"多轮取最小值"能压住组内抖动，但**压不住组间漂移**（CPU 温度/频率、后台负载）——同一组合 15 次重复，独立跑两批可以得出 +3.22% 与 +1.67% 两种结论。要判 1%~2% 的效应，可靠做法是**轮转交错 + 每轮内先算 A/B 比值再取中位数**（判据：差异须大于 2× 配对标准误，即 95% 门槛）。下文中标"配对"的数据即来自该设计，其绝对值与上文任何表都不可混比。
 
@@ -134,7 +134,7 @@
 
 #### C4 · `write(writer)` 每个属性 5 次回调
 
-位置：[Element.ts#L589-L612](Element.ts#L589-L612)
+位置：[Element.ts#L603-L613](Element.ts#L603-L613)
 
 ```ts
 writer(" ");
@@ -152,7 +152,7 @@ writer('"');
 
 #### A3 · `toXMLString` 每层返回新串、父层再 `+=`
 
-位置：[Element.ts#L532-L584](Element.ts#L532-L584)（与 [#L589-L612](Element.ts#L589-L612) 的 `write` 是同一套语法的两份实现）
+位置：[Element.ts#L570-L579](Element.ts#L570-L579)（与 [#L598-L613](Element.ts#L598-L613) 的 `write` 是同一套语法的两份实现）
 
 每层用模板字面量拼出完整子串返回，父层再 `+=`，递归过程中产生逐层中间串。同树对照：
 
@@ -168,7 +168,7 @@ writer('"');
 
 #### A4 · 建树侧的属性表冻结成本
 
-位置：[Parser.ts](../../lib/ltx/Parser.ts) 的 `startElement`/`endElement` 回调 + [Element.ts#L26-L35](Element.ts#L26-L35)（`_ensureAttrs`）+ [LtxParser.ts#L92](LtxParser.ts#L92)
+位置：[Parser.ts](../../lib/ltx/Parser.ts) 的 `startElement`/`endElement` 回调 + [Element.ts#L38](Element.ts#L38)（`_ensureAttrs`）+ [LtxParser.ts#L82](LtxParser.ts#L82)
 
 perf 单次运行里 `SESSION` 27 KB 建树 653 µs；建树段（总耗时 − SAX 段）在真实语料上是 1.4 µs（`CHAT_MSG`）~ 4.6 µs（`DISCO_INFO`）/条。
 
@@ -181,11 +181,11 @@ perf 单次运行里 `SESSION` 27 KB 建树 653 µs；建树段（总耗时 − 
 
 约 13.3% 来自 `LtxParser` 侧冻结与 `_ensureAttrs` 的所有权判定。`_ensureAttrs` 的形态是每次写属性都复制整张表——牺牲出站构树的写属性性能，并失去"`startElement` 监听方拿到的表不被元素改动"这一保护。
 
-修法：这一包拆不开，要既快又保留语义，需要把"是否拥有属性表"改成**显式状态字段**（[Element.ts#L26-L35](Element.ts#L26-L35) 一带），属新增状态的改动。此外每标签 1~2 次 `emit` 透传与 `stream:stream` / `streamRoot` 判定是 XMPP 语义必需的，不应为降低这项成本而删。收益量级：27 KB 会话流省 ~50 µs，折算到 1 MB/s 持续流量约 −0.19% CPU——价值在于它是稳态成本，不是单条的 µs 数。
+修法：这一包拆不开，要既快又保留语义，需要把"是否拥有属性表"改成**显式状态字段**（[Element.ts#L38](Element.ts#L38) 一带），属新增状态的改动。此外每标签 1~2 次 `emit` 透传与 `stream:stream` / `streamRoot` 判定是 XMPP 语义必需的，不应为降低这项成本而删。收益量级：27 KB 会话流省 ~50 µs，折算到 1 MB/s 持续流量约 −0.19% CPU——价值在于它是稳态成本，不是单条的 µs 数。
 
 #### A5 · `children` 每次访问重建元素数组
 
-位置：[Element.children](Element.ts#L209-L217)
+位置：[Element.children](Element.ts#L239-L247)
 
 perf 实测（`FORM`）：`children` 85 ns，`firstElementChild` 10 ns。200 子节点的配对实测中 `childNodes` 为 0.038 µs（零分配下界），`children` 的成本集中在“遍历子节点、过滤元素、建数组”。
 
@@ -196,18 +196,18 @@ perf 实测（`FORM`）：`children` 85 ns，`firstElementChild` 10 ns。200 子
 - **序列化不要收集到数组再 `join`**：配对实测比现状慢 41.9%（87.70 → 124.89 µs）。要往 socket 直接写就用 `write(writer)`。
 - **`getElementsByTagName` 不要改成显式栈**：配对实测迭代版比递归版慢 11.1%（2.169 → 2.402 µs，门槛 ±4.57%）。深树栈溢出的处理见 debug.md SEC-002，不要在热路径上做这次改写。
 - **`namespaceURI` 每次上溯、无缓存**：深度 5 约 25 ns（bench），XMPP 报文深度 ≤ 8，一次全树 NS 查询在真实语料上是 0.7~1.0 µs（见上文「查询」表）。缓存要处理节点移动、祖先增删 `xmlns` 的失效，收益不抵复杂度。
-- **兄弟轴 O(k²)**：[Element.ts#L252-L266](Element.ts#L252-L266) 的 `previousElementSibling` 与 [#L267-L281](Element.ts#L267-L281) 的 `nextElementSibling` 都用 `_childNodes.indexOf(this)` 定位，每次 O(兄弟数)；`~` 组合符的链式收集（[QuerySelector.ts#L187-L199](QuerySelector.ts#L187-L199)）因此是 O(k²)。`lib/` 全量搜索无 `+` / `~` 调用点，先登记：修法可选元素级缓存"子元素数组 + 兄弟下标"，或把 `~` 分支改成一次线性扫描。
+- **兄弟轴 O(k²)**：[Element.ts#L282-L295](Element.ts#L282-L295) 的 `previousElementSibling` 与 [#L297-L310](Element.ts#L297-L310) 的 `nextElementSibling` 都用 `_childNodes.indexOf(this)` 定位，每次 O(兄弟数)；`~` 组合符的链式收集（[QuerySelector.ts#L194-L206](QuerySelector.ts#L194-L206)）因此是 O(k²)。`lib/` 全量搜索无 `+` / `~` 调用点，先登记：修法可选元素级缓存"子元素数组 + 兄弟下标"，或把 `~` 分支改成一次线性扫描。
 - **相邻文本节点不合并**：与 DOM 语义一致（真 DOM 也不自动合并，需 `normalize()`），且只在"注释/指令/CDATA 夹在文本之间"或调用方多次 `append` 时产生，属非缺陷。
 - **`createElement` 走 null-proto 逐键写入**（6 属性 758 ns；bench 4 属性 324.6 ns）：换取的是 `__proto__` / `constructor` 这类属性名的安全，代价约 +53 ns/属性，而且只有出站构造路径付（解析路径已接管冻结表）。
 - **`_findNS` / 遍历改迭代**：只对深树值钱（XMPP 深度 ≤ 8），且注意上一条的配对结论（无脑迭代化可能更慢）。深链栈溢出属 [debug.md](debug.md) 的 SEC-002。
 - **`EventEmitter` 的 3 个解析事件**：配对实测约 6%~9%，收益有限。
 - **用法反模式：每条 stanza 重喂流头**：配对实测比复用 `Parser` 实例多花 **49.31%**（3.565 vs 2.365 µs，门槛 ±3.80%）。同一条 TCP 连接上的所有 stanza 应当喂给同一个实例（复用 vs 每条新建的构造开销可忽略：89.03 vs 88.07 MiB/s）。库这边可做的是在 [lib/README.md](../README.md) 或 `Parser.parse()` 的文档里写明"仅用于单条 stanza，流式场景请复用实例"。
 - **`unescapeXMLText` 的数字实体**：每次调用 1 517 ns（数字实体要 `String.fromCodePoint`，是反转义里最贵的一支）；`unescapeXML` 命名实体 730 ns / 45 字符、无实体短路 32 ns，无特殊字符的 `escapeXMLText` 98 ns / 68 字符。XMPP 正文里最常见的是 URL 里的 `&`，密度上不去。
-- **`appendChild` / `insertBefore` 的 `instanceof` 校验**（[Element.ts#L456-L458](Element.ts#L456-L458)、[#L468-L471](Element.ts#L468-L471)）：解析器“新建后立即挂载”会对每个节点多付一次 `_assertElement`。没有单独测量；按“Element.ts 整体只占约 2%”（上文热点剖析）推断量级很小，先登记不排期。若要评估，用 `abInner` 做 A/B，不要跨 harness 比绝对值。
+- **`appendChild` / `insertBefore` 的 `instanceof` 校验**（[Element.ts#L456-L459](Element.ts#L456-L459)、[#L464-L472](Element.ts#L464-L472)）：解析器“新建后立即挂载”会对每个节点多付一次 `_assertElement`。没有单独测量；按“Element.ts 整体只占约 2%”（上文热点剖析）推断量级很小，先登记不排期。若要评估，用 `abInner` 做 A/B，不要跨 harness 比绝对值。
 
 ### 设计项（策略决定，与缺陷修复解耦）
 
-- **跨块 remainder 每次重拼**（[LtxParser.ts#L124](LtxParser.ts#L124)、[#L347](LtxParser.ts#L347)）：长文本跨多个小块且块内无 `<` 时，每次 `write` 都把旧 remainder 与新块拼成 ConsString，随后 fast-path 的 `indexOf` 触发扁平化，总复制量 ∝ N²/块长。真实语料下不显形——`SESSION` 27 KB 切 16 KB × 2 块，分块 SAX 比整块慢约 8%（495 927 → 538 250 ns），建树两侧差异在噪声内（653 286 / 640 955 ns）。要处理的前提是先确认实际读块尺寸（socket / TLS 记录），块越小放大越厉害。
+- **跨块 remainder 每次重拼**（[LtxParser.ts#L112](LtxParser.ts#L112)、[#L338](LtxParser.ts#L338)）：长文本跨多个小块且块内无 `<` 时，每次 `write` 都把旧 remainder 与新块拼成 ConsString，随后 fast-path 的 `indexOf` 触发扁平化，总复制量 ∝ N²/块长。真实语料下不显形——`SESSION` 27 KB 切 16 KB × 2 块，分块 SAX 比整块慢约 8%（495 927 → 538 250 ns），建树两侧差异在噪声内（653 286 / 640 955 ns）。要处理的前提是先确认实际读块尺寸（socket / TLS 记录），块越小放大越厉害。
 - **输入资源上限**：单 stanza 大小 / 嵌套深度 / 未完成 token 长度，目前都没有限制。这是策略决定，不是性能缺陷，见 [debug.md](debug.md) 的 SEC-002。
 - **查询结果缓存**：happy-dom 用 per-node 结果缓存 + 失效广播。是否值得做取决于插件对同一条 stanza 的重复查询频率——先量再定，现在没有数据支持。
 
