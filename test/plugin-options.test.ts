@@ -19,10 +19,12 @@ describe("registerPlugin options 类型", () => {
     // 空对象：全部可选的配置类型
     connection.registerPlugin("XEP0199", {});
 
-    // @ts-expect-error XEP0030 的构造函数不接受 options（含空对象）
-    connection.registerPlugin("XEP0030", {});
+    connection.registerPlugin("XEP0030", { cacheTTLMs: 60_000 });
 
-    // @ts-expect-error XEP0030 的构造函数不接受 options
+    // @ts-expect-error cacheTTLMs 必须是 number
+    connection.registerPlugin("XEP0030", { cacheTTLMs: "1m" });
+
+    // @ts-expect-error XEP0030 不接受未知配置项
     connection.registerPlugin("XEP0030", { foo: 1 });
 
     // @ts-expect-error XEP0410 的 pingTimeout 必须是 number

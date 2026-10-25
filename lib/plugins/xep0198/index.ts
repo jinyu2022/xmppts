@@ -37,8 +37,8 @@ export default class XEP0198 extends StreamManagement implements Plugin {
     private status: typeof StreamStatus[keyof typeof StreamStatus] = StreamStatus.DISABLE;
     /** 会话恢复ID */
     private previd: string = "";
-    /** 服务器建议的重连位置 */
-    private location?: string;
+    /** 服务器在 <enabled/> 中给出的下次重连端点（XEP-0198 §3），仅生效一次 */
+    private reconnectEndpoint?: { host: string; port?: string };
     /** 服务器是否允许会话恢复（<enabled resume='true'/>） */
     private resumable = false;
     /** 服务器宣告的最大会话恢复时间（ms），取自 <enabled max='...'/>（协议单位为秒）；未宣告时默认 5 分钟 */
@@ -72,9 +72,16 @@ export default class XEP0198 extends StreamManagement implements Plugin {
             void this.enable().catch((error: unknown) => log.error('启用流管理失败', error));
         this.connection.on("session:start", onSessionReady);
         this.connection.on("reconnected", onSessionReady);
-        // 断线 → 记录时刻，供恢复时判定是否超出服务器保留窗口
+        // 断线 → 记录时刻供恢复判定；服务器建议的端点只用于下一次连接（XEP-0198 §3），写入后立即清空
         this.connection.on("connection:lost", () => {
             this.disconnectedAt = Date.now();
+            const endpoint = this.reconnectEndpoint;
+            this.reconnectEndpoint = undefined;
+            const target = this.connection.transport;
+            if (!endpoint || !target) return;
+            target.host = endpoint.host;
+            if (endpoint.port) target.port = endpoint.port;
+            log.debug(`下次连接使用服务器位置: ${endpoint.host}:${target.port}`);
         });
     }
 
@@ -203,19 +210,10 @@ export default class XEP0198 extends StreamManagement implements Plugin {
 
                 const location = xml.getAttribute("location");
                 if (location) {
-                    this.location = location;
-                    try {
-                        // XEP-0198 §3 / RFC 6120 §4.9.3.19：location 为 host[:port]（IPv6 用方括号），不是完整 URL，补一个协议前缀以便解析
-                        const url = new URL(`xmpp://${location}`);
-                        if (url.hostname) {
-                            // URL.hostname 会保留 IPv6 的方括号，连接前去掉
-                            this.connection.transport!.host = url.hostname.replace(/^\[|\]$/g, "");
-                        }
-                        if (url.port) this.connection.transport!.port = url.port;
-                    } catch (error: unknown) {
-                        log.warn(`无法解析服务器返回的重连位置: ${location}`, error);
+                    this.reconnectEndpoint = XEP0198.parseLocation(location);
+                    if (this.reconnectEndpoint) {
+                        log.debug(`服务器建议的重连位置: ${location}`);
                     }
-                    log.debug(`服务器位置: ${this.location}`);
                 }
                 resolve(xml);
             };
@@ -254,13 +252,30 @@ export default class XEP0198 extends StreamManagement implements Plugin {
     private reset() {
         this.status = StreamStatus.DISABLE;
         this.previd = "";
-        this.location = undefined;
+        this.reconnectEndpoint = undefined;
         this.resumable = false;
         this.max = 5 * 60 * 1000;
         this.disconnectedAt = 0;
         this.outbound = 0;
         this.inbound = 0;
         this.bindRequest = undefined;
+    }
+
+    /**
+     * 解析 location 值：host[:port]（IPv6 用方括号），不是完整 URL（XEP-0198 §3 / RFC 6120 §4.9.3.19）
+     * @param location 服务器给出的重连地址，省略端口时沿用当前端口
+     * @returns 解析后的端点；格式非法时为 undefined
+     */
+    private static parseLocation(location: string): { host: string; port?: string } | undefined {
+        try {
+            const url = new URL(`xmpp://${location}`);
+            if (!url.hostname) return undefined;
+            // URL.hostname 会保留 IPv6 的方括号，连接前去掉
+            return { host: url.hostname.replace(/^\[|\]$/g, ""), port: url.port || undefined };
+        } catch (error: unknown) {
+            log.warn(`无法解析服务器返回的重连位置: ${location}`, error);
+            return undefined;
+        }
     }
 
     /**

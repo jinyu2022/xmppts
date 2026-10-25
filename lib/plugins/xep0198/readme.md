@@ -62,5 +62,5 @@ XEP0198.interval = 10;
 - 服务器返回的 `h` 与本地 `outbound` 不一致时：`<resumed/>` 路径 warn 并采用服务器值（未重传，见 debug S1）；`<a/>` 路径只 warn（见 debug M1）。
 - 恢复失败会回退为常规绑定，连接不中断。
 - 未实现：§5 恢复后按序重传 `h+1…outbound`（debug S1，消息可能丢）；§6 对端 `h` 过高时发 `handled-count-too-high` 流错误；§4 关闭流前主动发 `<a/>`、收到 `<a/>` 后记录最新 `h`、`h` 达 2^32-1 回绕（debug M10）；`<resumed/>` 的 `previd` 校验（debug M3）。
-- 副作用：`<enabled/>` 携带的 `location` 会回写 `transport.host/port`（影响重连目标）；`<enable/>` 被 `<failed/>` 时 reject 的 `XMPPError` 只被 `.catch` 记日志，调用方无感知。
+- 副作用：`<enabled/>` 携带的 `location` 会作为下次重连的端点，在断线时应用一次并清空（XEP-0198 §3）；`<enable/>` 被 `<failed/>` 时 reject 的 `XMPPError` 只被 `.catch` 记日志，调用方无感知。
 - 会话就绪时同步发出的 stanza 排在 `<enable/>` 之前，不计入流管理（XEP-0198 §4：计数自 `<enable/>` 起算），规范允许；恢复时服务器保留原 presence 状态，无需重发。

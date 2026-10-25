@@ -164,11 +164,14 @@ describe("XEP0198（单元测试，假连接）", () => {
       `id="sid-1" resume="true" max="60" location="alt.example.com:5223"`,
     );
 
-    // location 写回传输层，供重连使用
+    // location 只用于「下一次连接」：启用期间不改写端点，断线时才生效
+    expect(connection.transport.host).toBe("localhost");
+    expect(connection.transport.port).toBe("5222");
+
+    connection.emit("connection:lost");
     expect(connection.transport.host).toBe("alt.example.com");
     expect(connection.transport.port).toBe("5223");
 
-    connection.emit("connection:lost");
     const ctx = await negotiate(connection);
     expect(ctx.outgoing).toContain("<resume");
     expect(ctx.outgoing).toContain("previd='sid-1'");

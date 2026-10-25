@@ -42,17 +42,17 @@ export class XEP0030 implements Plugin {
   /** 服务器 disco 发现；仅活跃会话内发起，并发调用共用同一次查询，失败后清空以便重试 */
   private discovery?: Promise<void>;
 
-  /** 默认30分钟 */
-  private readonly TTL = 1_800_000 as const;
-
   /** 查询info缓存, 键为jid */
   private readonly infoCache: Map<string, DiscoInfoCache> = new Map();
   /** 查询items缓存, 键为jid */
   private readonly itemsCache: Map<string, DiscoItemCache> = new Map();
 
   readonly connection: Connection;
-  constructor(connection: Connection) {
+  /** 缓存有效期（毫秒） */
+  private readonly cacheTTLMs: number;
+  constructor(connection: Connection, options?: {cacheTTLMs?: number;}) {
     this.connection = connection;
+    this.cacheTTLMs = options?.cacheTTLMs ?? 1_800_000;
   }
 
   init() {
@@ -164,7 +164,7 @@ export class XEP0030 implements Plugin {
       const cached = this.infoCache.get(
         node ? `${to.toString()}#${node}` : to.toString()
       );
-      if (cached && Date.now() - cached.timestamp < this.TTL) {
+      if (cached && Date.now() - cached.timestamp < this.cacheTTLMs) {
         return {
           identities: [...cached.identities],
           features: new Set(cached.features),
@@ -198,7 +198,7 @@ export class XEP0030 implements Plugin {
       const cached = this.itemsCache.get(
         node ? `${to.toString()}#${node}` : to.toString()
       );
-      if (cached && Date.now() - cached.timestamp < this.TTL) {
+      if (cached && Date.now() - cached.timestamp < this.cacheTTLMs) {
         return [...cached.items];
       }
     }

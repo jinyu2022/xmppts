@@ -7,7 +7,15 @@
 
 ## 可配置项
 
-无可配置项。缓存参数为内置常量（TTL 30 分钟、容量 100 条、超限淘汰约 20%）。
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `cacheTTLMs` | `number` | `1800000` | disco 查询结果缓存的有效期，单位毫秒（默认 30 分钟） |
+
+缓存容量（100 条）与超限淘汰比例（约 20%）仍为内置常量。
+
+```typescript
+client.registerPlugin("XEP0030", { cacheTTLMs: 60_000 }); // 缓存 1 分钟
+```
 
 ## 注册后行为
 
@@ -93,7 +101,7 @@ client.XEP0030!.removeItem("example.com", "示例");        // → void（按 ji
 
 ## 注意事项
 
-- 缓存 TTL 30 分钟，`cache=false` 只跳过读取，查询结果仍写入缓存。
+- 缓存 TTL 默认 30 分钟，可通过 `cacheTTLMs` 配置；`cache=false` 只跳过读取，查询结果仍写入缓存。
 - `addFeature()` 依赖 Set 去重；`addIdentity()` 按 `category+type+xml:lang` 唯一，重复抛 `Error`；`addItem()` 重复抛 `Error`。
 - `init()` 只预置 `disco#info`/`disco#items` 两个 feature，**不预置 identity**：自身 identity 为空时应答不含 `<identity/>`（§3.1 要求至少有身份），需自行 `addIdentity()`。
 - 自动应答会把请求 `query` 的 `node` 原样回显（含空串）；`createInfoResult` 对 node 尚无语义处理。
