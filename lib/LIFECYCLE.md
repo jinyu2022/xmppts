@@ -4,7 +4,7 @@
 
 ## 1. 核心组件架构
 
-- **`Connection` (lib/connection.ts)**: **会话层**的抽象类，负责插件生命周期管理、Stanza 解析与分发、拦截器管线以及异步请求的 Promise 映射。
+- **`Connection` (lib/connection.ts)**: **会话层**的核心类，负责插件生命周期管理、Stanza 解析与分发、拦截器管线以及异步请求的 Promise 映射。
 - **`StreamConnection` (lib/transport/stream-connection.ts)**: **连接层（传输层）**的流协商基类，负责状态机、SASL 认证、资源绑定、会话恢复与管线事件。
 - **传输注册表 (lib/transport/index.ts)**: 维护协议到 `TransportFactory` 的映射；`Connection` 按 `protocol` 从 `transports` 取值，新增协议无需修改连接类。
 - **`XMPPConnection` (lib/transport/tcp.ts)**: TCP/STARTTLS 传输实现，负责 DNS SRV 解析、socket 生命周期、RFC 6120 流头/流尾与 TLS 升级。
@@ -48,7 +48,7 @@
 4.  **`Status.STREAM_ESTABLISHED` (4)**: 收到特性列表。
 5.  **SASL 认证 (`Status.AUTHENTICATING` -> `AUTHENTICATED`)**: 自动处理认证往返。认证成功后，底层会自动**重启流**并发送第二次流头。
 6.  **资源绑定 (`Status.BINDING` -> `BINDED`)**: 绑定后分配 Full JID。
-7.  **触发通知**: 底层通过 `TransportSink` 通知高层：`onBinded` -> 高层 `session:start`；`onClose` -> 高层 `session:end`；`onError` -> 错误日志；`onStanza` -> 业务分发。
+7.  **触发通知**: 底层通过 `TransportSink` 通知高层：`onBinded` -> 高层 `session:start`（重连成功为 `reconnected`）；`onClose` -> 高层按重连策略处理（`session:end` 或重连）；`onError` -> 高层 `error` 事件；`onStanza` -> 业务分发。
 
 > `connect()` 在开始拨号后即 resolve；认证/绑定结果通过事件通知（成功 `session:start`，失败 `error`），不会以 reject 表示。只有传输创建/拨号阶段抛出的错误才会同时 `emit("error")` 并 reject。
 
@@ -60,7 +60,7 @@
 2.  **`sendAsync(stanza)`**: 自动生成 ID 并登记到请求表（按 id 匹配），设 30s 超时定时器，返回 Promise；响应到达、超时、发送失败或断开都走同一个收尾函数（停计时器、删表项、settle）。
 
 #### 接收管线 (Receive Pipeline)
-1.  **底层**: Parser 解析出完整 XML Tree，Socket 触发 `stanza` 事件。
+1.  **底层**: Parser 解析出完整 XML Tree，传输层调用 `TransportSink.onStanza` 交给高层。
 2.  **拦截器**: 执行 `receive` 拦截器链。
 3.  **转换器 (`transformExtensions`)**: 扫描直接子元素与构造期字段中的元素，将匹配 `StanzaPlugin` 的 XML 节点转换为结构化 JS 对象并合并到实例上。
 4.  **请求兑现**: 节的 id 命中请求表时，结束对应的 `sendAsync` Promise。

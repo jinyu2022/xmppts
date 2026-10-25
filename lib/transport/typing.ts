@@ -11,7 +11,7 @@ export interface TransportEndpoint {
     host?: string;
     /** 目标端口 */
     port?: number;
-    /** 目标路径（WebSocket/BOSH） */
+    /** 目标路径（WebSocket） */
     path?: string;
 }
 
@@ -28,7 +28,7 @@ export interface TransportSink {
     onStanza(stanza: XMPPElement): void;
     /** 底层连接关闭；WS 携带关闭事件，TCP 未定义 */
     onClose(closeEvent?: CloseEvent): void;
-    /** 协商或传输错误 */
+    /** 协商或传输错误；业务报文的处理异常也由此上报（属报文级、可恢复） */
     onError(error: Error): void;
 }
 
@@ -81,7 +81,7 @@ export const Status = {
     SESSIONSTART: 12,
     /** 正在重新连接 */
     RECONNECTING: 13,
-    /** 已重新连接 */
+    /** 正在断开连接 */
     DISCONNECTING: 40,
     /** 发生错误 */
     ERROR: 41,

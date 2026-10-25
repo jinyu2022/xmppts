@@ -59,6 +59,7 @@ describe("Connection（单元测试，假传输层）", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("send：拒绝缺少必备属性的 stanza，其余自动补全 id/xmlns 并归一化 groupchat 的 to", () => {
@@ -272,6 +273,57 @@ describe("Connection（单元测试，假传输层）", () => {
     expect(messages[0].x).toBeUndefined();
     // thread 由 Message.parseMessage 解析为字段
     expect(messages[0].thread).toBe("t1");
+  });
+
+  it("接收：扩展解析抛错只上报 error，不断开且后续报文照常派发", () => {
+    const { connection, transport } = setup();
+    const disconnect = vi.spyOn(connection, "disconnect");
+    connection.registerStanzaPlugin("urn:test:bad", () => {
+      throw new Error("扩展解析失败");
+    });
+    const messages: Message[] = [];
+    const errors: Error[] = [];
+    connection.on("error", (error) => errors.push(error));
+    connection.on("message", (message) => messages.push(message));
+
+    expect(() =>
+      transport.sink.onStanza(
+        Parser.parse(
+          '<message from="romeo@montague.lit/orchard" to="juliet@capulet.lit"><x xmlns="urn:test:bad"/></message>',
+        ),
+      ),
+    ).not.toThrow();
+
+    // 出错的报文被丢弃，会话与传输都不受影响
+    expect(messages).toHaveLength(0);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toBe("扩展解析失败");
+    expect(disconnect).not.toHaveBeenCalled();
+    expect(connection.transport).toBe(transport);
+    expect(connection.isSessionActive).toBe(true);
+
+    // 后续报文不被牵连
+    transport.sink.onStanza(
+      Parser.parse('<message from="a@example.com" to="juliet@capulet.lit"><body>ok</body></message>'),
+    );
+    expect(messages).toHaveLength(1);
+  });
+
+  it("接收：中间件抛错同样只上报 error", () => {
+    const { connection, transport } = setup();
+    connection.pipeline.use("receive", () => {
+      throw new Error("中间件失败");
+    });
+    const errors: Error[] = [];
+    connection.on("error", (error) => errors.push(error));
+
+    transport.sink.onStanza(
+      Parser.parse('<message from="a@example.com" to="juliet@capulet.lit"><body>x</body></message>'),
+    );
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toBe("中间件失败");
+    expect(connection.isSessionActive).toBe(true);
   });
 
   it("接收路由：stanza 插件返回值里的同命名空间元素不再二次解析（event 分支与 xep0402 extensions）", () => {
@@ -635,5 +687,12 @@ describe("Connection（单元测试，假传输层）", () => {
 
     expect(events).toEqual(["error:认证失败: not-authorized", "session:end"]);
     expect(transport.reconnect).not.toHaveBeenCalled();
+  });
+
+  it("connect：浏览器非安全上下文直接拒绝，避免 crypto API 未定义", async () => {
+    vi.stubGlobal("isSecureContext", false);
+    const connection = new Connection("user@example.com/resource", "pass");
+
+    await expect(connection.connect()).rejects.toThrow("安全上下文");
   });
 });

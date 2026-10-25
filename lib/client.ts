@@ -1,20 +1,22 @@
 import Connection from "./connection";
 import { JID } from "./JID";
 import { pluginLoaders } from "./plugins";
-import type { Options } from "./types";
 import { Message, type MsgType } from "@/stanza";
+
 export class Client extends Connection {
-  constructor(jid: string, password: string, options?: Options) {
-    super(jid, password, options);
-  }
-
-
   /**
    * 注册默认插件
+   *
+   * 浏览器环境跳过依赖 Node.js 内置模块的插件（如 XEP0368 的 SRV/TLS 发现）。
    */
   registerDefaultPlugins() {
-    for (const plugin of Object.keys(pluginLoaders)) {
-      super.registerPlugin(plugin as keyof typeof pluginLoaders);
+    // 浏览器打包器注入的 process 通常没有 versions.node，据此区分运行时
+    const isNode =
+      typeof process !== "undefined" && !!process.versions?.node;
+    for (const plugin of Object.keys(pluginLoaders) as (keyof typeof pluginLoaders)[]) {
+      // XEP0368 依赖 Node.js 的 DNS/TLS 发现，浏览器环境跳过
+      if (!isNode && plugin === "XEP0368") continue;
+      super.registerPlugin(plugin);
     }
   }
 

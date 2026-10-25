@@ -54,7 +54,10 @@ export interface SocketEventMap {
    * 自动重连期间不发。派发前 `isSessionActive` 已降为 `false`，监听器内不能继续发送业务 stanza。
    */
   "session:end": void;
-  /** 连接错误（网络失败、认证失败、协议错误等）；会话可能尚未建立 */
+  /**
+   * 连接错误（网络失败、认证失败、协议错误等），以及单条报文的处理异常；
+   * 报文级异常只丢弃该报文，连接保持可用。会话可能尚未建立。
+   */
   error: Error;
   /** 进入自动重连：已建立会话的物理连接断开且仍会重试；同一次断线只发一次 */
   "connection:lost": void;
@@ -118,7 +121,7 @@ export class Connection extends Emitter<SocketEventMap> {
   host?: string;
   /** 连接的端口；未指定时用传输默认端口 */
   port?: number;
-  /** 连接的路径（WebSocket/BOSH） */
+  /** 连接的路径（WebSocket） */
   path?: string;
   /** 是否启用tls，在本地调试的时候您可能不需要，默认为true */
   tls = true;
@@ -210,7 +213,7 @@ export class Connection extends Emitter<SocketEventMap> {
    * @param password 密码
    * @param options 自定义配置，一般不需要配置，包括：
    *    - host 为连接主机，未指定时由传输发现
-   *    - protocol 为连接协议，内置 xmpp/ws/http，自定义协议可用 registerTransport 注册
+   *    - protocol 为连接协议，内置 xmpp/ws，自定义协议可用 registerTransport 注册
    *    - tls 为是否启用tls，在本地调试的时候您可能不需要，默认为true
    */
   constructor(jid: string, password: string, options?: Options) {
@@ -378,6 +381,12 @@ export class Connection extends Emitter<SocketEventMap> {
   }
 
   async connect() {
+    // 浏览器端 crypto.subtle / randomUUID 仅在安全上下文可用，提前给出明确错误
+    if (typeof isSecureContext !== "undefined" && !isSecureContext) {
+      throw new Error(
+        "浏览器端需要安全上下文（HTTPS 或 localhost）才能使用加密 API",
+      );
+    }
     // 已在连接或已连接：拒绝重复调用，避免新旧两个 socket 并存
     if (this.transport && this.transport.status !== Status.DISCONNECTED) {
       throw new Error("连接已在进行中，请先 disconnect() 再连接");
@@ -395,7 +404,9 @@ export class Connection extends Emitter<SocketEventMap> {
     await this.instantiatePlugins();
     const create = this.transports[this.protocol];
     if (!create) {
-      throw new Error(`未知的协议: ${this.protocol}`);
+      throw new Error(
+        `未知的协议: ${this.protocol}（可用：${Object.keys(this.transports).join("、")}）`,
+      );
     }
     let transport: TransportSocket;
     try {
@@ -631,27 +642,35 @@ export class Connection extends Emitter<SocketEventMap> {
   private onMessage(stanza: XMPPElement) {
     log.debug("receive", () => stanza.toXMLString());
 
-    // 拦截器（就地传递，处理器不调 next 即短路）
-    stanza = this.pipeline.run("receive", { stanza }).stanza;
+    try {
+      // 拦截器（就地传递，处理器不调 next 即短路）
+      stanza = this.pipeline.run("receive", { stanza }).stanza;
 
-    const tagName = isStanzaTag(stanza.tagName) ? stanza.tagName : "others";
-    // 先兑现等待中的请求；命中后仍继续派发，普通监听器仍能看到该节
-    const requestId = stanza.getAttribute("id");
-    if (requestId) {
-      const pending = this.pendingRequests.get(requestId);
-      if (pending) {
-        this.pendingRequests.delete(requestId);
-        pending.resolve(stanza);
+      const tagName = isStanzaTag(stanza.tagName) ? stanza.tagName : "others";
+      // 先兑现等待中的请求；命中后仍继续派发，普通监听器仍能看到该节
+      const requestId = stanza.getAttribute("id");
+      if (requestId) {
+        // rfc规定了需要保证id不重复，因此仅看id就行
+        // 用户自己构造错了id那是用户的事情
+        const pending = this.pendingRequests.get(requestId);
+        if (pending) {
+          this.pendingRequests.delete(requestId);
+          pending.resolve(stanza);
+        }
       }
-    }
-    const stanzaInstance = this.stanzaInstanceFactory(stanza, tagName);
-    // 发出节事件
-    for (const eventPlugin of this.eventPlugins[tagName]) {
-      if (eventPlugin.matcher(stanzaInstance)) {
-        this.emit(eventPlugin.eventName, stanzaInstance);
+      const stanzaInstance = this.stanzaInstanceFactory(stanza, tagName);
+      // 发出节事件
+      for (const eventPlugin of this.eventPlugins[tagName]) {
+        if (eventPlugin.matcher(stanzaInstance)) {
+          this.emit(eventPlugin.eventName, stanzaInstance);
+        }
       }
+      this.emit(tagName, stanzaInstance);
+    } catch (error) {
+      // 单条报文的处理失败不能升级为协议失败：记录并上报 error，连接继续接收后续报文
+      log.error("处理 stanza 失败:", error, () => stanza.toXMLString());
+      this.reportError(error);
     }
-    this.emit(tagName, stanzaInstance);
   }
 
   /**
@@ -687,7 +706,7 @@ export class Connection extends Emitter<SocketEventMap> {
    * @param instance stanza 实例
    * @returns 返回 instance
    */
-  private transformExtensions(instance: StanzaBase) {
+  private transformExtensions<T extends StanzaBase>(instance: T): T {
     /** 已访问对象，防止转换结果中的循环引用或 handler 返回输入元素本身导致无限递归 */
     const visited = new Set<unknown>();
     // 构造阶段产出的普通对象字段（如 error 的附加条件元素）也需转换
@@ -768,7 +787,7 @@ export class Connection extends Emitter<SocketEventMap> {
           log.warn(
             "groupchat类型的message stanza的to属性应该是bare JID，正在自动转换",
           );
-          stanza.setAttribute("to", to.split("/")[0]);
+          stanza.setAttribute("to", new JID(to).bare);
         }
       }
       if (stanza.tagName === "iq" && !stanza.getAttribute("type")) {
@@ -778,7 +797,7 @@ export class Connection extends Emitter<SocketEventMap> {
         stanza.setAttribute("id", crypto.randomUUID());
       }
       if (!stanza.namespaceURI) {
-        stanza.setAttribute("xmlns", "jabber:client");
+        stanza.setAttribute("xmlns", StanzaBase.NS);
       }
     }
     /** 终端会再次检查传输是否仍在，防止拦截器执行期间被置空 {@link write} */

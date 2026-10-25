@@ -7,6 +7,7 @@ import {
 } from "./stream-connection";
 import { Parser, type XMPPElement } from "@/ltx";
 import { JID } from "@/JID";
+import { ProtocolError } from "@/errors";
 import logger from "@/log";
 // 传输层按需调用该静态方法解析端点；该模块不反向依赖传输层
 import XEP0156 from "@/plugins/xep0156";
@@ -103,12 +104,8 @@ export class WSConnection extends StreamConnection {
   }
 
   private onMessage(ev: MessageEvent): void {
-    const data =
-      typeof ev.data === "string"
-        ? ev.data
-        : Buffer.isBuffer(ev.data)
-          ? ev.data.toString("utf8")
-          : String(ev.data);
+    // RFC 7395 §3.2：data frame 必须是 text 类型，合规对端只会发 string
+    const data = ev.data as string;
     log.debug("recv", data);
     this.feed(data);
   }
@@ -126,9 +123,17 @@ export class WSConnection extends StreamConnection {
     try {
       stanza = Parser.parse(data);
     } catch (error) {
-      log.error("parse failed", error, data);
-      this.sink.onError(
-        error instanceof Error ? error : new Error(String(error)),
+      // RFC 7395 §3.3.3 要求每帧可独立解析：解析失败即流级错误，不能继续复用这条流。
+      // 断开后是否重连由 onClose 的重连策略决定（帧损坏可能只是传输抖动）。
+      const failure = error instanceof Error ? error : new Error(String(error));
+      log.error("帧解析失败:", failure, data);
+      this.handleFailure(
+        new ProtocolError({
+          scope: "stream",
+          message: `WebSocket 帧解析失败: ${failure.message}`,
+          cause: failure,
+          retryable: true,
+        }),
       );
       return;
     }
