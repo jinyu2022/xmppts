@@ -140,5 +140,5 @@ export class XMPPError extends Error {
     return el.localName === "text"
       ? { text: el.textContent }
       : { condition: el.localName as (typeof ErrorConditions)[number] };
-  };
+  }
 }

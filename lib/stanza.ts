@@ -22,9 +22,8 @@ export class StanzaBase {
   declare private readonly connection: Connection;
   /** TIP: 可以直接访问，但无法枚举 */
   declare readonly xml: XMPPElement;
-  /** 标签名，message、persence、iq */
+  /** 标签名，message、presence、iq */
   readonly tagName: string;
-  // readonly xmlString: string;
   readonly id: string | null;
   /** 属性缺失（或空串）为 undefined */
   readonly to?: JID;
@@ -34,7 +33,6 @@ export class StanzaBase {
   readonly error?: StanzaError;
   [key: string]: unknown;
   constructor(stanza: XMPPElement, connection: Connection) {
-    // this.xml = stanza;
     Object.defineProperty(this, "xml", {
       value: stanza,
       writable: false, // 属性不可修改
@@ -48,7 +46,6 @@ export class StanzaBase {
     this.to = toAttr ? new JID(toAttr) : void 0;
     // from 属性缺失时，按 RFC 6121 §2.1.6 视为隐式来自自身 JID（仅顶层 stanza）
     this.from = fromAttr ? new JID(fromAttr) : connection.jid;
-    // this.connection = connection;
     Object.defineProperty(this, "connection", {
       value: connection,
       writable: false, // 属性不可修改
@@ -90,20 +87,6 @@ export class StanzaBase {
   send(xml: XMPPElement) {
     this.connection.send(xml);
   }
-
-  /**
-   * 添加一个只读属性
-   * @param name 属性名
-   * @param value 属性值
-   */
-  // addProperty<K extends keyof this>(name: K, value: this[K]) {
-  //   Object.defineProperty(this, name, {
-  //     value: value,
-  //     writable: false, // 属性不可修改
-  //     enumerable: true, // 属性可枚举
-  //     configurable: true, // 属性可删除或重新定义
-  //   });
-  // }
 
   /**
    * @returns xml字符串
@@ -160,7 +143,7 @@ export class Iq extends StanzaBase {
     to?: JID | string,
     queryNS?: string
   ) {
-    const iq = XMPPElement.createElementNS("jabber:client", "iq", { type });
+    const iq = XMPPElement.createElementNS(StanzaBase.NS, "iq", { type });
     if (to) iq.setAttribute("to", to.toString());
     if (queryNS) {
       const query = XMPPElement.createElementNS(queryNS, "query");

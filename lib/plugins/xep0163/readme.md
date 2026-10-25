@@ -13,7 +13,7 @@
 
 `init()` 只做一件事：为命名空间 `http://jabber.org/protocol/pubsub#event` 注册 `Pubsub.parseEventEl`，把 Message 中的 `<event>` 子元素解析为结构化的 `message.event`（见「扩展字段」）。
 
-> 服务器能力检查（是否为 PEP 服务）对应的代码已被注释，插件不会因服务器不支持而自动卸载；且原探测查的是域名身份，而 §6.1 要求探测自身 bare JID（见 debug S1）。
+> 服务器能力检查（是否为 PEP 服务）对应的代码已被注释，插件不会因服务器不支持而自动卸载；且原探测查的是域名身份，而 §6.1 要求探测自身 bare JID。
 
 ## 扩展字段
 

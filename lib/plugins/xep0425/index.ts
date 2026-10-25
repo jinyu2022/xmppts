@@ -41,6 +41,13 @@ export class XEP0425 extends Moderation implements Plugin {
         });
     }
 
+    /** 构造审核请求 IQ；同步与异步入口共用 */
+    private createModerateIq(to: string | JID, id: string, reason?: string) {
+        const iq = Iq.createIq("set", to);
+        iq.appendChild(Moderation.createModerationEl(id, reason));
+        return iq;
+    }
+
     /**
      * 发送消息审核请求
      * 
@@ -53,8 +60,7 @@ export class XEP0425 extends Moderation implements Plugin {
      * @returns 返回创建的 IQ 节点
      */
     moderate(to: string | JID, id: string, reason?: string) {
-        const iq = Iq.createIq("set", to);
-        iq.appendChild(Moderation.createModerationEl(id, reason));
+        const iq = this.createModerateIq(to, id, reason);
         this.connection.send(iq);
         return iq;
     }
@@ -72,8 +78,7 @@ export class XEP0425 extends Moderation implements Plugin {
      * @throws {Error} 当审核请求被拒绝时抛出错误
      */
     async moderateAsync(to: string | JID, id: string, reason?: string) {
-        const iq = Iq.createIq("set", to);
-        iq.appendChild(Moderation.createModerationEl(id, reason));
+        const iq = this.createModerateIq(to, id, reason);
         const res = await this.connection.sendAsync(iq);
         if (res.getAttribute("type") === "error") {
             throw new XMPPError(res, "审核消息失败");

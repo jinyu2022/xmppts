@@ -1,6 +1,7 @@
 import { Bookmarks } from "./bookmarks";
 import logger from "@/log";
 import type Connection from "@/connection";
+import type { Message } from "@/stanza";
 import type { Plugin } from "../types";
 import { XMPPError } from "@/errors";
 import { Pubsub, type PubsubEvent } from "../xep0060/pubsub";
@@ -111,8 +112,7 @@ export default class XEP0402 extends Bookmarks implements Plugin {
         if (resIq.getAttribute("type") === "error") {
             throw new XMPPError(resIq, "检索书签失败");
         }
-        const bookmarks = Bookmarks.parseBookmarksIq(resIq);
-        return bookmarks;
+        return Bookmarks.parseBookmarksIq(resIq);
     }
 
     /**
@@ -180,7 +180,6 @@ declare module "../xep0060/pubsub" {
     }
 }
 
-import type { Message } from "@/stanza";
 declare module "../../connection" {
     interface SocketEventMap {
         /** XEP0402：匹配器已保证来自本账号、node 为书签节点、首个 item 带 item id 与 conference */

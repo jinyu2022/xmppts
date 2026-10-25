@@ -35,7 +35,7 @@ const endpoint = await XEP0156.resolveEndpoint("example.com");
 
 ## 注意事项
 
-- 仅解析 `websocket` 关系；`xbosh` 尚无传输实现。
+- `xbosh`/`httppoll` 只做发现：库内没有对应传输实现，浏览器请使用 `ws`。
 - 用户显式提供完整 `host` + `port` 时不查询 host-meta。
 - 缺省端口不在本工具内补齐：公布地址未写端口时返回 `port: undefined`，由 `WSConnection` 按最终使用的 scheme（`tls` 决定 wss/ws）补 443/80。
 - 服务公布的地址为 `wss://` 时，`tls: false` 会按 `ws://` 连接，需要服务端同时接受明文（参见 [debug.md](debug.md) SEC-001）。

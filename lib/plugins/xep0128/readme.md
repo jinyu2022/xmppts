@@ -25,7 +25,7 @@
 
 | 方法 | 说明 |
 |------|------|
-| `XEP0128.parseDataForm(xml)`（静态） | 解析 XEP-0004 扩展表单 → `{ form: DataForm \| undefined }`；`xml` 为 `<query>` 时自动取其下首个 `jabber:x:data` 的 `<x>`，也可直接传 `<x>` 自身；`xml` 传 `undefined` 时抛 `TypeError`（见 debug S1） |
+| `XEP0128.parseDataForm(xml)`（静态） | 解析 XEP-0004 扩展表单 → `{ form: DataForm \| undefined }`；`xml` 为 `<query>` 时自动取其下首个 `jabber:x:data` 的 `<x>`，也可直接传 `<x>` 自身；`xml` 传 `undefined` 时抛 `TypeError` |
 
 ## 使用示例
 
@@ -40,4 +40,4 @@ const { form } = XEP0128.parseDataForm(queryEl);
 
 - **走 XEP-0030 时无需单独导入** — 功能已集成在 `Disco.parseDiscoInfo()` 中；直接调用才需深层导入 `@/plugins/xep0128`。
 - disco 响应不含扩展表单时返回 `{ form: undefined }`。
-- 只取 `<query>` 下第一个 `jabber:x:data` 的 `<x>`（§4 允许一次携带多个扩展表单），且不校验表单的 `FORM_TYPE`（见 debug M1）。
+- 只取 `<query>` 下第一个 `jabber:x:data` 的 `<x>`（§4 允许一次携带多个扩展表单），且不校验表单的 `FORM_TYPE`（见 debug CORR-002、CORR-003）。

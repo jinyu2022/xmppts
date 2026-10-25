@@ -36,7 +36,7 @@
 
 | 事件 | 载荷 | 说明 |
 |------|------|------|
-| `muc:stale` | `{ roomJid, staleSince }` | 房间失活，self-ping 已发出 |
+| `muc:stale` | `{ roomJid, staleSince }` | 房间已判定失活；self-ping 随后发出（当前实现在发出前就触发事件，见 [debug.md](debug.md) CORR-001） |
 | `muc:fresh` | `{ roomJid, staleSince, recoveredAt, rejoined }` | 房间已恢复（self-ping 通恢复为 `false`，经重入恢复为 `true`） |
 
 ## 公开 API
@@ -81,5 +81,5 @@ client.on("muc:fresh", ({ roomJid, rejoined }) => {
 - 空闲时间按房间分别统计，仅该房间（`XEP0045.rooms` 中的房间）的 message/presence 会重置计时。
 - 只有确认已离开的房间才会重加入。
 - 自动重连期间 `connection.isSessionActive` 为 `false`，检查自动暂停但不清理状态，重连成功后继续；`session:end` 才彻底停止。
-- §4 两条 SHOULD 未实现：昵称变更应答前不暂停 self-ping（与 XEP-0045 无协作）、XEP-0198 休眠期不延后 ping（无依赖声明，见 debug M1）。
-- §3.3 服务端优化 feature（`…/muc#self-ping-optimization`）未接入生产（见 debug M2）。
+- §4 两条 SHOULD 未实现：昵称变更应答前不暂停 self-ping（与 XEP-0045 无协作）、XEP-0198 休眠期不延后 ping（无依赖声明）。
+- §3.3 服务端优化 feature（`…/muc#self-ping-optimization`）未接入生产。

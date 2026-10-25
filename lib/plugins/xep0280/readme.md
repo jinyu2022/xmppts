@@ -76,4 +76,4 @@ client.on("carbon:sent", (message) => {
 - 碳副本消息中同时存在 XEP-0297 解析出的 `message.forwarded`。
 - 服务器不支持时打印 warn，不影响正常通信。
 - §11 要求 carbon 必须来自本人 bare JID：两个 matcher 均已校验包装消息的 `from`，不符或缺失时忽略并 warn。
-- §9 的 `<private/>` 免碳复制尚未支持（见 debug M6）。
+- §9 的 `<private/>` 免碳复制尚未支持（见 debug CORR-002）。

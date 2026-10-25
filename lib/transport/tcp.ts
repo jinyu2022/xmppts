@@ -7,6 +7,7 @@ import { Status } from "./typing";
 import type { TransportEndpoint, TransportSink } from "./typing";
 import {
   StreamConnection,
+  STREAM_NS as STREAM_NS_URI,
   isStreamFeatures,
   type SendContext,
   type StanzaContext,
@@ -25,8 +26,8 @@ const log = logger.getLogger("tcp");
  * STARTTLS 决策与 TLS 升级。
  */
 export class XMPPConnection extends StreamConnection {
-  // NOSONAR: RFC 6120 固定的 XML 命名空间标识符，不是网络请求地址。
-  static readonly STREAM_NS = "http://etherx.jabber.org/streams";
+  // RFC 6120 §4.7.1 固定的流命名空间；常量定义在基类模块，此处保留静态属性供子类引用
+  static readonly STREAM_NS = STREAM_NS_URI;
   static readonly STARTTLS_NS = "urn:ietf:params:xml:ns:xmpp-tls";
   private socket: Socket | TLSSocket | null = null;
   /** 是否使用 TLS（直连 TLS / 非 STARTTLS 升级路径） */
@@ -161,8 +162,7 @@ export class XMPPConnection extends StreamConnection {
   }
 
   private setupSocketListeners(): void {
-    const socket = this.socket;
-    if (!socket) throw new Error("Socket未初始化");
+    const socket = this.socket!;
     // "connect" / "close" 为 node net.Socket 原生事件；TLSSocket 还需等 secureConnect
     const onReady = () => {
       this.clearConnectTimer();

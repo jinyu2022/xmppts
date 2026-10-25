@@ -109,16 +109,14 @@ export default class XEP0199 extends Ping implements Plugin {
         if (this.timer) clearInterval(this.timer);
         this.timer = setInterval(() => {
             void (async () => {
-                // 会话未就绪（未连接、协商中或自动重连中）不发 ping，避免无谓超时
-                if (!this.connection.isSessionActive) {
+                // 会话未就绪（未连接、协商中或自动重连中）或已关闭 keepalive 时不发 ping
+                if (!this.connection.isSessionActive || !this.config.keepalive) {
                     return;
                 }
-                if (this.config.keepalive) {
-                    try {
-                        await this.ping(this.connection.jid.domain, this.config.timeout);
-                    } catch (error) {
-                        log.warn("KeepAlive ping 失败", error);
-                    }
+                try {
+                    await this.ping(this.connection.jid.domain, this.config.timeout);
+                } catch (error) {
+                    log.warn("KeepAlive ping 失败", error);
                 }
             })();
         }, this.config.interval);

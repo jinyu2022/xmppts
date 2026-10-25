@@ -19,9 +19,7 @@ export class XEP0297 extends Forward implements Plugin {
 
     this.connection.registerEventPlugin("forward", {
       tagName: "message",
-      matcher: (message) => {
-        return !!(message?.forwarded);
-      },
+      matcher: (message) => message.forwarded != null,
     });
   }
 

@@ -62,4 +62,4 @@ const delayEl = XEP0203.createDelayEl(new Date(), "example.com", "offline");
 - 通常出现在**离线消息**或服务器缓存的消息中。
 - `delay.stamp` 是消息原始发送时间；`message` 本身的时间为当前投递时间。
 - 时间戳由 XEP-0082 解析；非法 `stamp` 会转成带元素上下文的 `Error`（作为 stanza 处理器抛出，会中断该 stanza 的分发）。
-- §2 允许 `<delay/>` 也出现在 presence（离线 presence 补发、MUC 历史），但当前只扩充了 `Message` 类型（见 debug S2）。
+- §2 允许 `<delay/>` 也出现在 presence（离线 presence 补发、MUC 历史），但当前只扩充了 `Message` 类型（见 debug CORR-005）。

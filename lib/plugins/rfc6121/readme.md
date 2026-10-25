@@ -47,7 +47,7 @@ interface Roster {
 
 | 方法 | 说明 |
 |------|------|
-| `getRoster()` | 获取完整名册 → `Promise<Roster[]>`；服务器报错抛 `XMPPError`。未实现 §2.6 roster versioning（不发/不存 `ver`）；服务端返回不含 `<query/>` 的空 result 时 `parseRosterEl` 会抛 `TypeError`（见 debug M3） |
+| `getRoster()` | 获取完整名册 → `Promise<Roster[]>`；服务端报错抛 `XMPPError`。未实现 §2.6 roster versioning（不发/不存 `ver`）；服务端返回不含 `<query/>` 的空 result 时直接取 `[0]` 并访问属性，会抛 `TypeError` |
 | `setRoster(jid, name?, group?)` | 新增/更新名册项；省略 `name` 会清空备注名，省略 `group` 会移出全部分组（RFC 6121 §2.4 原子更新） |
 | `removeRoster(jid)` | 删除名册项（`subscription="remove"`） |
 | `requestSubscription(jid)` | 请求订阅对方存在状态（`<presence type="subscribe">`） |
@@ -101,4 +101,4 @@ client.on("roster:update", (iq: Iq) => {
 - 名册的 `subscription` 由服务器根据双向订阅情况计算，客户端不应自行推断。
 - `setRoster()` 是原子更新：未提供的字段会被服务器置空（`name`、`group` 同理）。
 - 订阅管理方法只发送 presence，订阅状态的变化通过服务器下发的事件体现。
-- 推送来源校验依据 RFC 6121 §2.1.6：`from` 必须是自身 bare JID 或缺失。
+- 推送来源校验依据 RFC 6121 §2.1.6：`from` 必须是自身 bare JID 或缺失；当前只比较 `from.bare`，同账号其他 resource 也会通过（见 [debug.md](debug.md) SEC-001）。

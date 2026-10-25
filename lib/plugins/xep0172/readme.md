@@ -2,7 +2,7 @@
 
 通过 PEP 发布/获取用户昵称。
 
-- **依赖**：XEP-0030（服务发现）、XEP-0163（PEP；`message.event` 由 XEP0163 填充，源码 `dependencies` 暂只声明 XEP0030，见 debug S2）
+- **依赖**：XEP-0030（服务发现）、XEP-0163（PEP；`message.event` 由 XEP0163 填充，源码 `dependencies` 暂只声明 XEP0030，见 debug CORR-002）
 - **实例访问**：`connection.XEP0172`
 
 ## 可配置项

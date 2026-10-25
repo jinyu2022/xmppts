@@ -2,7 +2,7 @@
 
 基于 PEP 的个人头像发布与获取。
 
-- **依赖**：XEP-0030（服务发现）、XEP-0163（PEP）；源码 `dependencies` 目前只声明 XEP-0030，单独注册本插件时 `pep:avatar` 不会触发（见 debug S2）
+- **依赖**：XEP-0030（服务发现）、XEP-0163（PEP）；源码 `dependencies` 目前只声明 XEP-0030，单独注册本插件时 `pep:avatar` 不会触发（见 debug CORR-001）
 - **实例访问**：`connection.XEP0084`
 
 ## 可配置项
@@ -39,7 +39,7 @@ interface AvatarMetadata {
 
 | 事件 | 触发条件 | 回调参数 |
 |------|---------|----------|
-| `pep:avatar` | 收到头像元数据更新的 PEP 通知 | `Message`（`event.node === metadata`）；类型上为可选 `Message`（见 debug M9） |
+| `pep:avatar` | 收到头像元数据更新的 PEP 通知 | `Message`（`event.node === metadata`）；类型上为可选 `Message` |
 
 ## 公开 API
 
@@ -50,7 +50,7 @@ interface AvatarMetadata {
 | `XEP0084.NS`（静态） | `{ data, metadata }` 命名空间常量 |
 | `XEP0084.imageParser(image)`（静态） | 图片 → `{ base64Data, metadata }`（Node 路径 / 浏览器 `File`）；环境判定失败抛 `Error` |
 | `XEP0084.createDataPublishIq(img)`（静态） | 构造 `[dataIq, metadataIq]`；仅接受 PNG |
-| `XEP0084.parseMetadataEl(el)`（静态） | 解析 metadata 元素 → `{ metadata: AvatarMetadata \| null }`；NS 不符抛 `Error`（会中断 stanza 分发，见 debug L8） |
+| `XEP0084.parseMetadataEl(el)`（静态） | 解析 metadata 元素 → `{ metadata: AvatarMetadata \| null }`；NS 不符抛 `Error`（会中断 stanza 分发） |
 | `XEP0084.createRetrieveDataIq(to, id)`（静态） | 构造按 ItemID 取 `data` 节点的 IQ |
 
 ## 返回值约定
@@ -92,7 +92,7 @@ client.on("pep:avatar", (message) => {
 
 - 发布头像仅支持 **PNG**（`createDataPublishIq` 直接抛错，不做格式转换）。
 - `getAvatarData()` 不传 `metadata` 时会先检索元数据；返回的 `data` 为 base64。
-- 环境按运行时自动选择图片解析方式；Node 20+ 传 `File` 对象目前会被判失败（需 `window` 存在，见 debug M2）。
-- 收通知需在 disco/caps 声明 `urn:xmpp:avatar:metadata+notify`；插件已 `addFeature`（见 debug S2）。
-- 未实现：§3.5 禁用头像（发布空 `<metadata/>`）、§3.4 `url` 的 HTTP 回退、§4.2.2 `<pointer/>`、多 `<info/>`（只取第一个，见 debug M5）。
+- 环境按运行时自动选择图片解析方式；Node 20+ 传 `File` 对象目前会被判失败（需 `window` 存在）。
+- 收通知需在 disco/caps 声明 `urn:xmpp:avatar:metadata+notify`；插件已 `addFeature`（见 debug CORR-001）。
+- 未实现：§3.5 禁用头像（发布空 `<metadata/>`）、§3.4 `url` 的 HTTP 回退、§4.2.2 `<pointer/>`、多 `<info/>`（只取第一个，见 debug CORR-002）。
 - 头像变更通过 `pep:avatar` 事件接收，需自行处理 UI 更新。

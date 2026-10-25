@@ -45,5 +45,5 @@ const photo = await client.XEP0486!.getAvatar("room@conference.example.com");
 - 基于 **vCard PHOTO**（复用 XEP-0054 / XEP-0153）。
 - `getAvatar()` 返回的 `binval` 是 base64 编码的图片数据。
 - 需要用户对房间有相应权限。
-- 规范 §3.1 要求先以 disco#info 确认服务含 `<feature var='vcard-temp'/>`，当前未探测（见 [debug.md](debug.md) M3）。
+- 规范 §3.1 要求先以 disco#info 确认服务含 `<feature var='vcard-temp'/>`，当前未探测（见 [debug.md](debug.md) ARCH-001）。
 - 规范 §3.3/§3.4 的 `muc#roominfo_avatarhash` 发现路径（disco → 取 vCard → sha1 比对）未实现，`getAvatar()` 只取 PHOTO。
