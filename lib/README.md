@@ -50,6 +50,7 @@
 | [XEP-0084](plugins/xep0084/readme.md) | 用户头像 | XEP-0030（PEP 事件需 XEP-0163，源码未声明该依赖，见该目录 debug.md） |
 | [XEP-0115](plugins/xep0115/readme.md) | 实体能力 | XEP-0030 |
 | [XEP-0163](plugins/xep0163/readme.md) | 个人事件协议（PEP） | XEP-0030 |
+| [XEP-0171](plugins/xep0171/readme.md) | 语言翻译（客户端 + 可选的翻译机器人） | XEP-0030 |
 | [XEP-0172](plugins/xep0172/readme.md) | 用户昵称 | XEP-0030 |
 | [XEP-0184](plugins/xep0184/readme.md) | 消息回执 | XEP-0030 |
 | [XEP-0198](plugins/xep0198/readme.md) | 流管理 | — |
