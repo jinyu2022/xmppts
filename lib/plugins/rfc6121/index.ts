@@ -3,9 +3,12 @@ import type Connection from "@/connection";
 import { XMPPElement } from "@/ltx";
 import { Presence, Iq } from "@/stanza";
 import { XMPPError } from "@/errors";
+import { JID } from "@/JID";
 
+/** RFC 6121 §2.1.2.5 定义的 subscription 取值 */
+const SUBSCRIPTIONS = ["none", "to", "from", "both", "remove"] as const;
 /** 订阅状态：none=无 to=已订阅对方 from=被对方订阅 both=双向 remove=待删除 */
-type Subscription = "none" | "to" | "from" | "both" | "remove";
+type Subscription = typeof SUBSCRIPTIONS[number];
 /** 名册项 */
 export interface Roster {
   /** 是否已被预批准订阅 */
@@ -18,6 +21,8 @@ export interface Roster {
   ask?: "subscribe";
   /** 订阅状态 */
   subscription: Subscription;
+  /** 所属分组，允许同时属于多个分组（RFC 6121 §2.1.2.6） */
+  groups: string[];
 }
 
 /**
@@ -25,7 +30,7 @@ export interface Roster {
  * @see https://datatracker.ietf.org/doc/html/rfc6121
  */
 class RFC6121 implements Plugin {
-  static readonly NS = "jabber:iq:roster" as const;
+  static readonly NS = "jabber:iq:roster";
   readonly connection: Connection;
   constructor(connection: Connection) {
     this.connection = connection;
@@ -36,10 +41,11 @@ class RFC6121 implements Plugin {
     this.connection.registerEventPlugin("roster:update", {
       tagName: "iq",
       matcher: (iq) => {
-        //RFC 6121 §2.1.6 明确：roster push 的 `from` 必须是账户自身的 bare JID（缺失时视为隐式来自自身），否则客户端 MUST 忽略（否则任何实体都能伪造花名册推送）。
+        if (iq.type !== "set" || iq.roster === void 0) return false;
+        // RFC 6121 §2.1.6：from 缺失视为来自自身 bare JID；存在时必须恰好是自身 bare JID，同账号的其他 resource 也不接受
+        if (iq.xml.getAttribute("from") === null) return true;
         return (
-          iq.type === "set" &&
-          iq.roster !== void 0 &&
+          iq.from.resource === void 0 &&
           iq.from.bare === this.connection.jid.bare
         );
       },
@@ -77,18 +83,21 @@ class RFC6121 implements Plugin {
    *
    * @param jid - 联系人 JID
    * @param name - 备注名；省略则清空 name
-   * @param group - 分组名；省略则移出全部分组
-   * @throws 服务器返回错误时抛出 XMPPError
+   * @param group - 分组名或分组名数组；省略则移出全部分组
+   * @throws 服务器返回错误时抛出 XMPPError；分组名为空串时抛出 Error（§2.3.3）
    */
-  async setRoster(jid: string, name?: string, group?: string) {
+  async setRoster(jid: string, name?: string, group?: string | string[]) {
+    const groups = group === void 0 ? [] : Array.isArray(group) ? group : [group];
+    // RFC 6121 §2.3.3：零长度的 group 会被服务器以 not-acceptable 拒绝
+    if (groups.includes("")) throw new Error("分组名不能为空");
     const iqEl = Iq.createIq("set", void 0, RFC6121.NS);
     const item = XMPPElement.createElement("item", { jid });
     if (name) {
       item.setAttribute("name", name);
     }
-    if (group) {
+    for (const groupName of groups) {
       const groupEl = XMPPElement.createElement("group");
-      groupEl.textContent = group;
+      groupEl.textContent = groupName;
       item.appendChild(groupEl);
     }
     iqEl.getElementsByTagNameNS(RFC6121.NS, "query")[0].appendChild(item);
@@ -117,27 +126,51 @@ class RFC6121 implements Plugin {
     }
   }
 
-  /** 请求订阅对方的存在状态 */
-  requestSubscription(jid: string) {
-    const presence = Presence.createPresence(jid, "subscribe");
+  /**
+   * 请求订阅对方的存在状态。
+   *
+   * @param jid - 联系人 bare JID
+   */
+  requestSubscription(jid: string | JID) {
+    const contact = typeof jid === "string" ? new JID(jid) : jid;
+    // RFC 6121 §3.1.1：订阅 presence 的 to 必须是联系人的 bare JID
+    const presence = Presence.createPresence(contact.bare, "subscribe");
     this.connection.send(presence);
   }
 
-  /** 撤销被订阅/拒绝订阅请求/取消预批准 */
-  removeSubscription(jid: string) {
-    const presence = Presence.createPresence(jid, "unsubscribed");
+  /**
+   * 撤销被订阅/拒绝订阅请求/取消预批准。
+   *
+   * @param jid - 联系人 bare JID
+   */
+  removeSubscription(jid: string | JID) {
+    const contact = typeof jid === "string" ? new JID(jid) : jid;
+    // RFC 6121 §3.1.1：订阅 presence 的 to 必须是联系人的 bare JID
+    const presence = Presence.createPresence(contact.bare, "unsubscribed");
     this.connection.send(presence);
   }
 
-  /** 取消订阅 */
-  cancelSubscribe(jid: string) {
-    const presence = Presence.createPresence(jid, "unsubscribe");
+  /**
+   * 取消订阅。
+   *
+   * @param jid - 联系人 bare JID
+   */
+  cancelSubscribe(jid: string | JID) {
+    const contact = typeof jid === "string" ? new JID(jid) : jid;
+    // RFC 6121 §3.1.1：订阅 presence 的 to 必须是联系人的 bare JID
+    const presence = Presence.createPresence(contact.bare, "unsubscribe");
     this.connection.send(presence);
   }
 
-  /** 预批准被订阅请求/批准订阅请求 */
-  approveSubscription(jid: string) {
-    const presence = Presence.createPresence(jid, "subscribed");
+  /**
+   * 预批准被订阅请求/批准订阅请求。
+   *
+   * @param jid - 联系人 bare JID
+   */
+  approveSubscription(jid: string | JID) {
+    const contact = typeof jid === "string" ? new JID(jid) : jid;
+    // RFC 6121 §3.1.1：订阅 presence 的 to 必须是联系人的 bare JID
+    const presence = Presence.createPresence(contact.bare, "subscribed");
     this.connection.send(presence);
   }
 
@@ -151,13 +184,24 @@ class RFC6121 implements Plugin {
     if (el.namespaceURI !== RFC6121.NS) throw new Error("不是一个roster");
     const items = el.getElementsByTagName("item");
     const rosters = Array.from(items).map((item) => {
-      const approved = item.getAttribute("approved") === "true";
+      // RFC 6120 §2.6：XML boolean 的真值可写作 "true" 或 "1"
+      const approvedAttr = item.getAttribute("approved");
+      const approved = (approvedAttr === "true" || approvedAttr === "1");
       const jid = item.getAttribute("jid")!;
       const name = item.getAttribute("name") ?? void 0;
-      const ask = (item.getAttribute("ask") as "subscribe" | null) ?? void 0;
-      const subscription = (item.getAttribute("subscription") ??
-        "none") as Subscription;
-      return { approved, jid, name, ask, subscription };
+      // RFC 6121 §2.1.2.2：ask 只有 subscribe 一种合法取值，其余值忽略
+      const ask: Roster["ask"] =
+        item.getAttribute("ask") === "subscribe" ? "subscribe" : void 0;
+      // RFC 6121 §2.1.2.5：未定义的 subscription 取值忽略，按未提供处理（默认 none）
+      const subscriptionAttr = item.getAttribute("subscription");
+      const subscription =
+        SUBSCRIPTIONS.find((value) => value === subscriptionAttr) ?? "none";
+      // RFC 6121 §2.1.2.6：一个名册项可属于多个分组
+      const groups = Array.from(
+        item.getElementsByTagName("group"),
+        (group) => group.textContent,
+      );
+      return { approved, jid, name, ask, subscription, groups };
     });
 
     return { roster: rosters };
