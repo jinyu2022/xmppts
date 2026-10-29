@@ -331,7 +331,12 @@ export class XMPPConnection extends StreamConnection {
 
   /** 关闭底层 socket；会话状态与残留清理由 socket "close" 监听统一处理 */
   protected closeTransport(): void {
-    this.socket?.end();
+    // disconnect()、streamEnd、socket error 都会走到这里：已经 end 或已销毁时直接返回，
+    // 避免重复调用 socket.end() 和重复打印关闭日志
+    if (!this.socket || this.socket.destroyed || this.socket.writableEnded) {
+      return;
+    }
+    this.socket.end();
     log.info("关闭tcp连接");
   }
 }
