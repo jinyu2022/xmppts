@@ -53,7 +53,7 @@ export class Client extends Connection {
     return this.RFC6121!.getRoster();
   }
 
-  setRoster(jid: string, name?: string, group?: string) {
+  setRoster(jid: string, name?: string, group?: string | string[]) {
     return this.RFC6121!.setRoster(jid, name, group);
   }
 

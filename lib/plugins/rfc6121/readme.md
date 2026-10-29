@@ -32,6 +32,7 @@ interface Roster {
   name?: string;       // 备注名
   ask?: "subscribe";   // 已发出订阅请求且尚未被批准
   subscription: "none" | "to" | "from" | "both" | "remove";
+  groups: string[];    // 所属分组，可同时属于多个分组
 }
 ```
 
@@ -48,12 +49,12 @@ interface Roster {
 | 方法 | 说明 |
 |------|------|
 | `getRoster()` | 获取完整名册 → `Promise<Roster[]>`；服务端报错抛 `XMPPError`。未实现 §2.6 roster versioning（不发/不存 `ver`）；服务端返回不含 `<query/>` 的空 result 时直接取 `[0]` 并访问属性，会抛 `TypeError` |
-| `setRoster(jid, name?, group?)` | 新增/更新名册项；省略 `name` 会清空备注名，省略 `group` 会移出全部分组（RFC 6121 §2.4 原子更新） |
+| `setRoster(jid, name?, group?)` | 新增/更新名册项，`group` 可传单个分组名或数组；省略 `name` 会清空备注名，省略 `group` 会移出全部分组（RFC 6121 §2.4 原子更新）；分组名为空串时抛普通 `Error`（§2.3.3） |
 | `removeRoster(jid)` | 删除名册项（`subscription="remove"`） |
-| `requestSubscription(jid)` | 请求订阅对方存在状态（`<presence type="subscribe">`） |
-| `removeSubscription(jid)` | 撤销被订阅 / 拒绝订阅请求 / 取消预批准（`unsubscribed`） |
-| `cancelSubscribe(jid)` | 取消对对方的订阅（`unsubscribe`） |
-| `approveSubscription(jid)` | 批准对方的订阅请求（`subscribed`）；也用于预批准，§3.4.1 要求服务器宣告 `urn:xmpp:features:pre-approval`，当前未检查 |
+| `requestSubscription(jid)` | 请求订阅对方存在状态（`<presence type="subscribe">`）；`jid` 可传 string 或 `JID`，`to` 取 bare JID（§3.1.1） |
+| `removeSubscription(jid)` | 撤销被订阅 / 拒绝订阅请求 / 取消预批准（`unsubscribed`）；`to` 同样取 bare JID |
+| `cancelSubscribe(jid)` | 取消对对方的订阅（`unsubscribe`）；`to` 同样取 bare JID |
+| `approveSubscription(jid)` | 批准对方的订阅请求（`subscribed`）；也用于预批准，§3.4.1 要求服务器宣告 `urn:xmpp:features:pre-approval`，当前未检查；`to` 同样取 bare JID |
 | `RFC6121.parseRosterEl(el)`（静态） | 解析 `jabber:iq:roster` 的 `<query>` 元素 → `{ roster: Roster[] }`；命名空间不符时抛普通 `Error` |
 
 ## 使用示例
@@ -65,8 +66,9 @@ interface Roster {
 const roster = await client.RFC6121!.getRoster();
 
 // 新增/更新：省略 name 会清空备注名，省略 group 会移出全部分组
-// → Promise<void>（失败抛 XMPPError）
 await client.RFC6121!.setRoster("friend@example.com", "小明", "好友");
+// 属于多个分组时传数组
+await client.RFC6121!.setRoster("friend@example.com", "小明", ["好友", "同事"]);
 
 // 删除名册项
 // → Promise<void>（失败抛 XMPPError）
@@ -91,7 +93,7 @@ import type { Iq } from "@/stanza";
 client.on("roster:update", (iq: Iq) => {
   for (const item of iq.roster ?? []) {
     // subscription === "remove" 表示删除，否则为新增/更新
-    console.log(item.jid, item.subscription);
+    console.log(item.jid, item.subscription, item.groups);
   }
 });
 ```
@@ -99,6 +101,7 @@ client.on("roster:update", (iq: Iq) => {
 ## 注意事项
 
 - 名册的 `subscription` 由服务器根据双向订阅情况计算，客户端不应自行推断。
+- 未知的 `subscription` 取值按 `none` 处理，非 `subscribe` 的 `ask` 忽略（RFC 6121 §2.1.2.2、§2.1.2.5）。
 - `setRoster()` 是原子更新：未提供的字段会被服务器置空（`name`、`group` 同理）。
-- 订阅管理方法只发送 presence，订阅状态的变化通过服务器下发的事件体现。
-- 推送来源校验依据 RFC 6121 §2.1.6：`from` 必须是自身 bare JID 或缺失；当前只比较 `from.bare`，同账号其他 resource 也会通过（见 [debug.md](debug.md) SEC-001）。
+- 订阅管理方法只发送 presence，订阅状态的变化通过服务器下发的事件体现；`to` 统一取联系人的 bare JID，传入 full JID 会去掉 resource（RFC 6121 §3.1.1）。
+- 推送来源校验依据 RFC 6121 §2.1.6：`from` 缺失或恰好为自身 bare JID 时接受；同账号其他 resource 的 full JID 与外部地址一律拒绝，不触发 `roster:update`。
