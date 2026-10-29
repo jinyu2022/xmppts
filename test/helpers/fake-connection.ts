@@ -31,8 +31,25 @@ export class FakeConnection extends EventEmitter {
   readonly serverFeatures = new Set<string>();
   readonly XEP0030 = {
     addFeature: (ns: string) => void this.features.add(ns),
+    addIdentity: (category: string, type: string, name?: string, lang?: string) => {
+      // 与 XEP0030.addIdentity 一致：category+type+xml:lang 唯一，重复时抛错
+      if (
+        this.XEP0030.identities.some(
+          (i) => i.category === category && i.type === type && i.lang === lang,
+        )
+      ) {
+        const key = lang ? `${category}/${type}/${lang}` : `${category}/${type}`;
+        throw new Error(`已经存在相同身份标识: ${key}`);
+      }
+      this.XEP0030.identities.push({ category, type, name, lang });
+    },
     getServerFeatures: () => Promise.resolve(this.serverFeatures),
-    identities: [] as Array<{ category: string; type: string }>,
+    identities: [] as Array<{
+      category: string;
+      type: string;
+      name?: string;
+      lang?: string;
+    }>,
     features: this.features,
   };
   /** 发送拦截链 */
