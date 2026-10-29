@@ -293,6 +293,28 @@ describe("序列化（真实语料）", () => {
   }, 300_000);
 });
 
+// ─────────────────────────── 克隆 ───────────────────────────
+
+describe("克隆（真实语料）", () => {
+  const cases = [
+    ["CHAT_MSG", CHAT_MSG],
+    ["ROSTER", ROSTER],
+    ["MUC_PRESENCE", MUC_PRESENCE],
+    ["DISCO_INFO", DISCO_INFO],
+    ["FORM", FORM],
+    ["LONG_MSG", LONG_MSG],
+  ] as const;
+
+  it("cloneNode(true)", () => {
+    for (const [name, xml] of cases) {
+      const el = Parser.parse(xml);
+      scn("cloneNode(true)", name, () => {
+        sink = el.cloneNode(true);
+      });
+    }
+  }, 300_000);
+});
+
 // ─────────────────────────── 属性与树操作 ───────────────────────────
 
 describe("属性与树操作（真实语料）", () => {

@@ -120,6 +120,48 @@ describe('XMPPElement', () => {
     });
   });
 
+  describe('cloneNode', () => {
+    it('默认浅拷贝：只复制元素与属性，不复制子树', () => {
+      const el = XMPPElement.createElement('item', { jid: 'a@b' });
+      el.appendChild(XMPPElement.createElement('group'));
+
+      const clone = el.cloneNode();
+
+      expect(clone).not.toBe(el);
+      expect(clone.tagName).toBe('item');
+      expect(clone.getAttribute('jid')).toBe('a@b');
+      expect(clone.childElementCount).toBe(0);
+      expect(clone.parentNode).toBeNull();
+    });
+
+    it('深拷贝复制整棵子树，文本与命名空间一致', () => {
+      const el = Parser.parse(
+        `<x xmlns="urn:example:ns" a="1"><child>text</child><child b="2"/></x>`,
+      );
+
+      const clone = el.cloneNode(true);
+
+      expect(clone.toXMLString()).toBe(el.toXMLString());
+      expect(clone.namespaceURI).toBe('urn:example:ns');
+      expect(clone.children[0]).not.toBe(el.children[0]);
+      expect(clone.children[0].textContent).toBe('text');
+      expect(clone.children[0].parentNode).toBe(clone);
+    });
+
+    it('副本与原件互不影响', () => {
+      const el = XMPPElement.createElement('x', { a: '1' });
+      const child = XMPPElement.createElement('child', { b: '2' });
+      el.appendChild(child);
+
+      const clone = el.cloneNode(true);
+      clone.setAttribute('a', 'changed');
+      clone.children[0].setAttribute('b', 'changed');
+
+      expect(el.getAttribute('a')).toBe('1');
+      expect(child.getAttribute('b')).toBe('2');
+    });
+  });
+
   describe('getAttribute', () => {
     it('获取属性值', () => {
       const el = XMPPElement.createElement('message');
