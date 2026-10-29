@@ -12,7 +12,7 @@ export const ErrorConditions = [
   "not-acceptable",
   "not-allowed",
   "not-authorized",
-  "payment-required",
+  "policy-violation",
   "recipient-unavailable",
   "redirect",
   "registration-required",
