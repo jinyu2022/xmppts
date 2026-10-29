@@ -523,11 +523,40 @@ export class XMPPElement {
     return child;
   }
 
+  /**
+   * 克隆元素（DOM `Node.cloneNode` 语义）。
+   *
+   * 复制标签名与属性；`deep` 为 true 时递归复制子节点，文本节点是字符串，直接共享。
+   * 副本不挂载父节点，也不复制 `_prefix` / `_localName` 缓存（由 tagName 重新推导）。
+   * @param deep 是否递归复制子树
+   * @returns 新的元素；副本不挂载到父节点
+   */
+  public cloneNode(deep = false): XMPPElement {
+    const clone = new XMPPElement(this.tagName);
+    // 共享空表与解析器交出的冻结表都靠写时复制，只有自有的可写表需要独立一份
+    if (this._attrs !== EMPTY_ATTRS) {
+      clone._attrs = Object.isFrozen(this._attrs)
+        ? this._attrs
+        : Object.assign(Object.create(null) as Record<string, string>, this._attrs);
+    }
+    if (deep) {
+      for (const child of this._childNodes) {
+        if (typeof child === "string") {
+          clone._childNodes.push(child);
+        } else {
+          const childClone = child.cloneNode(true);
+          childClone._parentNode = clone;
+          clone._childNodes.push(childClone);
+        }
+      }
+    }
+    return clone;
+  }
+
   /** 返回父节点（没有父节点则返回 null）。 */
   public get parentNode(): XMPPElement | null {
     return this._parentNode;
   }
-
   /** 返回父元素（没有父元素则返回 null）。 */
   public get parentElement(): XMPPElement | null {
     return this._parentNode;
