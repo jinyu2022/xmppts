@@ -72,6 +72,7 @@
 | 模块 | 名称 | 说明 |
 |------|------|------|
 | [XEP-0054](plugins/xep0054/readme.md) | vCard-Temp（已废弃） | 静态解析方法，供其他插件复用 |
+| [XEP-0059](plugins/xep0059/readme.md) | 结果集管理（RSM） | 静态构造/解析方法，供 MAM 等协议复用 |
 | [XEP-0077](plugins/xep0077/readme.md) | 带内注册 | 独立 socket，手动实例化 |
 | [XEP-0082](plugins/xep0082/readme.md) | 日期/时间格式化 | 静态工具函数 |
 | [XEP-0106](plugins/xep0106/readme.md) | JID 转义 | 静态转义/反转义工具 |
