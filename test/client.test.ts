@@ -8,6 +8,7 @@ import type { TransportPipelineEvents } from "../lib/transport/stream-connection
 import { XMPPElement } from "../lib/ltx/Element";
 import { Parser } from "../lib/ltx/Parser";
 import { JID } from "../lib/JID";
+import { TCP_TEST_ENDPOINT } from "./helpers/mock-transport";
 
 /**
  * Client 便捷方法单元测试：注入假传输层与假插件实例，不建立 socket。
@@ -42,12 +43,7 @@ class FakeTransport {
 }
 
 function setup(sessionActive = true) {
-  const client = new Client(SELF, "test123", {
-    protocol: "xmpp",
-    host: "localhost",
-    port: 5222,
-    tls: false,
-  });
+  const client = new Client(SELF, "test123", { ...TCP_TEST_ENDPOINT });
   const transport = new FakeTransport(client._createSink());
   client.transport = transport;
   if (sessionActive) {

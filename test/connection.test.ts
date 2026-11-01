@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Connection, type SocketEventMap } from "../lib/connection";
+import { Connection } from "../lib/connection";
 import { ProtocolError } from "../lib/errors";
-import { Parser } from "../lib/ltx/Parser";
 import { Status } from "../lib/transport/typing";
 import {
+  AUTH_FEATURES,
+  awaitServer,
+  createTcpConnection,
   getServer,
+  negotiate,
   serverRef,
   stats,
+  waitForEvent,
   waitForReceived,
   type MockServer,
 } from "./helpers/mock-transport";
@@ -22,73 +26,15 @@ vi.mock("node:tls", async (importOriginal) => {
   return tlsMock(importOriginal);
 });
 
-/** 只宣告 PLAIN 认证机制的流特性 */
-const AUTH_FEATURES = `<stream:features xmlns:stream="http://etherx.jabber.org/streams">
-  <mechanisms xmlns="urn:ietf:params:xml:ns:xmpp-sasl">
-    <mechanism>PLAIN</mechanism>
-  </mechanisms>
-</stream:features>`;
-
-/** 认证后宣告资源绑定的流特性 */
-const BIND_FEATURES = `<stream:features xmlns:stream="http://etherx.jabber.org/streams">
-  <bind xmlns="urn:ietf:params:xml:ns:xmpp-bind"/>
-</stream:features>`;
-
-const SASL_SUCCESS = `<success xmlns="urn:ietf:params:xml:ns:xmpp-sasl"/>`;
-
 /**
  * Connection 层集成测试：使用 Mock Socket 模拟服务端，
  * 验证会话生命周期事件与自动重连的事件时序。
  */
 
 /** 创建非 TLS 直连 localhost 的连接 */
-function createConnection(
-  options: {
-    reconnect?: boolean;
-    reconnectMaxAttempts?: number;
-    reconnectInterval?: number;
-  } = {},
-): Connection {
-  return new Connection("juliet@capulet.lit/balcony", "test123", {
-    protocol: "xmpp",
-    host: "localhost",
-    port: 5222,
-    tls: false,
-    ...options,
-  });
-}
-
-/** 等待底层 socket 创建并返回对应 Mock 服务端（socket 在 connect() 内的微任务中创建） */
-async function awaitServer(): Promise<MockServer> {
-  return await vi.waitFor(() => getServer(), { timeout: 5000 });
-}
-
-/** 等待一次高层事件，忽略事件参数 */
-function waitForEvent<T extends keyof SocketEventMap>(
-  connection: Connection,
-  event: T,
-): Promise<void> {
-  return new Promise((resolve) => {
-    connection.once(event, () => resolve());
-  });
-}
-
-/** 推进一次完整协商：TCP 建立 → 流头 → PLAIN 认证 → 流重启 → 资源绑定 */
-async function negotiate(server: MockServer, boundJid: string): Promise<void> {
-  server.acceptConnection();
-  await waitForReceived(server, "<stream:stream");
-  server.send(AUTH_FEATURES);
-  await waitForReceived(server, "<auth");
-  server.send(SASL_SUCCESS);
-  await waitForReceived(server, "<stream:stream");
-  server.send(BIND_FEATURES);
-  const bind = Parser.parse(await waitForReceived(server, "<iq"));
-  server.send(`<iq xmlns="jabber:client" id="${bind.getAttribute("id")}" type="result">
-    <bind xmlns="urn:ietf:params:xml:ns:xmpp-bind">
-      <jid>${boundJid}</jid>
-    </bind>
-  </iq>`);
-}
+const createConnection = (
+  options: NonNullable<ConstructorParameters<typeof Connection>[2]> = {},
+) => createTcpConnection("juliet@capulet.lit/balcony", options);
 
 /** 连接并完成协商，等待 session:start */
 async function connectAndNegotiate(

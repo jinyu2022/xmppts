@@ -9,6 +9,7 @@ import { Pipeline } from "../../../lib/transport/pipeline";
 import { Status, type TransportSink, type TransportSocket } from "../../../lib/transport/typing";
 import type { TransportPipelineEvents } from "../../../lib/transport/stream-connection";
 import type { Options } from "../../../lib/types";
+import { TCP_TEST_ENDPOINT } from "../../helpers/mock-transport";
 
 /**
  * RFC 6121: XMPP Instant Messaging and Presence — Roster
@@ -42,10 +43,7 @@ class FakeTransport {
 /** 建立已绑定的连接；插件初始化后如需会话的请求才能正常发送 */
 function setup(options: Options = {}) {
   const connection = new Connection("test@example.com/resource", "test123", {
-    protocol: "xmpp",
-    host: "localhost",
-    port: 5222,
-    tls: false,
+    ...TCP_TEST_ENDPOINT,
     ...options,
   });
   const transport = new FakeTransport(connection._createSink());

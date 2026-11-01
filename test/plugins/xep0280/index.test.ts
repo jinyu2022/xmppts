@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import type { Connection } from "../../../lib/connection";
+import { Connection } from "../../../lib/connection";
 import { JID } from "../../../lib/JID";
 import type { Message } from "../../../lib/stanza";
+import { Parser } from "../../../lib/ltx/Parser";
+import { XEP0030 } from "../../../lib/plugins/xep0030";
 import XEP0280 from "../../../lib/plugins/xep0280";
 
 /**
@@ -86,5 +88,38 @@ describe("XEP0280 碳拷贝来源校验", () => {
     expect(
       matchers["carbon:received"](fakeMessage("juliet@capulet.example/balcony")),
     ).toBe(false);
+  });
+
+  it("Example 10：真实连接解析 carbon 后派发 carbon:received", () => {
+    const connection = new Connection("romeo@montague.example/home", "test123");
+    // 插件 init 依赖 XEP0030.addFeature，这里挂上真实实例而不触发会话事件
+    const disco = new XEP0030(connection);
+    disco.init();
+    Object.assign(connection, { XEP0030: disco });
+    new XEP0280(connection).init();
+
+    const received: Message[] = [];
+    connection.on("carbon:received", (message) => received.push(message));
+    // 绕过 socket 与 XML 流解析，直接把已解析的 stanza 交给连接层接收处理
+    const sink = connection._createSink();
+    sink.onStanza(
+      Parser.parse(`
+        <message xmlns="jabber:client" from="romeo@montague.example" to="romeo@montague.example/home" type="chat">
+          <received xmlns="urn:xmpp:carbons:2">
+            <forwarded xmlns="urn:xmpp:forward:0">
+              <message xmlns="jabber:client" from="juliet@capulet.example/balcony" to="romeo@montague.example/garden" type="chat">
+                <body>What man art thou that, thus bescreen'd in night, so stumblest on my counsel?</body>
+                <thread>0e3141cd80894871a68e6fe6b1ec56fa</thread>
+              </message>
+            </forwarded>
+          </received>
+        </message>
+      `),
+    );
+
+    // 外层 from 为本账号 bare JID，经转换层挂上 carbon 后通过 §11 来源校验
+    expect(received).toHaveLength(1);
+    expect(received[0].carbon?.type).toBe("received");
+    expect(received[0].from.bare).toBe("romeo@montague.example");
   });
 });

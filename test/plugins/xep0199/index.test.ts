@@ -4,7 +4,6 @@ import Ping from "../../../lib/plugins/xep0199/ping";
 import type { Connection } from "../../../lib/connection";
 import { Iq } from "../../../lib/stanza";
 import { Parser } from "../../../lib/ltx/Parser";
-import { Status } from "../../../lib/transport/typing";
 import { FakeConnection } from "../../helpers/fake-connection";
 
 /**
@@ -105,8 +104,8 @@ describe("XEP0199 插件入口", () => {
     const { connection, plugin } = setup({ interval: 60_000, timeout: 10_000 });
     const sendAsync = vi.spyOn(connection, "sendAsync");
     const pingSpy = vi.spyOn(plugin, "ping");
-    // 连接处于活跃状态，避免 keepalive 因断开而早退
-    connection.transport = { status: Status.BINDED };
+    // 会话活跃，避免 keepalive 因会话结束而早退
+    connection.sessionActive = true;
 
     plugin.keepAlivePing();
     expect((plugin as unknown as { timer?: unknown }).timer).toBeDefined();
@@ -122,14 +121,14 @@ describe("XEP0199 插件入口", () => {
     expect(pingIq.getAttribute("to")).toBe("capulet.lit");
     expect(pingIq.getElementsByTagNameNS(Ping.NS, "ping")).toHaveLength(1);
 
-    // 连接断开时早退
-    connection.transport = { status: Status.DISCONNECTED };
+    // 会话结束时早退
+    connection.sessionActive = false;
     await vi.advanceTimersByTimeAsync(60_000);
     expect(pingSpy).toHaveBeenCalledTimes(1);
 
     // keepalive=false 时不 ping
     const disabled = setup({ keepalive: false });
-    disabled.connection.transport = { status: Status.BINDED };
+    disabled.connection.sessionActive = true;
     disabled.plugin.keepAlivePing();
     const disabledSend = vi.spyOn(disabled.connection, "sendAsync");
     await vi.advanceTimersByTimeAsync(300_000);

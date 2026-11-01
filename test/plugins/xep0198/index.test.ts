@@ -1,7 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Connection } from "../../../lib/connection";
+import type { Connection } from "../../../lib/connection";
 import { Parser } from "../../../lib/ltx/Parser";
 import { Status } from "../../../lib/transport/typing";
+import {
+  BIND_SM_FEATURES,
+  answerBind,
+  createTcpConnection,
+  getServer,
+  negotiateStream,
+  serverRef,
+  stats,
+  waitForEvent,
+  waitForReceived,
+  type MockServer,
+} from "../../helpers/mock-transport";
 
 /**
  * XEP-0198: Stream Management
@@ -14,137 +26,23 @@ import { Status } from "../../../lib/transport/typing";
  * （node:net），无真实连接。
  */
 
-/** Mock 服务端，用于模拟服务端行为。 */
-interface MockServer {
-  /** 客户端已发出的 XML */
-  received: string[];
-  /** 模拟 TCP 连接建立 */
-  acceptConnection(): void;
-  /** 模拟服务端发送 XML */
-  send(xml: string): void;
-  /** 模拟服务端断开连接 */
-  close(): void;
-}
-
-const { createMockSocket, serverRef, stats } = await vi.hoisted(async () => {
-  const { EventEmitter } = await import("node:events");
-  const ref: { current: MockServer | null } = { current: null };
-  const counters = { connections: 0 };
-
-  class MockSocket extends EventEmitter {
-    readonly received: string[] = [];
-
-    setEncoding() {}
-    setTimeout() {}
-    connect() {}
-
-    /** 与真实 socket 一致：end() 最终触发 close 事件 */
-    end() {
-      this.emit("close");
-    }
-
-    write(xml: string): boolean {
-      this.received.push(xml);
-      return true;
-    }
-  }
-
-  function createSocket() {
-    counters.connections++;
-    const socket = new MockSocket();
-    ref.current = {
-      received: socket.received,
-      acceptConnection() {
-        socket.emit("connect");
-      },
-      send(xml: string) {
-        socket.emit("data", Buffer.from(xml));
-      },
-      close() {
-        socket.emit("close");
-      },
-    };
-    return socket;
-  }
-
-  return { createMockSocket: createSocket, serverRef: ref, stats: counters };
-});
-
 // 将 node:net.Socket 替换为 Mock Socket，避免真实 TCP 连接
-vi.mock("node:net", () => ({
-  Socket: vi.fn().mockImplementation(function () { return createMockSocket(); }),
-}));
-
-/** 只宣告 PLAIN 认证机制的流特性 */
-const AUTH_FEATURES = `<stream:features xmlns:stream="http://etherx.jabber.org/streams">
-  <mechanisms xmlns="urn:ietf:params:xml:ns:xmpp-sasl">
-    <mechanism>PLAIN</mechanism>
-  </mechanisms>
-</stream:features>`;
-
-/** 认证后宣告资源绑定与流管理的流特性 */
-const BIND_SM_FEATURES = `<stream:features xmlns:stream="http://etherx.jabber.org/streams">
-  <bind xmlns="urn:ietf:params:xml:ns:xmpp-bind"/>
-  <sm xmlns="urn:xmpp:sm:3"/>
-</stream:features>`;
-
-const SASL_SUCCESS = `<success xmlns="urn:ietf:params:xml:ns:xmpp-sasl"/>`;
+vi.mock("node:net", async () => {
+  const { netMock } = await import("../../helpers/mock-transport");
+  return netMock();
+});
 
 /** location 用于让重连跳过 SRV 解析 */
 const ENABLE_ATTRS = `id="sid-1" resume="true" location="localhost:5222"`;
 
-/** 获取当前 Mock 服务端。 */
-function getServer(): MockServer {
-  if (!serverRef.current) throw new Error("Mock 服务端尚未创建");
-  return serverRef.current;
-}
-
-/**
- * 等待客户端发送包含期望内容的 XML。
- * 管线化实现经 await next() 后才发送，需轮询等待微任务完成。
- */
-async function waitForReceived(
-  server: MockServer,
-  expected: string,
-): Promise<string> {
-  let xml = "";
-  await vi.waitFor(
-    () => {
-      const index = server.received.findIndex((item) => item.includes(expected));
-      if (index < 0) throw new Error(`客户端未发送：${expected}`);
-      xml = server.received.splice(index, 1)[0];
-    },
-    { timeout: 5000 },
-  );
-  return xml;
-}
+/** 服务器在绑定结果中分配的完整 JID */
+const BOUND_JID = "test@example.com/server-resource";
 
 /** 取出客户端已发出、包含指定内容的 XML（不存在时返回 undefined）。 */
 function takeReceived(server: MockServer, expected: string): string | undefined {
   const index = server.received.findIndex((item) => item.includes(expected));
   if (index < 0) return undefined;
   return server.received.splice(index, 1)[0];
-}
-
-/** 推进一次流协商：流头 → PLAIN 认证 → 流重启 → 送出绑定/流管理特性 */
-async function negotiate(server: MockServer) {
-  server.acceptConnection();
-  await waitForReceived(server, "<stream:stream");
-  server.send(AUTH_FEATURES);
-  await waitForReceived(server, "<auth");
-  server.send(SASL_SUCCESS);
-  await waitForReceived(server, "<stream:stream");
-  server.send(BIND_SM_FEATURES);
-}
-
-/** 应答资源绑定请求 */
-async function answerBind(server: MockServer) {
-  const bind = Parser.parse(await waitForReceived(server, "<iq"));
-  server.send(`<iq xmlns="jabber:client" id="${bind.getAttribute("id")}" type="result">
-    <bind xmlns="urn:ietf:params:xml:ns:xmpp-bind">
-      <jid>test@example.com/server-resource</jid>
-    </bind>
-  </iq>`);
 }
 
 /** 应答启用请求 */
@@ -154,23 +52,9 @@ async function answerEnable(server: MockServer, attrs = ENABLE_ATTRS) {
   server.send(`<enabled xmlns="urn:xmpp:sm:3" ${attrs}/>`);
 }
 
-/** 等待高层触发会话就绪事件 */
-function waitSessionStart(connection: Connection): Promise<void> {
-  return new Promise((resolve) => connection.once("session:start", resolve));
-}
-
-/** 等待高层触发自动重连成功事件（会话此前已建立，不发 session:start） */
-function waitReconnected(connection: Connection): Promise<void> {
-  return new Promise((resolve) => connection.once("reconnected", resolve));
-}
-
 /** 创建已注册 XEP0198 的高层连接（非 TLS，直连 localhost） */
 function createConnection(): Connection {
-  const connection = new Connection("test@example.com/resource", "test123", {
-    protocol: "xmpp",
-    host: "localhost",
-    port: 5222,
-    tls: false,
+  const connection = createTcpConnection("test@example.com/resource", {
     // 恢复用例依赖自动重连，间隔取小值避免拖慢测试
     reconnect: true,
     reconnectInterval: 10,
@@ -184,11 +68,11 @@ async function connectWithSm(
   connection: Connection,
   enableAttrs = ENABLE_ATTRS,
 ): Promise<MockServer> {
-  const sessionStart = waitSessionStart(connection);
+  const sessionStart = waitForEvent(connection, "session:start");
   await connection.connect();
   const server = getServer();
-  await negotiate(server);
-  await answerBind(server);
+  await negotiateStream(server, BIND_SM_FEATURES);
+  await answerBind(server, BOUND_JID);
   await sessionStart;
   await answerEnable(server, enableAttrs);
   return server;
@@ -201,7 +85,7 @@ async function reconnect(connection: Connection, server: MockServer) {
     timeout: 10_000,
   });
   const reconnected = getServer();
-  await negotiate(reconnected);
+  await negotiateStream(reconnected, BIND_SM_FEATURES);
   expect(connection.transport?.status).not.toBe(Status.DISCONNECTED);
   return reconnected;
 }
@@ -218,6 +102,8 @@ describe("XEP0198 流管理", () => {
   });
 
   afterEach(() => {
+    // 用例中途失败时也要恢复真实定时器，避免影响后续用例
+    vi.useRealTimers();
     // 断开残留连接，避免定时器与监听器影响后续用例
     try {
       connection?.disconnect();
@@ -255,8 +141,8 @@ describe("XEP0198 流管理", () => {
 
     await active.connect();
     const server = getServer();
-    await negotiate(server);
-    await answerBind(server);
+    await negotiateStream(server, BIND_SM_FEATURES);
+    await answerBind(server, BOUND_JID);
     await sessionStart;
 
     // <enable/> 之前的 stanza 不计入流管理（XEP-0198 §4），但启用请求必须照常发出
@@ -299,7 +185,7 @@ describe("XEP0198 流管理", () => {
     expect(resume.getAttribute("h")).toBe("0");
     expect(takeReceived(reconnected, "<iq")).toBeUndefined();
 
-    const restored = waitReconnected(active);
+    const restored = waitForEvent(active, "reconnected");
     reconnected.send(`<resumed xmlns="urn:xmpp:sm:3" h="0" previd="sid-1"/>`);
     await restored;
     expect(active.transport?.status).toBe(Status.BINDED);
@@ -313,13 +199,13 @@ describe("XEP0198 流管理", () => {
     const reconnected = await reconnect(active, server);
     await waitForReceived(reconnected, "<resume");
 
-    const restored = waitReconnected(active);
+    const restored = waitForEvent(active, "reconnected");
     reconnected.send(`<failed xmlns="urn:xmpp:sm:3">
       <item-not-found xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>
     </failed>`);
 
     // 服务端拒绝恢复后应回退到资源绑定，并在绑定后重新启用流管理
-    await answerBind(reconnected);
+    await answerBind(reconnected, BOUND_JID);
     await restored;
     await answerEnable(reconnected);
     expect(active.transport?.status).toBe(Status.BINDED);
@@ -330,9 +216,19 @@ describe("XEP0198 流管理", () => {
     connection = active;
     await connectWithSm(active);
 
-    active.disconnect();
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const reconnecting = vi.fn();
+    active.on("reconnecting", reconnecting);
 
+    // 先启用假定时器：若实现回归成「断开后仍由 close 回调调度重连」，
+    // 该定时器会落在可控范围内，下面的推进才能检出它
+    vi.useFakeTimers();
+    active.disconnect();
+    // 推进到远超重连间隔（10ms）的时长，期间不应产生新 socket
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(reconnecting).not.toHaveBeenCalled();
     expect(stats.connections).toBe(1);
+    // 断开同时释放传输引用，断开后的 close 回调不再有目标
+    expect(active.transport).toBeNull();
   });
 });
