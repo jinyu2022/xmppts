@@ -13,6 +13,7 @@ import { Pipeline } from "../lib/transport/pipeline";
 import { Status, type TransportSink, type TransportSocket } from "../lib/transport/typing";
 import type { TransportPipelineEvents } from "../lib/transport/stream-connection";
 import type { Options } from "../lib/types";
+import { TCP_TEST_ENDPOINT } from "./helpers/mock-transport";
 
 /**
  * Connection 单元测试：注入假传输层，不建立任何 socket。
@@ -43,10 +44,7 @@ class FakeTransport {
 /** 建立带假传输层的连接；`bind` 为 false 时保持会话未就绪 */
 function setup(options: Options = {}, bind = true) {
   const connection = new Connection("test@example.com/resource", "test123", {
-    protocol: "xmpp",
-    host: "localhost",
-    port: 5222,
-    tls: false,
+    ...TCP_TEST_ENDPOINT,
     ...options,
   });
   const transport = new FakeTransport(connection._createSink());

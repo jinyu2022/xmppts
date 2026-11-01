@@ -1,9 +1,14 @@
-import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WSConnection } from "../../lib/transport/websocket";
 import { JID } from "../../lib/JID";
 import { ProtocolError } from "../../lib/errors";
-import { Status, type TransportSink } from "../../lib/transport/typing";
+import { Status } from "../../lib/transport/typing";
+import {
+  AUTH_FEATURES,
+  BIND_FEATURES,
+  SASL_SUCCESS,
+  createSinkEvents,
+} from "../helpers/mock-transport";
 
 /**
  * WSConnection 单元测试：以假 WebSocket 类替换 globalThis.WebSocket，不建立真实连接。
@@ -82,32 +87,9 @@ function stubFetch(text: string) {
   );
 }
 
-/** 只宣告 PLAIN 的流特性 */
-const AUTH_FEATURES = `<stream:features xmlns:stream="http://etherx.jabber.org/streams">
-  <mechanisms xmlns="urn:ietf:params:xml:ns:xmpp-sasl">
-    <mechanism>PLAIN</mechanism>
-  </mechanisms>
-</stream:features>`;
-const BIND_FEATURES = `<stream:features xmlns:stream="http://etherx.jabber.org/streams">
-  <bind xmlns="urn:ietf:params:xml:ns:xmpp-bind"/>
-</stream:features>`;
-const SASL_SUCCESS = `<success xmlns="urn:ietf:params:xml:ns:xmpp-sasl"/>`;
-
-/** 创建测试用通知接收者：sink 回调转成 Node 事件便于等待 */
-function createSink(): { sink: TransportSink; events: EventEmitter } {
-  const events = new EventEmitter();
-  const sink: TransportSink = {
-    onBinded: () => events.emit("binded"),
-    onStanza: (stanza) => events.emit("stanza", stanza),
-    onClose: (closeEvent) => events.emit("close", closeEvent),
-    onError: (error) => events.emit("error", error),
-  };
-  return { sink, events };
-}
-
 /** 建立连接并触发 open（返回假 ws 与通知事件供后续驱动） */
 async function connectOpen() {
-  const { sink, events } = createSink();
+  const { sink, events } = createSinkEvents();
   // WebSocket 端点取自 XEP-0156 Example 1
   const connection = new WSConnection(
     new JID("juliet@capulet.lit/balcony"),
@@ -148,7 +130,7 @@ describe("WSConnection", () => {
     const connection = new WSConnection(
       new JID("juliet@capulet.lit/balcony"),
       "secret",
-      createSink().sink,
+      createSinkEvents().sink,
     );
     await connection.connect();
 
@@ -160,7 +142,7 @@ describe("WSConnection", () => {
     const connection = new WSConnection(
       new JID("juliet@capulet.lit/balcony"),
       "secret",
-      createSink().sink,
+      createSinkEvents().sink,
     );
 
     await expect(connection.connect()).rejects.toThrow(
@@ -172,7 +154,7 @@ describe("WSConnection", () => {
     const connection = new WSConnection(
       new JID("juliet@capulet.lit"),
       "secret",
-      createSink().sink,
+      createSinkEvents().sink,
     );
     expect(connection.jid.resource).toBeTruthy();
   });
@@ -272,7 +254,7 @@ describe("WSConnection", () => {
     const connection = new WSConnection(
       new JID("test@example.com"),
       "secret",
-      createSink().sink,
+      createSinkEvents().sink,
       true,
       { host: "example.com", port: 443, path: "/xmpp" },
     );

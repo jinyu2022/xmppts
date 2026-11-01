@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Connection } from "../../../lib/connection";
 import { Parser } from "../../../lib/ltx/Parser";
 import {
+  createTcpConnection,
   getServer,
+  negotiate,
   serverRef,
   waitForReceived,
   type MockServer,
@@ -18,20 +20,6 @@ vi.mock("node:tls", async (importOriginal) => {
   const { tlsMock } = await import("../../helpers/mock-transport");
   return tlsMock(importOriginal);
 });
-
-/** 只宣告 PLAIN 认证机制的流特性 */
-const AUTH_FEATURES = `<stream:features xmlns:stream="http://etherx.jabber.org/streams">
-  <mechanisms xmlns="urn:ietf:params:xml:ns:xmpp-sasl">
-    <mechanism>PLAIN</mechanism>
-  </mechanisms>
-</stream:features>`;
-
-/** 认证后宣告资源绑定的流特性 */
-const BIND_FEATURES = `<stream:features xmlns:stream="http://etherx.jabber.org/streams">
-  <bind xmlns="urn:ietf:params:xml:ns:xmpp-bind"/>
-</stream:features>`;
-
-const SASL_SUCCESS = `<success xmlns="urn:ietf:params:xml:ns:xmpp-sasl"/>`;
 
 /** §3.2 Example 5：检索结果，autojoin 的 "true"/"1" 两种写法各一个 */
 const RETRIEVE_BOOKMARKS = `
@@ -105,36 +93,10 @@ const active = new Set<Connection>();
 
 /** 创建注册了 XEP0402 的连接（未注册 XEP0045，自动加入逻辑应跳过） */
 function createConnection(): Connection {
-  const connection = new Connection("juliet@capulet.lit/balcony", "test123", {
-    protocol: "xmpp",
-    host: "localhost",
-    port: 5222,
-    tls: false,
-  });
+  const connection = createTcpConnection("juliet@capulet.lit/balcony");
   active.add(connection);
   connection.registerPlugin("XEP0402");
   return connection;
-}
-
-/** 推进一次流协商：流头 → PLAIN 认证 → 流重启 → 送出绑定特性 */
-async function negotiate(server: MockServer) {
-  server.acceptConnection();
-  await waitForReceived(server, "<stream:stream");
-  server.send(AUTH_FEATURES);
-  await waitForReceived(server, "<auth");
-  server.send(SASL_SUCCESS);
-  await waitForReceived(server, "<stream:stream");
-  server.send(BIND_FEATURES);
-}
-
-/** 应答资源绑定请求 */
-async function answerBind(server: MockServer) {
-  const bind = Parser.parse(await waitForReceived(server, "<iq"));
-  server.send(`<iq xmlns="jabber:client" id="${bind.getAttribute("id")}" type="result">
-    <bind xmlns="urn:ietf:params:xml:ns:xmpp-bind">
-      <jid>juliet@capulet.lit/balcony</jid>
-    </bind>
-  </iq>`);
 }
 
 /**
@@ -148,8 +110,7 @@ async function connectAndAnswerRetrieve(itemsXml: string) {
   );
   await connection.connect();
   const server = getServer();
-  await negotiate(server);
-  await answerBind(server);
+  await negotiate(server, "juliet@capulet.lit/balcony");
   await sessionStart;
 
   // 插件在 session:start 时检索书签

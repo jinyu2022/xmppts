@@ -4,7 +4,8 @@
  * 语料全部取自 RFC/XEP 示例（见各常量注释），不使用合成的畸形 XML：真实对端只会发规范
  * 不是性能场景。
  *
- * 运行：npx vitest run test/ltx/perf.test.ts --disable-console-intercept
+ * 运行：$env:XMPPTS_PERF="1"; npx vitest run test/ltx/perf.test.ts --disable-console-intercept
+ * 未设置 XMPPTS_PERF 时整组跳过：基准无断言、耗时随机器变化，不应计入默认测试集。
  * 数据记录：lib/ltx/perf.md
  *
  * 口径：每项自适应定标迭代数后取 5 轮最小值，用于压制 JIT/GC 抖动。绝对值只反映量级；
@@ -138,24 +139,30 @@ function writeChunks(data: string, size: number, parser: { write(s: string): voi
   }
 }
 
-console.log(
-  `[env] node ${process.version} / ${os.cpus()[0]?.model ?? "unknown"} / ${os.platform()}`,
-);
-for (const [name, xml] of [
-  ["CHAT_MSG", CHAT_MSG],
-  ["ROSTER", ROSTER],
-  ["MUC_PRESENCE", MUC_PRESENCE],
-  ["DISCO_INFO", DISCO_INFO],
-  ["FORM", FORM],
-  ["LONG_MSG", LONG_MSG],
-  ["SESSION", SESSION],
-] as const) {
-  console.log(`[corpus] ${name}: ${Buffer.byteLength(xml, "utf8")}B`);
+/** 基准仅在显式设置环境变量时运行，见文件头注释 */
+const RUN_PERF = process.env.XMPPTS_PERF === "1";
+const describePerf = RUN_PERF ? describe : describe.skip;
+
+if (RUN_PERF) {
+  console.log(
+    `[env] node ${process.version} / ${os.cpus()[0]?.model ?? "unknown"} / ${os.platform()}`,
+  );
+  for (const [name, xml] of [
+    ["CHAT_MSG", CHAT_MSG],
+    ["ROSTER", ROSTER],
+    ["MUC_PRESENCE", MUC_PRESENCE],
+    ["DISCO_INFO", DISCO_INFO],
+    ["FORM", FORM],
+    ["LONG_MSG", LONG_MSG],
+    ["SESSION", SESSION],
+  ] as const) {
+    console.log(`[corpus] ${name}: ${Buffer.byteLength(xml, "utf8")}B`);
+  }
 }
 
 // ─────────────────────────── 解析 ───────────────────────────
 
-describe("解析（真实语料）", () => {
+describePerf("解析（真实语料）", () => {
   const cases = [
     ["CHAT_MSG", CHAT_MSG],
     ["ROSTER", ROSTER],
@@ -199,7 +206,7 @@ describe("解析（真实语料）", () => {
 
 // ─────────────────────────── 查询 ───────────────────────────
 
-describe("查询（解析产物上，真实语料）", () => {
+describePerf("查询（解析产物上，真实语料）", () => {
   const iq = Parser.parse(DISCO_INFO);
   const form = Parser.parse(FORM);
   const roster = Parser.parse(ROSTER);
@@ -248,7 +255,7 @@ describe("查询（解析产物上，真实语料）", () => {
 
 // ─────────────────────────── 序列化 ───────────────────────────
 
-describe("序列化（真实语料）", () => {
+describePerf("序列化（真实语料）", () => {
   const iq = Parser.parse(DISCO_INFO);
   const roster = Parser.parse(ROSTER);
   const msg = Parser.parse(CHAT_MSG);
@@ -294,7 +301,7 @@ describe("序列化（真实语料）", () => {
 
 // ─────────────────────────── 克隆 ───────────────────────────
 
-describe("克隆（真实语料）", () => {
+describePerf("克隆（真实语料）", () => {
   const cases = [
     ["CHAT_MSG", CHAT_MSG],
     ["ROSTER", ROSTER],
@@ -316,7 +323,7 @@ describe("克隆（真实语料）", () => {
 
 // ─────────────────────────── 属性与树操作 ───────────────────────────
 
-describe("属性与树操作（真实语料）", () => {
+describePerf("属性与树操作（真实语料）", () => {
   const msg = Parser.parse(CHAT_MSG);
   const form = Parser.parse(FORM);
 
@@ -378,7 +385,7 @@ describe("属性与树操作（真实语料）", () => {
 
 // ─────────────────────────── escape / unescape ───────────────────────────
 
-describe("escape / unescape（真实文本）", () => {
+describePerf("escape / unescape（真实文本）", () => {
   const body = "Wherefore art thou, Romeo? I have been waiting since the party ended.";
   const quoted = `Tom & Jerry said "let's go" <fast> & farewell`;
   const entities = "a &amp; b &lt; c &gt; d &quot; e &apos;";

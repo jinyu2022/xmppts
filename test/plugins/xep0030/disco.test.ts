@@ -190,6 +190,18 @@ describe("XEP-0030", () => {
       expect(disco.identities).toHaveLength(0);
     });
 
+    it("重复添加相同 category/type/lang 的 identity 时抛错（§3.1）", () => {
+      const disco = createDisco();
+      disco.addIdentity("client", "pc", "Gabber");
+      // name 不参与唯一性判定
+      expect(() => disco.addIdentity("client", "pc", "Pidgin")).toThrow(
+        "已经存在相同身份标识: client/pc",
+      );
+      // 仅 xml:lang 不同的同名身份可共存
+      disco.addIdentity("client", "pc", "Gabber", "zh");
+      expect(disco.identities).toHaveLength(2);
+    });
+
     it("添加与移除 item", () => {
       const disco = createDisco();
       disco.addItem("people.shakespeare.lit", undefined, "Directory of Characters");

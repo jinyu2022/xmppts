@@ -3,7 +3,6 @@ import { XEP0030 } from "../../../lib/plugins/xep0030";
 import type { Connection } from "../../../lib/connection";
 import { XMPPError } from "../../../lib/errors";
 import { Parser } from "../../../lib/ltx/Parser";
-import { Status } from "../../../lib/transport/typing";
 import { FakeConnection } from "../../helpers/fake-connection";
 
 /**
@@ -35,7 +34,7 @@ describe("XEP0030 插件入口", () => {
     const sendAsync = vi.spyOn(connection, "sendAsync");
     expect(sendAsync).not.toHaveBeenCalled();
 
-    connection.transport = { status: Status.BINDED };
+    connection.sessionActive = true;
     connection.sendAsyncResult = Parser.parse(SERVER_INFO);
     connection.emit("session:start");
     expect(sendAsync).toHaveBeenCalledTimes(1);
@@ -52,7 +51,7 @@ describe("XEP0030 插件入口", () => {
 
   it("会话就绪：并发 getter 复用同一次查询并返回副本", async () => {
     const { connection, plugin } = setup();
-    connection.transport = { status: Status.BINDED };
+    connection.sessionActive = true;
     connection.sendAsyncResult = Parser.parse(SERVER_INFO);
     const sendAsync = vi.spyOn(connection, "sendAsync");
 
@@ -75,17 +74,17 @@ describe("XEP0030 插件入口", () => {
 
   it("会话结束：已查询过也不返回旧快照", async () => {
     const { connection, plugin } = setup();
-    connection.transport = { status: Status.BINDED };
+    connection.sessionActive = true;
     connection.sendAsyncResult = Parser.parse(SERVER_INFO);
     await plugin.getServerFeatures();
 
-    connection.transport = { status: Status.DISCONNECTED };
+    connection.sessionActive = false;
     await expect(plugin.getServerFeatures()).rejects.toThrow("会话尚未就绪");
   });
 
   it("服务器返回 IQ error：reject 且下次调用重新查询", async () => {
     const { connection, plugin } = setup();
-    connection.transport = { status: Status.BINDED };
+    connection.sessionActive = true;
     connection.sendAsyncResult = Parser.parse(
       `<iq type="error" id="info1"><error type="cancel"><service-unavailable xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/></error></iq>`
     );

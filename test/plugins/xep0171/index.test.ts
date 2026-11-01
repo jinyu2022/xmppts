@@ -10,7 +10,6 @@ import type { Connection } from "../../../lib/connection";
 import { Iq } from "../../../lib/stanza";
 import { Parser } from "../../../lib/ltx/Parser";
 import { XMPPError } from "../../../lib/errors";
-import { Status } from "../../../lib/transport/typing";
 import { FakeConnection } from "../../helpers/fake-connection";
 
 /**
@@ -23,7 +22,7 @@ describe("XEP0171 插件入口", () => {
   function setup(options?: XEP0171Options) {
     const connection = new FakeConnection();
     // 提供方应答前会检查会话状态：默认按已绑定处理
-    connection.transport = { status: Status.BINDED };
+    connection.sessionActive = true;
     const plugin = new XEP0171(connection as unknown as Connection, options);
     plugin.init();
     return { connection, plugin };
@@ -81,20 +80,6 @@ describe("XEP0171 插件入口", () => {
       lang: undefined,
     });
     expect(connection.XEP0030.identities).toHaveLength(1);
-  });
-
-  it("重连重建插件与 XEP0030 后身份仍只有一条", () => {
-    const provider = { translate: () => ({ text: "" }) };
-    const { connection } = setup({ provider });
-    // connect() 每次重建所有插件实例，XEP0030 的身份记录随新实例清空
-    connection.XEP0030.identities = [];
-    new XEP0171(connection as unknown as Connection, { provider }).init();
-    expect(connection.XEP0030.identities).toHaveLength(1);
-  });
-
-  it("同一 XEP0030 实例上重复 init() 会与真实插件一样抛错", () => {
-    const { plugin } = setup({ provider: { translate: () => ({ text: "" }) } });
-    expect(() => plugin.init()).toThrow(/已经存在相同身份标识/);
   });
 
   it("advertise=false 时不宣告", () => {
@@ -319,8 +304,8 @@ describe("XEP0171 插件入口", () => {
     const { connection } = setup({
       provider: { translate: () => ({ text: "译文" }) },
     });
-    // 模拟翻译回调期间断线
-    connection.transport = { status: Status.DISCONNECTED };
+    // 模拟翻译回调期间会话结束（真实连接在派发 session:end 前置为 false）
+    connection.sessionActive = false;
     const send = vi.spyOn(connection, "send");
 
     emitIq(

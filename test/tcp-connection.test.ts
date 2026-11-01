@@ -6,7 +6,7 @@ import { connect as tlsConnect } from "node:tls";
 import { JID } from "../lib/JID";
 import { Parser } from "../lib/ltx/Parser";
 import { ProtocolError } from "../lib/errors";
-import { Status, type TransportSink } from "../lib/transport/typing";
+import { Status } from "../lib/transport/typing";
 import type { TransportEndpoint } from "../lib/transport/typing";
 import { resolveSrv } from "../lib/dns";
 
@@ -14,6 +14,9 @@ import { resolveSrv } from "../lib/dns";
 vi.mock("../lib/dns", () => ({ resolveSrv: vi.fn(() => Promise.resolve([])) }));
 
 import {
+  AUTH_FEATURES,
+  BIND_FEATURES,
+  createSinkEvents,
   getServer,
   serverRef,
   waitForReceived,
@@ -40,13 +43,6 @@ const TEST_PASSWORD = "test123";
 /** 测试用的服务端端点（TCP 直连模式） */
 const SERVER_ENDPOINT = { host: "localhost", port: 5222 };
 
-/** 包含 PLAIN 认证机制的 stream features，模拟服务端在流协商第一阶段返回。 */
-const AUTH_FEATURES = `<stream:features xmlns:stream="http://etherx.jabber.org/streams">
-  <mechanisms xmlns="urn:ietf:params:xml:ns:xmpp-sasl">
-    <mechanism>PLAIN</mechanism>
-  </mechanisms>
-</stream:features>`;
-
 /** 同时宣告 starttls 与 PLAIN 认证机制的 stream features，用于验证 STARTTLS 升级。 */
 const STARTTLS_AUTH_FEATURES = `<stream:features xmlns:stream="http://etherx.jabber.org/streams">
   <starttls xmlns="urn:ietf:params:xml:ns:xmpp-tls">
@@ -64,11 +60,6 @@ const SCRAM_AUTH_FEATURES = `<stream:features xmlns:stream="http://etherx.jabber
   </mechanisms>
 </stream:features>`;
 
-/** 包含资源绑定的 stream features，模拟服务在 SASL 认证后返回。 */
-const BIND_FEATURES = `<stream:features xmlns:stream="http://etherx.jabber.org/streams">
-  <bind xmlns="urn:ietf:params:xml:ns:xmpp-bind"/>
-</stream:features>`;
-
 /** 传输实例 → 测试用事件发射器：sink 是回调接口，转成事件以便 Promise 等待 */
 const sinkEvents = new WeakMap<XMPPConnection, EventEmitter>();
 
@@ -78,13 +69,7 @@ function createClient(
   tls: boolean,
   endpoint?: TransportEndpoint,
 ): XMPPConnection {
-  const events = new EventEmitter();
-  const sink: TransportSink = {
-    onBinded: () => events.emit("binded"),
-    onStanza: (stanza) => events.emit("stanza", stanza),
-    onClose: (closeEvent) => events.emit("close", closeEvent),
-    onError: (error) => events.emit("error", error),
-  };
+  const { sink, events } = createSinkEvents();
   const connection = new XMPPConnection(jid, TEST_PASSWORD, sink, tls, endpoint);
   sinkEvents.set(connection, events);
   return connection;

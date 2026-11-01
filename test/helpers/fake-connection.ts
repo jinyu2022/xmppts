@@ -3,7 +3,6 @@ import { JID } from "../../lib/JID";
 import { Parser } from "../../lib/ltx/Parser";
 import { XMPPElement } from "../../lib/ltx/Element";
 import { SyncPipeline } from "../../lib/transport/pipeline";
-import { Status } from "../../lib/transport/typing";
 
 /**
  * 记录插件注册调用的假连接，供插件 index 入口单元测试使用（不建立 socket）。
@@ -71,12 +70,15 @@ export class FakeConnection extends EventEmitter {
   tls = true;
   transport: object | null = {};
 
-  /** 与 Connection.isSessionActive 对齐：由 transport.status 推导，测试改 transport 即可切换会话状态 */
+  /**
+   * 会话是否活跃，对应真实连接的 Connection.isSessionActive。
+   * 真实值由生命周期事件驱动（绑定成功置 true，派发 session:end 前置 false），与
+   * transport.status 并不同步：需要表达「会话已结束但传输尚未关闭」时直接置 false。
+   */
+  sessionActive = false;
+
   get isSessionActive(): boolean {
-    return (
-      (this.transport as { status?: number } | null)?.status ===
-      Status.BINDED
-    );
+    return this.sessionActive;
   }
 
   send(stanza: string | XMPPElement): void {

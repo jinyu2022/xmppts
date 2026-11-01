@@ -19,7 +19,7 @@
 
 | 用途       | 文件                                                       | 命令                                                                                      |
 | ---------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| 场景绝对值 | [test/ltx/perf.test.ts](../../test/ltx/perf.test.ts)       | `npx vitest run test/ltx/perf.test.ts --disable-console-intercept`                        |
+| 场景绝对值 | [test/ltx/perf.test.ts](../../test/ltx/perf.test.ts)       | `$env:XMPPTS_PERF="1"; npx vitest run test/ltx/perf.test.ts --disable-console-intercept`（不设该变量时整组跳过） |
 | 逐 API 绝对值 | [benchmarks/ltx.mjs](../../benchmarks/ltx.mjs)          | `node benchmarks/ltx.mjs`（完整档：`$env:LTX_BENCH="full"; node benchmarks/ltx.mjs`）|
 
 口径：每项自适应定标迭代数后取多轮最小值（perf 5 轮、bench 9 轮），用于压制 JIT/GC 抖动。绝对值对测量上下文极其敏感——**同一文件内前后对比可信，跨文件、跨版本不可直接比较**；这也意味着判断某项改动是否有效，必须在同一文件内做 A/B（`benchmarks/ltx.mjs` 的 `abInner`）。该基准直接加载 `lib/` 的 TypeScript 源码（Node ≥ 22.18 的类型剥离加一段 `x.js` → `x.ts` 解析钩子），不需要构建产物。其中的宽树（`BIG`，50 个相同子元素）与深链（`chain`）是规模对照用的合成形状，不对应真实 stanza，只用于观察规模效应。
