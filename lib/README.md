@@ -47,6 +47,7 @@
 | [XEP-0030](plugins/xep0030/readme.md) | 服务发现 | — |
 | [XEP-0045](plugins/xep0045/readme.md) | 多用户聊天（MUC） | XEP-0030 |
 | [XEP-0060](plugins/xep0060/readme.md) | 发布-订阅（PubSub，仅注册 `pubsub#errors` 解析器） | — |
+| [XEP-0066](plugins/xep0066/readme.md) | 带外数据（OOB） | XEP-0030 |
 | [XEP-0084](plugins/xep0084/readme.md) | 用户头像 | XEP-0030（PEP 事件需 XEP-0163，源码未声明该依赖，见该目录 debug.md） |
 | [XEP-0115](plugins/xep0115/readme.md) | 实体能力 | XEP-0030 |
 | [XEP-0163](plugins/xep0163/readme.md) | 个人事件协议（PEP） | XEP-0030 |
