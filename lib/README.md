@@ -69,6 +69,8 @@
 | [XEP-0410](plugins/xep0410/readme.md) | MUC 自 Ping | XEP-0045, XEP-0199 |
 | [XEP-0424](plugins/xep0424/readme.md) | 消息撤回 | XEP-0030 |
 | [XEP-0425](plugins/xep0425/readme.md) | 审核消息撤回 | XEP-0030, XEP-0424 |
+| [XEP-0428](plugins/xep0428/readme.md) | 回退标记（Fallback） | XEP-0030 |
+| [XEP-0461](plugins/xep0461/readme.md) | 消息回复 | XEP-0030 |
 | [XEP-0486](plugins/xep0486/readme.md) | MUC 房间头像 | —（复用 XEP-0054/XEP-0153 工具） |
 
 ### 工具类 / 独立模块（不自动注册）
@@ -84,3 +86,4 @@
 | [XEP-0153](plugins/xep0153/readme.md) | vCard 头像（遗留） | 静态方法，供 MUC 等兼容场景复用 |
 | [XEP-0156](plugins/xep0156/readme.md) | 发现替代连接方式 | 静态端点解析，由 WebSocket 传输调用 |
 | [XEP-0392](plugins/xep0392/readme.md) | 一致性颜色生成 | 静态方法，由字符串确定性生成颜色 |
+| [XEP-0426](plugins/xep0426/readme.md) | 正文中的字符计数 | 静态码点计数与偏移换算，供 fallback 区间使用 |
