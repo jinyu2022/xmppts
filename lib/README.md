@@ -28,6 +28,7 @@
 ## 地址与命名空间
 
 - [JID](JID.ts#L23) 的 `full` 在有 resource 时返回 `bare/resource`，无 resource 时返回 `bare`，不会追加空 `/`。
+- **localpart 一律使用 XEP-0106 转义后的形式**：`JID.parse()` 检测到需转义的字符时自动 `escapeLocal`，库内拿到的都是转义形式——包括 [SASL](auth/sasl.ts#L124) 的 authcid（PLAIN 直接拼 `jid.local`，SCRAM 只在其上再做 RFC 5802 的 `=`/`,` 转义）。未经转义的原始用户名属于 UI 层，不要传进协议代码；需要展示给人时用 `XEP0106.unescapeLocal()`。此约定已与 XSF 确认。
 - [XMPPElement](ltx/Element.ts#L101) 的 `namespaceURI` 在显式 `xmlns=""` 下返回 `null`，后代同样不继承外层默认命名空间；前缀绑定及子元素重新声明的命名空间不受影响。
 
 ## XML 属性与字符引用

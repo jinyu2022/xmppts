@@ -46,3 +46,4 @@ XEP0106.detect("space cadet");            // true
 - 只作用于 `localpart`，不要对 domainpart / resourcepart 调用（§2 要求 1）。
 - 不在映射表中的 `\xx` 序列（如 `\2plus\2is\4`、`foo\bar`、`foo\41r`）原样保留（§4.3）。
 - 本模块只做字符转换，不校验 JID 合法性；比较两个 JID 时应使用转义形式（§7 安全考虑）。`JID` 类构造时已调用 `detect` / `escapeLocal`（转义后小写映射 + NFC 归一），展示用 `getLocal(true)` / `toString(true)`。
+- **库内代码一律使用转义后的 localpart**，包括 SASL 的 authcid（PLAIN/SCRAM 直接用 `jid.local`）；未经转义的原始用户名属于 UI 层，不要传进协议代码。此约定已与 XSF 确认（见 [lib/README.md](../../README.md)）。
