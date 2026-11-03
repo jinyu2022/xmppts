@@ -63,15 +63,28 @@ export class JID {
     };
   }
 
-  /** 支持 JID 或 JID 字符串比较；已知非 JID 对象静态推导为 false */
+  /**
+   * 判断是否为同一jid地址
+   *
+   * 忽略 resource 比较账号请用 `bare`。
+   */
   equals(other: JID | string): boolean;
   equals(other: object): false;
   // 谓词承诺：true ⇒ other 为 JID 或 string，两个分支均成立
   equals(other: unknown): other is JID | string;
   equals(other: unknown): boolean {
     if (typeof other === "string") {
-      return this.toString() === other;
+      // 先把字符串解析成规范 JID：大小写、domain 末尾点和 XEP-0106 转义
+      // 都在这一步完成；解析失败说明不是合法 JID，直接判为不相等。
+      try {
+        other = new JID(other);
+      } catch {
+        return false;
+      }
     }
+    // 比较转义后的线上形式
+    // （XEP-0106 §4.1 第 5 条、§7）。三部分规则见 RFC 7622
+    // §3.2.3（domain）、§3.3（local）、§3.4（resource）。
     return other instanceof JID && this.toString() === other.toString();
   }
 

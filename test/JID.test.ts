@@ -75,6 +75,43 @@ describe("JID.equals", () => {
   it("已知非 JID 对象静态推导为 false", () => {
     expect(new JID("user@example.com").equals({})).toBe(false);
   });
+
+  it("字符串入参先规范化再比较（RFC 7622 / RFC 8265）", () => {
+    const jid = new JID("User@Example.COM");
+
+    expect(jid.equals("user@example.com")).toBe(true);
+    expect(jid.equals("User@Example.COM")).toBe(true);
+    expect(jid.equals("user@example.com.")).toBe(true);
+    expect(jid.equals("user@example.com/phone")).toBe(false);
+  });
+
+  it("非法字符串返回 false，不抛错", () => {
+    const jid = new JID("user@example.com");
+
+    expect(jid.equals("not a jid")).toBe(false);
+    expect(jid.equals("a@b@example.com")).toBe(false);
+  });
+
+  it("普通展示形式会先转义再比较", () => {
+    const jid = new JID("space cadet@example.com");
+
+    expect(jid.equals("space cadet@example.com")).toBe(true);
+  });
+
+  it("线上形式与展示形式有歧义时按线上形式解释", () => {
+    const space = new JID(String.raw`foo\20bar@example.com`);
+    const backslash = new JID(String.raw`foo\5c20bar@example.com`);
+    const ambiguous = String.raw`foo\20bar@example.com`;
+
+    // ambiguous 是 space 的线上形式，也是 backslash 的展示形式
+    expect(space.toString()).toBe(ambiguous);
+    expect(backslash.toString(true)).toBe(ambiguous);
+
+    // 字符串按线上形式解析：只等于 space，不等于展示形式对应的 backslash
+    expect(space.equals(ambiguous)).toBe(true);
+    expect(backslash.equals(ambiguous)).toBe(false);
+    expect(space.equals(backslash)).toBe(false);
+  });
 });
 
 describe("JID 转义与大小写归一（XEP-0106 / RFC 7622）", () => {
