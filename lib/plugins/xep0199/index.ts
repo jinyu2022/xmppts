@@ -63,6 +63,11 @@ export default class XEP0199 extends Ping implements Plugin {
             }
         };
         this.connection.on("iq", respondToPingIq);
+        // 会话终结时立即停掉定时器：重连会在新实例上重新启动 keepalive，
+        // 旧实例没有其他清理路径，否则新旧 interval 会叠加发送 ping
+        this.connection.on("session:end", () => {
+            this.stopKeepAlive();
+        });
 
         this.connection.XEP0030!.addFeature(Ping.NS);
         // 会话建立后才查询服务器特性；未就绪时 getter 直接拒绝，不会发出请求
@@ -103,10 +108,15 @@ export default class XEP0199 extends Ping implements Plugin {
 
     /**
      * 立即启动或重排 keepalive ping 的定时器。若已存在定时器，则先清除旧的。
-     * 该方法会在实例化时自动调用一次，通常不需要手动调用。
+     * 该方法在服务器宣告 ping 特性后自动调用，通常不需要手动调用。
+     * 定时器只在 session:start 后的异步查询中创建，会话终结后由 session:end 停表。
      */
     keepAlivePing() {
-        if (this.timer) clearInterval(this.timer);
+        this.stopKeepAlive();
+        if (this.connection.isSessionActive === false) {
+            log.debug("会话已终结，keepalive ping 不启动");
+            return;
+        }
         this.timer = setInterval(() => {
             void (async () => {
                 // 会话未就绪（未连接、协商中或自动重连中）或已关闭 keepalive 时不发 ping
@@ -121,5 +131,11 @@ export default class XEP0199 extends Ping implements Plugin {
             })();
         }, this.config.interval);
         this.timer?.unref?.();
+    }
+
+    /** 停止并清空 keepalive 定时器；重复调用无副作用。 */
+    private stopKeepAlive() {
+        if (this.timer) clearInterval(this.timer);
+        this.timer = undefined;
     }
 }
