@@ -94,6 +94,8 @@ describe("XEP0199 插件入口", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect((plugin as unknown as { timer?: unknown }).timer).toBeUndefined();
 
+    // 真实连接在派发 session:start 时会话已置为活跃
+    connection.sessionActive = true;
     connection.emit("session:start");
     await vi.advanceTimersByTimeAsync(0);
     expect((plugin as unknown as { timer?: unknown }).timer).toBeDefined();
@@ -143,5 +145,45 @@ describe("XEP0199 插件入口", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect((plugin as unknown as { timer?: unknown }).timer).toBeUndefined();
     expect(vi.spyOn(connection, "sendAsync")).not.toHaveBeenCalled();
+  });
+
+  it("session:end 清除 keepalive 定时器，避免重连后多实例叠加 ping", async () => {
+    vi.useFakeTimers();
+    const { connection, plugin } = setup({ interval: 60_000, timeout: 10_000 });
+    const pingSpy = vi.spyOn(plugin, "ping");
+    connection.sessionActive = true;
+
+    plugin.keepAlivePing();
+    expect((plugin as unknown as { timer?: unknown }).timer).toBeDefined();
+
+    // 真实连接在派发 session:end 之前已把会话状态降为不可用
+    connection.sessionActive = false;
+    connection.emit("session:end");
+
+    // 旧实例不再持有定时器，重连后新建实例重新启动，不会叠加
+    expect((plugin as unknown as { timer?: unknown }).timer).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(pingSpy).not.toHaveBeenCalled();
+  });
+
+  it("特性查询返回时会话已结束则不启动 keepalive", async () => {
+    vi.useFakeTimers();
+    const { connection, plugin } = setup({ interval: 60_000 });
+    connection.serverFeatures.add(Ping.NS);
+    let resolveFeatures!: (features: Set<string>) => void;
+    vi.spyOn(connection.XEP0030, "getServerFeatures").mockReturnValue(
+      new Promise<Set<string>>((resolve) => {
+        resolveFeatures = resolve;
+      }),
+    );
+
+    connection.emit("session:start");
+    // 查询在途时断开：session:end 先于特性结果到达
+    connection.sessionActive = false;
+    connection.emit("session:end");
+    resolveFeatures(connection.serverFeatures);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect((plugin as unknown as { timer?: unknown }).timer).toBeUndefined();
   });
 });

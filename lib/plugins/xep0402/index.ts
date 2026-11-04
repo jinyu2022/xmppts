@@ -71,10 +71,15 @@ export default class XEP0402 extends Bookmarks implements Plugin {
             if (!this.connection.XEP0045) return;
             const autojoinRooms = this.bookmarks.filter((b) => b.autojoin);
 
-            // 各房间缺失昵称时回退到同一份用户昵称，只需查询一次
-            const fallbackNick = autojoinRooms.some((room) => !room.nick)
-                ? await this.connection.XEP0172?.getSelfNick()
-                : undefined;
+            // 各房间缺失昵称时回退到同一份用户昵称，只需查询一次；取不到不影响加入
+            let fallbackNick: string | undefined;
+            if (autojoinRooms.some((room) => !room.nick)) {
+                try {
+                    fallbackNick = await this.connection.XEP0172?.getSelfNick();
+                } catch (error) {
+                    log.warn("获取自己的昵称失败，回退到 JID localpart", error);
+                }
+            }
             for (const roomJid of autojoinRooms) {
                 const nick = roomJid.nick ?? fallbackNick ?? this.connection.jid.local;
                 try {
