@@ -3,6 +3,7 @@ import { JID } from "../../lib/JID";
 import { Parser } from "../../lib/ltx/Parser";
 import { XMPPElement } from "../../lib/ltx/Element";
 import { SyncPipeline } from "../../lib/transport/pipeline";
+import type { DataForm } from "../../lib/plugins/xep0004/form";
 
 /**
  * 记录插件注册调用的假连接，供插件 index 入口单元测试使用（不建立 socket）。
@@ -28,6 +29,25 @@ export class FakeConnection extends EventEmitter {
   /** XEP0030 假实现：客户端宣告的特性、服务器特性与身份 */
   readonly features = new Set<string>();
   readonly serverFeatures = new Set<string>();
+  /** disco#items 假数据，键为查询的 JID */
+  readonly discoItems = new Map<
+    string,
+    Array<{ jid: string; name?: string; node?: string }>
+  >();
+  /** disco#info 假数据，键为查询的 JID；未配置时查询失败 */
+  readonly discoInfo = new Map<
+    string,
+    {
+      identities: Array<{
+        category: string;
+        type: string;
+        name?: string;
+        lang?: string;
+      }>;
+      features: Set<string>;
+      extensions?: DataForm;
+    }
+  >();
   readonly XEP0030 = {
     addFeature: (ns: string) => void this.features.add(ns),
     addIdentity: (category: string, type: string, name?: string, lang?: string) => {
@@ -43,6 +63,14 @@ export class FakeConnection extends EventEmitter {
       this.XEP0030.identities.push({ category, type, name, lang });
     },
     getServerFeatures: () => Promise.resolve(this.serverFeatures),
+    getDiscoItems: (to: string | JID) =>
+      Promise.resolve(this.discoItems.get(to.toString()) ?? []),
+    getDiscoInfo: (to: string | JID) => {
+      const info = this.discoInfo.get(to.toString());
+      return info
+        ? Promise.resolve(info)
+        : Promise.reject(new Error(`未配置 ${to.toString()} 的 disco#info`));
+    },
     identities: [] as Array<{
       category: string;
       type: string;
