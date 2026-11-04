@@ -115,6 +115,46 @@ describe("EntityCaps", () => {
       const ver = await EntityCaps.generateCapsVerification(identities, []);
       expect(typeof ver).toBe("string");
     });
+
+    it("§5.1 i;octet：feature 的标点与数字按字节序，不按语言序", async () => {
+      // localeCompare 认为 "sm:3" < "sm3"（符号权重低于数字），
+      // 而 i;octet 比较 '3'(0x33) < ':'(0x3A)，因此 "sm3" 在前。
+      const ver = await EntityCaps.generateCapsVerification(
+        [{ category: "client", type: "pc" }],
+        ["urn:xmpp:sm:3", "urn:xmpp:sm3"],
+      );
+      expect(ver).toBe("i5B9VCESYDP1Vx2s7wWzIBByg44=");
+    });
+
+    it("§5.1 i;octet：大小写按字节序（大写在小写前）", async () => {
+      const ver = await EntityCaps.generateCapsVerification(
+        [{ category: "client", type: "pc" }],
+        ["urn:xmpp:a", "urn:xmpp:Z"],
+      );
+      // 'Z'(0x5A) < 'a'(0x61)；localeCompare 会把小写排在前
+      expect(ver).toBe("IRN3xZTpLlNQj5g/inwYAkJrKUs=");
+    });
+
+    it("§5.1 i;octet：表单值按码点序，非 BMP 字符不按 UTF-16 码元排", async () => {
+      const dataForm: DataForm = {
+        type: "result",
+        fields: [
+          { var: "FORM_TYPE", type: "hidden", values: ["urn:xmpp:test"] },
+          {
+            var: "v",
+            type: "text-single",
+            // 码点序 U+E000 < U+10000；UTF-16 码元序则相反（D800 < E000）
+            values: ["\u{10000}", "\uE000"],
+          } as FormField,
+        ],
+      };
+      const ver = await EntityCaps.generateCapsVerification(
+        [{ category: "client", type: "pc" }],
+        [],
+        dataForm,
+      );
+      expect(ver).toBe("3++GxB5SIIzn7EMj564NfMVl+6A=");
+    });
   });
 
   describe("createCapsElement", () => {
