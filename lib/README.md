@@ -67,6 +67,7 @@
 | [XEP-0368](plugins/xep0368/readme.md) | 直连 TLS 的 SRV 记录 | — |
 | [XEP-0402](plugins/xep0402/readme.md) | PEP 原生书签 | XEP-0030、XEP-0163、XEP-0060 |
 | [XEP-0410](plugins/xep0410/readme.md) | MUC 自 Ping | XEP-0045, XEP-0199 |
+| [XEP-0421](plugins/xep0421/readme.md) | 半匿名 MUC 的住户标识 | XEP-0030 |
 | [XEP-0424](plugins/xep0424/readme.md) | 消息撤回 | XEP-0030 |
 | [XEP-0425](plugins/xep0425/readme.md) | 审核消息撤回 | XEP-0030, XEP-0424 |
 | [XEP-0428](plugins/xep0428/readme.md) | 回退标记（Fallback） | XEP-0030 |
