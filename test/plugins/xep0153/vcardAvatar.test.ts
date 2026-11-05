@@ -35,18 +35,18 @@ describe("XEP0153", () => {
         </vCard>
       `);
       const result = XEP0153.parseVCardAvatar(xml);
-      expect(result.type).toBe("image/jpeg");
-      expect(result.binval).toBe("Base64-encoded-avatar-file-here!");
+      expect(result?.type).toBe("image/jpeg");
+      expect(result?.binval).toBe("Base64-encoded-avatar-file-here!");
     });
 
     it("§4.1：空 PHOTO（无头像）解析出空 binval", () => {
       const xml = Parser.parse(`<vCard xmlns="vcard-temp"><PHOTO/></vCard>`);
-      expect(XEP0153.parseVCardAvatar(xml).binval).toBe("");
+      expect(XEP0153.parseVCardAvatar(xml)?.binval).toBe("");
     });
 
-    it("没有 PHOTO 元素时抛错", () => {
+    it("没有 PHOTO 元素表示无头像，返回 undefined", () => {
       const xml = Parser.parse(`<vCard xmlns="vcard-temp"><FN>Romeo</FN></vCard>`);
-      expect(() => XEP0153.parseVCardAvatar(xml)).toThrow("没有photo标签");
+      expect(XEP0153.parseVCardAvatar(xml)).toBeUndefined();
     });
 
     it("PHOTO 不在 vcard-temp 命名空间时抛错", () => {

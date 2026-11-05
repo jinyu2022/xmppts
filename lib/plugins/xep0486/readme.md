@@ -26,7 +26,7 @@
 | 方法 | 说明 |
 |------|------|
 | `setAvatar(to, image?)` | 设置 MUC 房间头像（`File` 或绝对路径）；不传 `image` = 删除；失败抛 `XMPPError` |
-| `getAvatar(to)` | 获取房间头像 → `VCardPhoto`（`{ binval, type }`）；失败抛 `XMPPError` |
+| `getAvatar(to)` | 获取房间头像 → `VCardPhoto \| undefined`（`{ binval, type }`）；房间无头像时为 `undefined`，服务端报错抛 `XMPPError` |
 | `XEP0486.createSetAvatarIq(to, image?)`（静态） | 构造设置头像 IQ |
 | `XEP0486.createGetAvatarIq(to)`（静态） | 构造获取头像 IQ |
 
@@ -36,7 +36,7 @@
 // 设置房间头像 → Promise<XMPPElement>（不传 image 表示删除；失败抛 XMPPError）
 await client.XEP0486!.setAvatar("room@conference.example.com", "./room.png");
 
-// 获取房间头像 → VCardPhoto（binval 为 base64；失败抛 XMPPError）
+// 获取房间头像 → VCardPhoto | undefined（无头像时为 undefined；服务端报错抛 XMPPError）
 const photo = await client.XEP0486!.getAvatar("room@conference.example.com");
 ```
 

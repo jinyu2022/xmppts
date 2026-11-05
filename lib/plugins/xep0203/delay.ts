@@ -11,7 +11,8 @@ export class Delay {
         if (!delayElement)
             throw new Error(`未找到 delay 标签: ${delay.toXMLString()}`);
         const delayStamp = delayElement.getAttribute("stamp")!;
-        const delayFrom = delayElement.getAttribute("from")!;
+        // §2：from 是 #IMPLIED，缺失表示延迟由服务器/本地归档添加，没有具体实体
+        const delayFrom = delayElement.getAttribute("from") ?? undefined;
         const delayReason = delayElement.textContent || void 0;
         // parseDateTime 对非法格式抛错，转成带元素上下文的 Error
         let stamp: Date;

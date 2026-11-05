@@ -33,7 +33,8 @@ export default class XEP0184 extends MessageReceipts implements Plugin {
         // 聊天室中发送 “groupchat” 类型的内容消息时，不建议请求回执
         stanza.getAttribute("type") !== "groupchat" &&
         stanza.getAttribute("type") !== "error" &&
-        stanza.getElementsByTagName("body").length &&
+        // 只看直接子元素：递归查找会把 <forwarded><message><body> 的内层 body 也算进来
+        stanza.querySelector(":scope > body") &&
         // 幂等守卫，避免重复添加回执请求
         !stanza.getElementsByTagNameNS(MessageReceipts.NS, "request").length
         // TODO: 检查对方是否支持回执，若不支持则不附加 request

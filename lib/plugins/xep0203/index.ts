@@ -26,7 +26,8 @@ declare module "../../stanza" {
         /** xep0203 */
         delay?: {
             stamp: Date;
-            from: string;
+            /** 延迟信息添加方；§2 为可选属性，缺失时为 undefined */
+            from?: string;
             reason?: string;
         };
     }

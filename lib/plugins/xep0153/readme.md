@@ -27,7 +27,7 @@
 |------|------|
 | `XEP0153.createSetVCardAvatarIq(to, image?)`（静态） | 构造 vCard 头像设置 IQ；不传 `image` = 删除头像 |
 | `XEP0153.createUpdatePresence(to, hash)`（静态） | 生成含头像哈希的 presence **XML 字符串**；`hash` = **图片数据的十六进制 SHA-1**（非 base64），`to` 必填并强制写入 `to` 属性 |
-| `XEP0153.parseVCardAvatar(stanza)`（静态） | 解析 vCard PHOTO → `VCardPhoto`；无 PHOTO 抛 `Error` |
+| `XEP0153.parseVCardAvatar(stanza)`（静态） | 解析 vCard PHOTO → `VCardPhoto \| undefined`；无 PHOTO 表示没有头像，返回 `undefined`；PHOTO 命名空间不对才抛错 |
 | `XEP0153.NS`（静态） | `"vcard-temp:x:update"` |
 
 ```typescript
@@ -51,7 +51,7 @@ const iq = await XEP0153.createSetVCardAvatarIq("user@example.com", image);
 // 生成含哈希的 presence → XML 字符串（avatarHash = 图片数据的十六进制 SHA-1）
 const presenceXml = XEP0153.createUpdatePresence("user@example.com", avatarHash);
 
-// 解析 vCard PHOTO → VCardPhoto；无 PHOTO 抛 Error
+// 解析 vCard PHOTO → VCardPhoto | undefined；无 PHOTO 表示没有头像
 const photo = XEP0153.parseVCardAvatar(vCardEl);
 ```
 

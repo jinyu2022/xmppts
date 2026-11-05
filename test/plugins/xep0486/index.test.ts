@@ -58,4 +58,18 @@ describe("XEP0486 插件入口", () => {
     connection.sendAsyncResult = Parser.parse(`<iq type="error"/>`);
     await expect(plugin.getAvatar(room)).rejects.toBeInstanceOf(XMPPError);
   });
+
+  it("房间没有头像（vCard 无 PHOTO）时 getAvatar 返回 undefined，不抛错", async () => {
+    const { connection, plugin } = setup();
+    const room = "garden@chat.shakespeare.example.org";
+    connection.sendAsyncResult = Parser.parse(
+      `<iq type="result" from="${room}">
+        <vCard xmlns="vcard-temp">
+          <FN>Garden</FN>
+        </vCard>
+      </iq>`,
+    );
+
+    await expect(plugin.getAvatar(room)).resolves.toBeUndefined();
+  });
 });

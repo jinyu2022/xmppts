@@ -72,6 +72,18 @@ describe("Delay", () => {
       expect(result.delay.stamp.getTime()).toBe(Date.UTC(2002, 8, 10, 23, 5, 37));
     });
 
+    it("§2：from 是可选属性，缺失时为 undefined", () => {
+      const xml = Parser.parse(`
+        <message from="romeo@montague.net/orchard" to="juliet@capulet.com" type="chat">
+          <delay xmlns="urn:xmpp:delay" stamp="2002-09-10T23:08:25Z">Offline Storage</delay>
+        </message>
+      `);
+      const result = Delay.parseDelayEl(xml);
+      expect(result.delay.from).toBeUndefined();
+      expect(result.delay.reason?.trim()).toBe("Offline Storage");
+      expect(result.delay.stamp.getTime()).toBe(Date.UTC(2002, 8, 10, 23, 8, 25));
+    });
+
     it("未找到 delay 元素时抛错", () => {
       const el = XMPPElement.createElement("message");
       expect(() => Delay.parseDelayEl(el)).toThrow("未找到 delay 标签");

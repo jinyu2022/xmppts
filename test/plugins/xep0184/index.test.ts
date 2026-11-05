@@ -4,6 +4,7 @@ import { MessageReceipts } from "../../../lib/plugins/xep0184/messageReceipts";
 import type { Connection } from "../../../lib/connection";
 import { JID } from "../../../lib/JID";
 import { Message } from "../../../lib/stanza";
+import { XMPPElement } from "../../../lib/ltx/Element";
 import { FakeConnection } from "../../helpers/fake-connection";
 
 /**
@@ -50,6 +51,25 @@ describe("XEP0184 插件入口", () => {
     expect(withoutBody.getElementsByTagNameNS(MessageReceipts.NS, "request")).toHaveLength(
       0,
     );
+  });
+
+  it("只按直接子元素判断 body，转发消息内层 body 不触发回执请求", () => {
+    const connection = setup();
+    const to = "kingrichard@royalty.england.lit/throne";
+
+    // 外层没有 body，body 只存在于 <forwarded><message> 里
+    const outer = Message.createMessage(to);
+    const forwarded = XMPPElement.createElementNS(
+      "urn:xmpp:forward:0",
+      "forwarded",
+    );
+    forwarded.appendChild(Message.createMessage(to, "inner body"));
+    outer.appendChild(forwarded);
+
+    connection.pipeline.run("send", { stanza: outer });
+    expect(
+      outer.getElementsByTagNameNS(MessageReceipts.NS, "request"),
+    ).toHaveLength(0);
   });
 
   it("收到普通回执请求时自动回复 received", () => {
