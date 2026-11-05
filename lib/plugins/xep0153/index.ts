@@ -47,10 +47,14 @@ export class XEP0153 {
         return `<presence to='${to}'><x xmlns='${XEP0153.NS}'><photo>${avatarHash}</photo></x></presence>`;
     }
 
-    static parseVCardAvatar(stanza: XMPPElement): VCardPhoto {
+    /**
+     * 解析 vCard 中的 `<PHOTO/>`
+     *
+     * 缺少 `<PHOTO/>` 表示没有头像（从未设置，或按 §4.4 已删除），返回 `undefined`
+     */
+    static parseVCardAvatar(stanza: XMPPElement): VCardPhoto | undefined {
         const photo = stanza.getElementsByTagName("PHOTO")[0];
-        if (!photo)
-            throw new Error(`没有photo标签: ${stanza.toXMLString()}`);
+        if (!photo) return undefined;
         if (photo.namespaceURI !== VCardTemp.NS)
             throw new Error(`不是vcard-temp命名空间: ${stanza.toXMLString()}`);
         const binval = photo.getElementsByTagName("BINVAL")[0]?.textContent ?? "";

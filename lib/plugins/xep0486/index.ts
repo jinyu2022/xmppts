@@ -3,7 +3,7 @@ import { MUCAvatars } from "./MUCAvatars";
 import type { Plugin } from "../types";
 import type Connection from "@/connection";
 import { XMPPError } from "@/errors";
-import { XEP0153 } from "../xep0153";
+import { XEP0153, type VCardPhoto } from "../xep0153";
 /**
  * XEP-0486: MUC Avatars
  * @see https://xmpp.org/extensions/xep-0486.html
@@ -37,9 +37,11 @@ export class XEP0486 extends MUCAvatars implements Plugin {
 
     /**
      * 获取muc头像
+     *
+     * 房间没有头像（返回空 vCard，或 vCard 内没有 `<PHOTO/>`）时返回 `undefined`；
      * @param to muc jid
      */
-    async getAvatar(to: string | JID) {
+    async getAvatar(to: string | JID): Promise<VCardPhoto | undefined> {
         const iq = XEP0486.createGetAvatarIq(to);
         const res = await this.connection.sendAsync(iq);
         if (res.getAttribute('type') === 'error') {

@@ -19,7 +19,7 @@
 interface Message {
   delay?: {
     stamp: Date;       // 原始发送时间
-    from: string;      // 原始发送者 JID（§2 Table 1 定为 RECOMMENDED，运行时可能为 null）
+    from?: string;     // 延迟信息添加方（§2 为可选属性，服务器/本地归档可能不填）
     reason?: string;   // 延迟原因
   };
 }
@@ -60,6 +60,7 @@ const delayEl = XEP0203.createDelayEl(new Date(), "example.com", "offline");
 ## 注意事项
 
 - 通常出现在**离线消息**或服务器缓存的消息中。
+- `delay.from` 是可选属性：缺失时为 `undefined`，表示延迟由服务器或本地归档添加，没有具体实体；用它拼 JID 前先判空。
 - `delay.stamp` 是消息原始发送时间；`message` 本身的时间为当前投递时间。
 - 时间戳由 XEP-0082 解析；非法 `stamp` 会转成带元素上下文的 `Error`（作为 stanza 处理器抛出，会中断该 stanza 的分发）。
 - §2 允许 `<delay/>` 也出现在 presence（离线 presence 补发、MUC 历史），但当前只扩充了 `Message` 类型。
