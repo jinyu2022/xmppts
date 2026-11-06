@@ -1,4 +1,314 @@
-# XEP-0380 — Explicit Message Encryption
+<?xml version='1.0' encoding='UTF-8'?>
+<!DOCTYPE xep SYSTEM 'xep.dtd' [
+<!ENTITY % ents SYSTEM 'xep.ent'>
+<!ENTITY NS 'urn:xmpp:mentions:0'>
+%ents;
+]>
+<?xml-stylesheet type='text/xsl' href='xep.xsl'?>
+<xep>
+  <header>
+    <title>Intentional Mention Markup</title>
+    <abstract>This specification defines a markup format to intentionally mention a person or groups of people.</abstract>
+      &LEGALNOTICE;
+    <number>0513</number>
+    <status>Experimental</status>
+    <type>Standards Track</type>
+    <sig>Standards</sig>
+    <approver>Council</approver>
+    <dependencies>
+      <spec>XMPP Core</spec>
+      <spec>XEP-0001</spec>
+      <spec>XEP-0030</spec>
+      <spec>XEP-0045</spec>
+      <spec>XEP-0317</spec>
+      <spec>XEP-0394</spec>
+      <spec>XEP-0421</spec>
+    </dependencies>
+    <supersedes/>
+    <supersededby/>
+    <shortname>mentions</shortname>
+    <tags>
+      <tag>markup</tag>
+      <tag>mention</tag>
+    </tags>
+    <author>
+      <firstname>Snit</firstname>
+      <surname>Guckfung</surname>
+      <email>snit@cock.li</email>
+      <jid>kuyuhi@isekai.rocks</jid>
+    </author>
+    <revision>
+      <version>0.1.1</version>
+      <date>2026-11-03</date>
+      <initials>snit</initials>
+      <remark><p>Revisions based on feedback, including using XEP-0394, making different types of mentions more consistent between each other, using existing terminology from legacy messengers, removing the permissions form, and generally removing unneeded functionality.</p></remark>
+    </revision>
+    <revision>
+      <version>0.1.0</version>
+      <date>2026-04-01</date>
+      <initials>dg</initials>
+      <remark>
+        <p>Accepted as Experimental by council vote on 2026-03-31</p>
+      </remark>
+    </revision>
+    <revision>
+      <version>0.0.2</version>
+      <date>2026-02-25</date>
+      <initials>snit</initials>
+      <remark><p>Proposal handover</p></remark>
+    </revision>
+    <revision>
+      <version>0.0.1</version>
+      <date>2023-03-23</date>
+      <initials>pep</initials>
+      <remark><p>First draft.</p></remark>
+    </revision>
+  </header>
+
+  <section1 topic='Introduction' anchor='intro'>
+    <p>A common feature in online communication is the ability to intentionally and explicitly address a message to a specific person or a group of people, and have the recipient's client notify them. This document provides a mechanism to allow users to intentionally reference individual users, as well as entire groups based on roles, affiliations, and hats in their messages.</p>
+    <p>This specification is primarily aimed at the markup format for mentions, as opposed to the notification of recipients, which may be covered by a future specification. There has been some success getting current versions of this specification working with push notifications, but it is not expected to work in certain scenarios as-is, such as end-to-end encrypted chats.</p>
+  </section1>
+
+  <section1 topic='Glossary' anchor='glossary'>
+    <p>A few terms are used throughout this document that are worth defining.</p>
+    <dl>
+      <di>
+        <dt>Mention</dt>
+        <dd>A mention is a reference to one or more users, which generally produces a notification for the relevant recipients.</dd>
+      </di>
+      <di>
+        <dt>Unintentional Mention</dt>
+        <dd>A type of mention which has no explicit wire-based format, and which was not necessarily intended by the sender. The most common form of unintentional mention is for a client to match messages against a regex of the user's name. For users with common words as their nickname, this can result in many false-positives, with no way for the client to determine whether a mention was intended or not. This may also be referred to as an "implicit" mention.</dd>
+      </di>
+      <di>
+        <dt>Intentional Mention</dt>
+        <dd>As opposed to unintentional mentions, intentional mentions explicitly mark a section of the body as being a mention to a particular user or group of users via a dedicated markup element. This helps to avoid false-positives by conveying the sender's intent. This may also be referred to as an "explicit" mention.</dd>
+      </di>
+    </dl>
+  </section1>
+
+  <section1 topic='Discovering Support' anchor='disco'>
+    <p>An entity implementing this specification MUST advertise '&NS;' as a &xep0030; feature. Subsequent OPTIONAL features in this document MUST also advertise support, if implemented.</p>
+  </section1>
+
+  <section1 topic='Use Cases' anchor='usecases'>
+    <p>Given that this specification is primarily concerned with the markup format, it depends on the use of &xep0394; &lt;span /&gt; elements to specify the range of effected text. Here, the &lt;mention /&gt; child element is specified, qualified with the '&NS;' namespace.</p>
+    <p>The 'type' attribute MUST be specified with a URI determining the type of mention (occupant ID, room, association, etc.). A mention MAY contain a 'target' attribute, which specifies who is being mentioned. The 'target' MUST only be omitted in the scenarios defined by the 'type' below.</p>
+    <example caption='Mentioning a user in a room'><![CDATA[
+<message to='news@chat.commons.example' type='groupchat'>
+  <body>Hello, Alice!</body>
+  <markup xmlns='urn:xmpp:markup:0'>
+    <span start='7' end='12'>
+      <mention xmlns='urn:xmpp:mentions:0'
+        type='urn:xmpp:mentions:0#occupant'
+        target='dd72603deec90a38ba552f7c68cbcc61bca202cd' />
+    </span>
+  </markup>
+</message>]]></example>
+
+    <p>Multiple mentions may be contained in the same &lt;span /&gt;, as well:</p>
+    <example caption='Mentioning members of an informally-defined group in a channel with many occupants'><![CDATA[
+<message to='news@chat.commons.example' type='groupchat'>
+  <body>Hi Spartacists!</body>
+  <markup xmlns='urn:xmpp:markup:0'>
+    <span start='3' end='14'>
+      <mention xmlns='urn:xmpp:mentions:0'
+        type='urn:xmpp:mentions:0#occupant'
+        target='dd72603deec90a38ba552f7c68cbcc61bca202cd' />
+      <mention xmlns='urn:xmpp:mentions:0'
+        type='urn:xmpp:mentions:0#occupant'
+        target='3deec90a38ba552f7c68cbcc61bca202cddd7260' />
+    </span>
+  </markup>
+</message>]]></example>
+
+    <p>Any mention type MAY restrict the set of targetted users to only those who are currently active, akin to "@here" on legacy messengers, by setting 'active' to true. If an entity receives a mention that was sent when the user was not active, it SHOULD NOT notify them. It is up to implementations what constitutes "currently active". Examples include being online or recently interacting with the client.</p>
+    <example caption='Mentioning all currently-present users in a room'><![CDATA[
+<message to='news@chat.commons.example' type='groupchat'>
+  <body>@here, I need to restart the server. We'll be back in a sec.</body>
+  <markup xmlns='urn:xmpp:markup:0'>
+    <span start='0' end='5'>
+      <mention xmlns='urn:xmpp:mentions:0' 
+        type='urn:xmpp:mentions:0#channel'
+        active='true' />
+    </span>
+  </markup>
+</message>]]></example>
+
+    <section2 topic='Mentioning an Individual' anchor='individual'>
+      <p>Individual mentions are the minimum REQUIRED to support this specification, advertised via the '&NS;' namespace.</p>
+      <p>The only supported way to mention an individual in this document is to use &xep0421; identifiers as the 'target', with a 'type' of '&NS;#occupant'. Mentioning a user in a 1:1 chat, or in a &xep0045; room that does not support occupant IDs, is intentionally unsupported here, but may be defined elsewhere.</p>
+
+      <example caption='Mentioning a user in a room'><![CDATA[
+<message to='news@chat.commons.example' type='groupchat'>
+  <body>Hello, Alice!</body>
+  <markup xmlns='urn:xmpp:markup:0'>
+    <span start='7' end='12'>
+      <mention xmlns='urn:xmpp:mentions:0'
+        type='urn:xmpp:mentions:0#occupant'
+        target='dd72603deec90a38ba552f7c68cbcc61bca202cd' />
+    </span>
+  </markup>
+</message>]]></example>
+    </section2>
+
+    <section2 topic='Mentioning Groups' anchor='groups'>
+      <p>Users might wish to mention whole groups of users at once. The following subsections specify several types of groups that can be mentioned, all of which are OPTIONAL.</p>
+      <p>Each group type has its own URI for the 'type' attribute, which, unless noted otherwise, MUST also be advertised via &xep0030; if supported. Custom group types not specified in this document MAY be used, provided they follow the same rules.</p>
+
+      <section3 topic='Mentioning via Room Occupancy' anchor='channel'>
+        <p>It is often useful to mention all occupants of the current room at once, similarly to "@everyone" or "@room" on legacy messengers. The 'type' for this mention is '&NS;#channel', which MUST be advertised if this feature is supported. As the target is all room occupants, the 'target' attribute is redundant, and MUST NOT be specified.</p>
+
+        <example caption='Mention all users in a room'><![CDATA[
+<message to='news@chat.commons.example' type='groupchat'>
+  <body>Hey, @room!</body>
+  <markup xmlns='urn:xmpp:markup:0'>
+    <span start='5' end='10'>
+      <mention xmlns='urn:xmpp:mentions:0' type='urn:xmpp:mentions:0#channel' />
+    </span>
+  </markup>
+</message>]]></example>
+      </section3>
+
+      <section3 topic='Mentions via Roles and Affiliations' anchor='associations'>
+        <p>It is possible to mention occupants with specific &xep0045; roles or affiliations. Support for this feature is advertised via '&NS;#associations', rather than the 'type'. The 'type' is one of the seven URNs defined in the table below. A role or affiliation mention MUST NOT contain a 'target'.</p>
+
+        <table caption='Mention targets'>
+          <tr>
+            <th>Type</th>
+            <th>Description</th>
+          </tr>
+          <tr>
+            <td>&NS;#moderators</td>
+            <td>Occupants with a moderator role</td>
+          </tr>
+          <tr>
+            <td>&NS;#participants</td>
+            <td>Occupants with a participant role</td>
+          </tr>
+          <tr>
+            <td>&NS;#visitors</td>
+            <td>Occupants with a visitor role</td>
+          </tr>
+          <tr>
+            <td>&NS;#owners</td>
+            <td>Occupants with an owner affiliation</td>
+          </tr>
+          <tr>
+            <td>&NS;#admins</td>
+            <td>Occupants with an admin affiliation</td>
+          </tr>
+          <tr>
+            <td>&NS;#members</td>
+            <td>Occupants with a member affiliation</td>
+          </tr>
+          <tr>
+            <td>&NS;#none</td>
+            <td>Occupants with no affiliation</td>
+          </tr>
+        </table>
+
+        <example caption='Mention all moderators in a room'><![CDATA[
+<message to='news@chat.commons.example' type='groupchat'>
+  <body>Any moderator to handle the spam above please?</body>
+  <markup xmlns='urn:xmpp:markup:0'>
+    <span start='4' end='13'>
+      <mention xmlns='urn:xmpp:mentions:0' type='urn:xmpp:mentions:0#moderators' />
+    </span>
+  </markup>
+</message>]]></example>
+      </section3>
+
+      <section3 topic='Mentions via Hats' anchor='hats'>
+        <p>Hats, specified in &xep0317;, can also be mentioned using the '&NS;#hats' namespace. The 'target' attribute MUST contain the hat's URI.</p>
+
+        <example caption='Mentioning all (hats) students in a room'><![CDATA[
+<message to='news@chat.commons.example' type='groupchat'>
+  <body>To all students, [..]</body>
+  <markup xmlns='urn:xmpp:markup:0'>
+    <span start='7' end='15'>
+      <mention xmlns='urn:xmpp:mentions:0'
+        type='urn:xmpp:mentions:0#hats'
+        target='http://schemas.example.com/hats#students'/>
+    </span>
+  </markup>
+</message>]]></example>
+      </section3>
+    </section2>
+  </section1>
+
+  <section1 topic='Implementation Notes' anchor='impl'>
+    <p>This specification allows sending clients to convey a user's intent. Implementations SHOULD also allow sending participants to talk about someone without having to mention them.</p>
+    <p>Extra characters which are not part of the user's name, such as '@', could interfere with implicit mentions in some implementations.</p>
+    <p>Receiving entities always have final say on whether they think a mention refers to or notifies the user, and MAY specify further rules than specified here.</p>
+  </section1>
+
+  <section1 topic='Design Considerations' anchor='design'>
+    <p>Most clients currently use regex-based solutions to determine whether a user is to be notified of a message. This is prone to false positives, especially for users with common words as names. It also provides no mechanism for a user to refer to someone else without notifying them.</p>
+    <p>&xep0224; could be used to provide similar functionality to a room mention. However, it has several downsides compared to this specification, including:</p>
+    <ul>
+      <li>It cannot specify the section of the message it applies to, only marking the entire message</li>
+      <li>It is explicitly meant for ephemeral "pokes" or "nudges", and thus can only be used for 'active' room mentions, like '@here', leaving a gap for normal room mentions</li>
+      <li>It only specifies the intended usage in the context of one-to-one chats, leaving much room for interpretation in the context of groupchats. This has lead to people having competing ideas for how the element should be used in such contexts, meaning a client cannot even be sure that the notification was intended for any particular purpose</li>
+    </ul>
+    <p>&xep0372; provides a basic means to explicitly mention a single user via JID, but no means of mentioning via occupant ID, mentioning groups of users, nor means to extend mentions further.</p>
+  </section1>
+
+  <section1 topic='Accessibility Considerations' anchor='access'>
+    <p>This specification allows users to intentionally choose whether to mention a user or group, removing the need to use old regex-based name matches, which are prone to false positives. It also allows users to refer to someone else without unintentionally disturbing them, and without relying on tricks to prevent regex matches.</p>
+  </section1>
+
+  <section1 topic='Internationalization Considerations' anchor='i18n'>
+    <p>Mentions which contain an 'xml:lang' attribute correspond to body elements of the same language. Implementations SHOULD send a mention for every language it sends.</p>
+  </section1>
+
+  <section1 topic='Security Considerations' anchor='security'>
+    <p>Implementations, both on the server- and client-side, SHOULD take care to mitigate the possibility to abuse mentioning groups of people, such as by providing an option to disallow group mentions by unpriviledged users, or turning off notifications for them in the client.</p>
+    <p>Use of intentional mentions with OMEMO could leak metadata about who the message is directed towards, if the mention markup is left unencrypted, such as in legacy OMEMO.</p>
+    <p>Using &xep0421; instead of a regular participant JID in MUC prevents moderators possibly leaking JIDs they have access to that other occupants don't. Using occupant IDs even in non-anonymous rooms allows them to become semi-anonymous without leaking JIDs.</p>
+  </section1>
+
+  <section1 topic='IANA Considerations' anchor='iana'>
+    <p>None.</p>
+  </section1>
+
+  <section1 topic='XMPP Registrar Considerations' anchor='registrar'>
+    <section2 topic='Protocol Namespaces' anchor='registrar-protocol'>
+      <p>The XMPP Registrar shall add '&NS;' to its registry of protocol namespaces.</p>
+    </section2>
+  </section1>
+
+  <section1 topic='XML Schema' anchor='schema'>
+    <code><![CDATA[
+<?xml version='1.0' encoding='UTF-8'?>
+<xs:schema
+  xmlns:xs='http://www.w3.org/2001/XMLSchema'
+  targetNamespace='urn:xmpp:mentions:0'
+  xmlns='urn:xmpp:mentions:0'
+  elementFormDefault='qualified'>
+
+  <xs:annotation>
+    <xs:documentation>
+        The protocol documented by this schema is defined in XEP-0513:
+        https://xmpp.org/extensions/xep-0513.html
+    </xs:documentation>
+  </xs:annotation>
+
+  <xs:element name='mention'>
+    <xs:complexType>
+      <xs:attribute name='active' type='xs:boolean'/>
+      <xs:attribute name='type' type='xs:anyURI' use='required'/>
+      <xs:attribute name='target' type='xs:string'/>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>]]></code>
+  </section1>
+
+  <section1 topic='Acknowledgements' anchor='acknowledgements'>
+    <p>Special thanks to pep for providing the initial document which this one is based off of, and for allowing me to continue work on it.</p>
+  </section1>
+</xep># XEP-0380 — Explicit Message Encryption
 
 用机器可读的元素标记消息使用的端到端加密机制，供不支持该机制的对端提示用户。
 
@@ -27,7 +337,7 @@ interface Message {
 | 方法 | 说明 |
 |------|------|
 | `XEP0380.createEncryptionEl(info)`（静态） | 构造 `<encryption/>`；已知机制的 `name` 会被忽略 |
-| `XEP0380.parseEncryptionEl(encryptionEl)`（静态） | 解析 `<encryption/>` |
+| `XEP0380.parseEncryptionEl(encryptionEl)`（静态） | 解析 `<encryption/>`；命名空间不符抛 `TypeError` |
 | `XEP0380.getMechanismName(namespace)`（静态） | 返回规范列出的已知机制名称 |
 | `XEP0380.KNOWN_MECHANISMS`（静态） | 已知机制表 |
 | `XEP0380.NS`（静态） | `"urn:xmpp:eme:0"` |

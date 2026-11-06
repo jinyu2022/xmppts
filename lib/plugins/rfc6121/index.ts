@@ -31,7 +31,7 @@ export interface Roster {
  */
 class RFC6121 implements Plugin {
   static readonly NS = "jabber:iq:roster";
-  readonly connection: Connection;
+  private readonly connection: Connection;
   constructor(connection: Connection) {
     this.connection = connection;
   }

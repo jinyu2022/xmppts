@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { Avatar } from "../../../lib/plugins/xep0084/avatar";
 import { Parser } from "../../../lib/ltx/Parser";
 
@@ -42,6 +42,28 @@ describe("Avatar", () => {
       const xml = Parser.parse(`<metadata xmlns="urn:xmpp:avatar:metadata"/>`);
       expect(Avatar.parseMetadataEl(xml)).toEqual({ metadata: null });
     });
+
+    it("非 metadata 命名空间抛错，可选属性缺省为 undefined", () => {
+      expect(() =>
+        Avatar.parseMetadataEl(Parser.parse(`<metadata xmlns="urn:example:other"/>`)),
+      ).toThrow("不是一个metadata元素");
+
+      const xml = Parser.parse(`
+        <metadata xmlns="${Avatar.NS.metadata}">
+          <info bytes="1" id="x" type="image/png"/>
+        </metadata>
+      `);
+      expect(Avatar.parseMetadataEl(xml)).toEqual({
+        metadata: {
+          id: "x",
+          type: "image/png",
+          bytes: 1,
+          width: undefined,
+          height: undefined,
+          url: undefined,
+        },
+      });
+    });
   });
 
   describe("createRetrieveDataIq", () => {
@@ -69,6 +91,122 @@ describe("Avatar", () => {
       expect(metadata.id).toBe(id);
       expect(metadata.type).toBe("image/png");
       expect(base64Data.length).toBeGreaterThan(0);
+    });
+
+    it("既非路径也非 File 时抛错", async () => {
+      await expect(
+        Avatar.imageParser(123 as unknown as string),
+      ).rejects.toThrow("不支持的图片类型");
+    });
+
+    it("浏览器分支：File 经 FileReader 读取并计算 SHA-1 与尺寸", async () => {
+      class FakeFileReader {
+        result = "";
+        onload?: () => void;
+        readAsDataURL(file: File) {
+          this.result = `data:${file.type};base64,${Buffer.from("fake").toString("base64")}`;
+          this.onload?.();
+        }
+      }
+      class FakeImage {
+        width = 32;
+        height = 24;
+        onload?: () => void;
+        set src(_value: string) {
+          queueMicrotask(() => this.onload?.());
+        }
+      }
+
+      vi.stubGlobal("window", {});
+      vi.stubGlobal("FileReader", FakeFileReader);
+      vi.stubGlobal("Image", FakeImage);
+      vi.stubGlobal("URL", { ...URL, createObjectURL: () => "blob:fake" });
+
+      try {
+        const file = new File([new Uint8Array([1, 2, 3])], "a.png", {
+          type: "image/png",
+        });
+        const { base64Data, metadata } = await Avatar.imageParser(file);
+
+        expect(base64Data).toBe(Buffer.from("fake").toString("base64"));
+        expect(metadata.type).toBe("image/png");
+        expect(metadata.bytes).toBe(3);
+        expect(metadata.width).toBe(32);
+        expect(metadata.height).toBe(24);
+        expect(metadata.id).toMatch(/^[0-9a-f]{40}$/);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("nodeImageParser：不支持的图片类型抛错", async () => {
+      vi.resetModules();
+      vi.doMock("image-size", () => ({
+        imageSize: () => ({ type: "bmp", width: 1, height: 1 }),
+      }));
+      const { fileURLToPath } = await import("node:url");
+      const filePath = fileURLToPath(new URL("./xmpp.png", import.meta.url));
+
+      try {
+        await expect(Avatar.imageParser(filePath)).rejects.toThrow(
+          "不支持的图片类型: bmp",
+        );
+      } finally {
+        vi.doUnmock("image-size");
+      }
+    });
+  });
+
+  describe("createDataPublishIq", () => {
+    it("png：生成 data 与 metadata 两条发布 IQ（Example 1/3）", async () => {
+      const { fileURLToPath } = await import("node:url");
+      const filePath = fileURLToPath(new URL("./xmpp.png", import.meta.url));
+
+      const [dataIq, metadataIq] = await Avatar.createDataPublishIq(filePath);
+
+      const dataPublish = dataIq.getElementsByTagName("publish")[0];
+      expect(dataPublish.getAttribute("node")).toBe(Avatar.NS.data);
+      expect(dataIq.getElementsByTagNameNS(Avatar.NS.data, "data")).toHaveLength(1);
+
+      const metadataPublish = metadataIq.getElementsByTagName("publish")[0];
+      expect(metadataPublish.getAttribute("node")).toBe(Avatar.NS.metadata);
+      const info = metadataIq.getElementsByTagNameNS(Avatar.NS.metadata, "info")[0];
+      expect(info.getAttribute("type")).toBe("image/png");
+    });
+
+    it("非 png 拒绝发布", async () => {
+      class FakeFileReader {
+        result = "";
+        onload?: () => void;
+        readAsDataURL(file: File) {
+          this.result = `data:${file.type};base64,${Buffer.from("fake").toString("base64")}`;
+          this.onload?.();
+        }
+      }
+      class FakeImage {
+        width = 1;
+        height = 1;
+        onload?: () => void;
+        set src(_value: string) {
+          queueMicrotask(() => this.onload?.());
+        }
+      }
+
+      vi.stubGlobal("window", {});
+      vi.stubGlobal("FileReader", FakeFileReader);
+      vi.stubGlobal("Image", FakeImage);
+      vi.stubGlobal("URL", { ...URL, createObjectURL: () => "blob:fake" });
+
+      try {
+        const file = new File([new Uint8Array([1])], "a.gif", {
+          type: "image/gif",
+        });
+        await expect(Avatar.createDataPublishIq(file)).rejects.toThrow(
+          "只支持png格式的图片",
+        );
+      } finally {
+        vi.unstubAllGlobals();
+      }
     });
   });
 });

@@ -11,7 +11,7 @@ import { Fallback, type FallbackInfo } from "./fallback";
  */
 export class XEP0428 extends Fallback implements Plugin {
     static readonly dependencies = ["XEP0030"] as const;
-    readonly connection: Connection;
+    private readonly connection: Connection;
 
     constructor(connection: Connection) {
         super();

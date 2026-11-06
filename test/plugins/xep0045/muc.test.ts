@@ -288,8 +288,13 @@ describe("MUC", () => {
       expect(muc.password).toBe("cauldronburn");
     });
 
-    it("非 x 标签时返回空对象", () => {
+    it("命名空间不符时抛错", () => {
       const el = XMPPElement.createElement("message");
+      expect(() => MUC.parsePresUser(el)).toThrow("不是一个 muc#user 元素");
+    });
+
+    it("muc#user 下非 x 元素返回空对象", () => {
+      const el = XMPPElement.createElementNS(MUC.NS.USER, "unknown");
       expect(MUC.parsePresUser(el).muc).toEqual({});
     });
 
@@ -326,6 +331,205 @@ describe("MUC", () => {
         "query",
       )[0];
       expect(query.getAttribute("node")).toBe("x-roomuser-item");
+    });
+  });
+
+  describe("边界输入", () => {
+    it("history 支持 maxchars/maxstanzas/seconds/since", () => {
+      const pres = MUC.createJoinPres(ROOM, "crone1", {
+        maxchars: 100,
+        maxstanzas: 10,
+        seconds: 60,
+        since: new Date("2024-01-01T00:00:00Z"),
+      });
+      const history = pres.getElementsByTagName("history")[0];
+
+      expect(history.getAttribute("maxchars")).toBe("100");
+      expect(history.getAttribute("maxstanzas")).toBe("10");
+      expect(history.getAttribute("seconds")).toBe("60");
+      expect(history.getAttribute("since")).toBe("2024-01-01T00:00:00.000Z");
+    });
+
+    it("history 条件全缺时不附 history 元素", () => {
+      const pres = MUC.createJoinPres(ROOM, "crone1", {});
+      expect(pres.getElementsByTagName("history")).toHaveLength(0);
+    });
+
+    it("单个 history 条件单独出现时均生效", () => {
+      const cases = [
+        [{ maxchars: 100 }, "maxchars", "100"],
+        [{ maxstanzas: 10 }, "maxstanzas", "10"],
+        [{ seconds: 60 }, "seconds", "60"],
+        [{ since: new Date("2024-01-01T00:00:00Z") }, "since", "2024-01-01T00:00:00.000Z"],
+      ] as const;
+
+      for (const [options, attribute, expected] of cases) {
+        const history = MUC.createJoinPres(ROOM, "crone1", options)
+          .getElementsByTagName("history")[0];
+        expect(history.getAttribute(attribute)).toBe(expected);
+      }
+    });
+
+    it("各构造方法接受 JID 实例", () => {
+      const room = new JID(ROOM);
+
+      expect(MUC.createLeavePres(new JID(`${ROOM}/crone1`)).getAttribute("to")).toBe(
+        `${ROOM}/crone1`,
+      );
+      expect(MUC.createMediatedInvite(room, new JID("hecate@shakespeare.lit")).getAttribute("to")).toBe(
+        ROOM,
+      );
+      expect(MUC.createGetReservedNickIq(room).getAttribute("to")).toBe(ROOM);
+      expect(MUC.createRequestVoiceMsg(room).getAttribute("to")).toBe(ROOM);
+    });
+
+    it("各构造方法接受 JID 实例并保留 reason", () => {
+      const room = new JID(ROOM);
+
+      const affiliation = MUC.createSetAffiliationIq(
+        room,
+        new JID("hag66@shakespeare.lit"),
+        "member",
+        "welcome",
+      );
+      expect(affiliation.getAttribute("to")).toBe(ROOM);
+      const affiliationItem = affiliation.getElementsByTagNameNS(
+        MUC.NS.ADMIN,
+        "item",
+      )[0];
+      expect(affiliationItem.getAttribute("jid")).toBe("hag66@shakespeare.lit");
+      expect(affiliationItem.getElementsByTagName("reason")[0].textContent).toBe(
+        "welcome",
+      );
+
+      const role = MUC.createSetRoleIq(
+        room,
+        new JID(`${ROOM}/thirdwitch`),
+        "none",
+        "bye",
+      );
+      const roleItem = role.getElementsByTagNameNS(MUC.NS.ADMIN, "item")[0];
+      // §8.2：item@nick 只放 occupant 昵称，不能是完整 JID
+      expect(roleItem.getAttribute("nick")).toBe("thirdwitch");
+      expect(roleItem.getElementsByTagName("reason")[0].textContent).toBe("bye");
+      expect(() =>
+        MUC.createSetRoleIq(room, new JID(ROOM), "none"),
+      ).toThrow("必须为包含昵称的完整 occupant JID");
+
+      expect(MUC.createGetRoomConfigIq(room).getAttribute("to")).toBe(ROOM);
+      expect(
+        MUC.createSetRoomConfigIq(room, { type: "form", fields: [] }).getAttribute(
+          "to",
+        ),
+      ).toBe(ROOM);
+      expect(MUC.createSetSubjectMsg(room, "topic").getAttribute("to")).toBe(ROOM);
+    });
+
+    it("createLeavePres：缺少 resource 时抛错", () => {
+      expect(() => MUC.createLeavePres(ROOM)).toThrow(
+        "必须为包含昵称的完整 occupant JID",
+      );
+    });
+
+    it("parsePresUser：多个 item 只取第一个，未知 role/affiliation 不写入结果", () => {
+      const xml = Parser.parse(`
+        <x xmlns="http://jabber.org/protocol/muc#user">
+          <item affiliation="bogus" role="bogus" nick="first"/>
+          <item affiliation="member" role="participant"/>
+        </x>
+      `);
+      const { muc } = MUC.parsePresUser(xml);
+
+      expect(muc.item?.nick).toBe("first");
+      expect(muc.item?.affiliation).toBeUndefined();
+      expect(muc.item?.role).toBeUndefined();
+    });
+
+    it("parsePresUser：invite 无 continue 时 continue 为 undefined", () => {
+      const xml = Parser.parse(`
+        <x xmlns="http://jabber.org/protocol/muc#user">
+          <invite to="hecate@shakespeare.lit"><reason>join</reason></invite>
+        </x>
+      `);
+      const { muc } = MUC.parsePresUser(xml);
+      if (!("invites" in muc) || !muc.invites) {
+        throw new Error("Expected a MUC invitation payload");
+      }
+
+      expect(muc.invites[0].continue).toBeUndefined();
+      expect(muc.invites[0].to).toBe("hecate@shakespeare.lit");
+    });
+
+    it("parsePresUser：destroy 携带 password 与 reason", () => {
+      const xml = Parser.parse(`
+        <x xmlns="http://jabber.org/protocol/muc#user">
+          <destroy jid="shakespeare.lit">
+            <password>secret</password>
+            <reason>going away</reason>
+          </destroy>
+        </x>
+      `);
+      const { muc } = MUC.parsePresUser(xml);
+      if (!("destroy" in muc)) {
+        throw new Error("Expected a MUC destroy payload");
+      }
+
+      expect(muc.destroy).toEqual({
+        jid: "shakespeare.lit",
+        password: "secret",
+        reason: "going away",
+      });
+    });
+
+    it("parsePresUser：可选字段缺失时统一落为 undefined", () => {
+      // decline 的 to/from/reason 全缺
+      const decline = MUC.parsePresUser(
+        Parser.parse(
+          `<x xmlns="http://jabber.org/protocol/muc#user"><decline/></x>`,
+        ),
+      );
+      if (!("decline" in decline.muc)) {
+        throw new Error("Expected a MUC decline payload");
+      }
+      expect(decline.muc.decline).toEqual({
+        to: undefined,
+        from: undefined,
+        reason: undefined,
+      });
+
+      // invite 缺 to/from/reason/thread，且 continue 无 thread 属性
+      const invite = MUC.parsePresUser(
+        Parser.parse(
+          `<x xmlns="http://jabber.org/protocol/muc#user">
+            <invite><continue/></invite>
+          </x>`,
+        ),
+      );
+      if (!("invites" in invite.muc) || !invite.muc.invites) {
+        throw new Error("Expected a MUC invitation payload");
+      }
+      expect(invite.muc.invites[0]).toEqual({
+        to: undefined,
+        from: undefined,
+        reason: undefined,
+        thread: undefined,
+        continue: { thread: undefined },
+      });
+
+      // destroy 缺 jid/password/reason
+      const destroy = MUC.parsePresUser(
+        Parser.parse(
+          `<x xmlns="http://jabber.org/protocol/muc#user"><destroy/></x>`,
+        ),
+      );
+      if (!("destroy" in destroy.muc)) {
+        throw new Error("Expected a MUC destroy payload");
+      }
+      expect(destroy.muc.destroy).toEqual({
+        jid: undefined,
+        password: undefined,
+        reason: undefined,
+      });
     });
   });
 });

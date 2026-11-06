@@ -25,7 +25,7 @@ interface XEP0199Options {
  */
 export default class XEP0199 extends Ping implements Plugin {
     static readonly dependencies = ["XEP0030"] as const;
-    readonly connection: Connection;
+    private readonly connection: Connection;
     private timer?: ReturnType<typeof setInterval>;
     private readonly config = {
         /** 是否启用keepalive功能，默认启用。 */

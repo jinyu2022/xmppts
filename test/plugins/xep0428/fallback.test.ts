@@ -13,6 +13,13 @@ describe("XEP-0428 回退标记", () => {
     return Parser.parse(xml).getElementsByTagName("fallback")[0];
   }
 
+  it("命名空间不符时抛错", () => {
+    const el = Parser.parse(
+      `<fallback xmlns="urn:example:wrong" for="urn:xmpp:reply:0"/>`,
+    );
+    expect(() => Fallback.parseFallbackEl(el)).toThrow("不是一个 fallback 元素");
+  });
+
   it("解析 §2 示例的引用回退", () => {
     // §2 Fallback Indicator 示例
     const el = fallbackOf(

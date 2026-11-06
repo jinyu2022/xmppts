@@ -15,6 +15,9 @@ export class Forward {
   static readonly NS = "urn:xmpp:forward:0";
 
   static parseForwardedEl(message: XMPPElement): { forwarded: Forwarded } {
+    if (message.namespaceURI !== Forward.NS) {
+      throw new Error(`不是一个 forwarded 元素: ${message.toXMLString()}`);
+    }
     const forwardedEl =
       message.tagName === "forwarded"
         ? message

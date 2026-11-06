@@ -45,6 +45,13 @@ describe("Reply", () => {
       const reply = Parser.parse(`<reply xmlns="urn:xmpp:reply:0"/>`);
       expect(Reply.parseReplyEl(reply)).toEqual({});
     });
+
+    it("命名空间不符时抛错", () => {
+      const reply = Parser.parse(
+        `<reply xmlns="urn:example:wrong" id="message-id1"/>`,
+      );
+      expect(() => Reply.parseReplyEl(reply)).toThrow("不是一个 reply 元素");
+    });
   });
 
   describe("getReferenceEl", () => {

@@ -47,24 +47,36 @@
 | [XEP-0004](plugins/xep0004/readme.md) | 数据表单 | — |
 | [XEP-0030](plugins/xep0030/readme.md) | 服务发现 | — |
 | [XEP-0045](plugins/xep0045/readme.md) | 多用户聊天（MUC） | XEP-0030 |
+| [XEP-0049](plugins/xep0049/readme.md) | 私有 XML 存储 | — |
+| [XEP-0050](plugins/xep0050/readme.md) | 临时命令（Ad-Hoc Commands） | XEP-0030 |
 | [XEP-0060](plugins/xep0060/readme.md) | 发布-订阅（PubSub，仅注册 `pubsub#errors` 解析器） | — |
 | [XEP-0066](plugins/xep0066/readme.md) | 带外数据（OOB） | XEP-0030 |
 | [XEP-0084](plugins/xep0084/readme.md) | 用户头像 | XEP-0030（PEP 事件需 XEP-0163，源码未声明该依赖，见该目录 debug.md） |
 | [XEP-0085](plugins/xep0085/readme.md) | 聊天状态通知 | XEP-0030 |
+| [XEP-0092](plugins/xep0092/readme.md) | 软件版本 | XEP-0030 |
 | [XEP-0115](plugins/xep0115/readme.md) | 实体能力 | XEP-0030 |
 | [XEP-0163](plugins/xep0163/readme.md) | 个人事件协议（PEP） | XEP-0030 |
 | [XEP-0171](plugins/xep0171/readme.md) | 语言翻译（客户端 + 可选的翻译机器人） | XEP-0030 |
 | [XEP-0172](plugins/xep0172/readme.md) | 用户昵称 | XEP-0030 |
 | [XEP-0184](plugins/xep0184/readme.md) | 消息回执 | XEP-0030 |
+| [XEP-0191](plugins/xep0191/readme.md) | 屏蔽命令 | — |
 | [XEP-0198](plugins/xep0198/readme.md) | 流管理 | — |
 | [XEP-0199](plugins/xep0199/readme.md) | XMPP Ping | XEP-0030 |
+| [XEP-0202](plugins/xep0202/readme.md) | 实体时间 | XEP-0030 |
 | [XEP-0203](plugins/xep0203/readme.md) | 延迟投递 | — |
+| [XEP-0224](plugins/xep0224/readme.md) | 唤醒请求（Attention） | XEP-0030 |
+| [XEP-0249](plugins/xep0249/readme.md) | 直接 MUC 邀请 | XEP-0030 |
 | [XEP-0280](plugins/xep0280/readme.md) | 消息碳副本 | XEP-0030, XEP-0297 |
 | [XEP-0297](plugins/XEP0297/readme.md) | 节转发 | XEP-0030, XEP-0203 |
 | [XEP-0308](plugins/xep0308/readme.md) | 消息更正 | XEP-0030 |
 | [XEP-0313](plugins/xep0313/readme.md) | 消息归档管理（MAM） | XEP-0004, XEP-0030 |
+| [XEP-0319](plugins/xep0319/readme.md) | 出席中的最后交互时间 | — |
+| [XEP-0333](plugins/xep0333/readme.md) | 已显示标记（Displayed Markers） | XEP-0030 |
+| [XEP-0334](plugins/xep0334/readme.md) | 消息处理提示 | — |
+| [XEP-0352](plugins/xep0352/readme.md) | 客户端状态指示（CSI） | — |
 | [XEP-0359](plugins/xep0359/readme.md) | 唯一且稳定的节 ID | XEP-0030 |
 | [XEP-0368](plugins/xep0368/readme.md) | 直连 TLS 的 SRV 记录 | — |
+| [XEP-0372](plugins/xep0372/readme.md) | 引用（@提及） | XEP-0030 |
 | [XEP-0380](plugins/xep0380/readme.md) | 显式加密标记（EME） | XEP-0030 |
 | [XEP-0402](plugins/xep0402/readme.md) | PEP 原生书签 | XEP-0030、XEP-0163、XEP-0060 |
 | [XEP-0410](plugins/xep0410/readme.md) | MUC 自 Ping | XEP-0045, XEP-0199 |
@@ -75,6 +87,7 @@
 | [XEP-0444](plugins/xep0444/readme.md) | 消息反应 | XEP-0030 |
 | [XEP-0461](plugins/xep0461/readme.md) | 消息回复 | XEP-0030 |
 | [XEP-0486](plugins/xep0486/readme.md) | MUC 房间头像 | —（复用 XEP-0054/XEP-0153 工具） |
+| [XEP-0490](plugins/xep0490/readme.md) | 已显示状态同步（MDS） | XEP-0030、XEP-0060、XEP-0163、XEP-0359 |
 
 ### 工具类 / 独立模块（不自动注册）
 

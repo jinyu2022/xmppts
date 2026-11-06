@@ -17,7 +17,7 @@ import { XMPPError } from "@/errors";
  */
 export class XEP0425 extends Moderation implements Plugin {
     static readonly dependencies = ["XEP0030", "XEP0424"] as const;
-    readonly connection: Connection;
+    private readonly connection: Connection;
 
     constructor(connection: Connection) {
         super();

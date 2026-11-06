@@ -70,6 +70,11 @@ describe("XEP0128", () => {
   `;
 
   describe("parseDataForm", () => {
+    it("直接传入命名空间不符的 <x> 时抛错", () => {
+      const x = Parser.parse(`<x xmlns="urn:example:wrong"/>`);
+      expect(() => XEP0128.parseDataForm(x)).toThrow("不是一个 x 元素");
+    });
+
     it("Example 1：解析 IM 服务器的扩展表单", () => {
       const form = XEP0128.parseDataForm(Parser.parse(EXAMPLE_1)).form!;
       const byVar = (v: string) => form.fields.find((f) => f.var === v)!;

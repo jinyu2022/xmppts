@@ -47,7 +47,7 @@ export class XEP0030 implements Plugin {
   /** 查询items缓存, 键为jid */
   private readonly itemsCache: Map<string, DiscoItemCache> = new Map();
 
-  readonly connection: Connection;
+  private readonly connection: Connection;
   /** 缓存有效期（毫秒） */
   private readonly cacheTTLMs: number;
   constructor(connection: Connection, options?: {cacheTTLMs?: number;}) {

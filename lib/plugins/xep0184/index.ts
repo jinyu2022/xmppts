@@ -14,7 +14,7 @@ export default class XEP0184 extends MessageReceipts implements Plugin {
   static readonly dependencies = ["XEP0030"] as const;
 
   /** XMPP连接实例 */
-  readonly connection: Connection;
+  private readonly connection: Connection;
   constructor(connection: Connection) {
     super();
     this.connection = connection;

@@ -12,7 +12,7 @@ import { Pubsub } from "./pubsub";
  * @version 1.30.0 (2025-11-11)
  */
 export class XEP0060 extends Pubsub implements Plugin {
-    readonly connection: Connection;
+    private readonly connection: Connection;
 
     constructor(connection: Connection) {
         super();

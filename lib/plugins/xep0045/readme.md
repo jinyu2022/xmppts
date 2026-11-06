@@ -82,9 +82,9 @@ interface MUCUser {
 | `createRequestVoiceMsg(room)` | 构造发言权请求 message（§7.13） |
 | `createSetSubjectMsg(room, subject)` | 构造主题 message（§8.1） |
 | `createSetAffiliationIq(room, jid, aff, reason?)` | 构造身份变更 IQ（§9） |
-| `createSetRoleIq(room, nick, role, reason?)` | 构造角色变更 IQ（§8） |
+| `createSetRoleIq(room, nick, role, reason?)` | 构造角色变更 IQ（§8）；`nick` 传 JID 时取其中的 resource |
 | `createGetRoomConfigIq(room)` / `createSetRoomConfigIq(room, form)` | 房间配置 IQ（§10） |
-| `parsePresUser(xEl)` | 解析 `muc#user`（插件注册后自动调用） |
+| `parsePresUser(xEl)` | 解析 `muc#user`（插件注册后自动调用）；命名空间不符抛 `Error` |
 
 ## 扩展字段
 
@@ -139,7 +139,7 @@ interface Message {
 |------|------|
 | `join(room, nick, options?, timeout?)` | 加入房间；options：`maxchars` / `maxstanzas` / `seconds` / `since` / `password` |
 | `leave(roomJid, reason?)` | 离开房间 |
-| `setNick(room, nick)` | 修改昵称 |
+| `setNick(room, nick)` | 修改昵称；以新昵称的 available self-presence（§7.6）为完成标志 |
 | `requestVoice(room)` | 请求发言权（§7.13） |
 | `setSubject(room, subject)` | 设置主题（§8.1） |
 | `kick(room, nick, reason?)` | 踢出用户（需 moderator+） |
@@ -167,7 +167,8 @@ await client.XEP0045!.leave("room@conference.example.com", "先撤了");
 ### 房间内操作
 
 ```typescript
-// 修改昵称 → Promise<Presence>
+// 修改昵称 → Promise<Presence>；旧昵称的 unavailable + 303 不代表完成，
+// 需等新昵称的 available self-presence（§7.6）
 await client.XEP0045!.setNick("room@conference.example.com", "小明明");
 
 // 设置主题 → Promise<void>

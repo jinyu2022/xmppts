@@ -8,7 +8,7 @@ import type Connection from "@/connection";
  */
 export class XEP0359 extends StanzaID implements Plugin {
     static readonly dependencies = ["XEP0030"] as const;
-    readonly connection: Connection;
+    private readonly connection: Connection;
 
     constructor(connection: Connection) {
         super();

@@ -8,7 +8,7 @@ import type { Connection } from "../../connection";
  */
 export class XEP0297 extends Forward implements Plugin {
   static readonly dependencies = ["XEP0030", "XEP0203"] as const;
-  readonly connection: Connection;
+  private readonly connection: Connection;
   constructor(connection: Connection) {
     super();
     this.connection = connection;

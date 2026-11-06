@@ -25,7 +25,7 @@
 
 | 方法 | 说明 |
 |------|------|
-| `XEP0128.parseDataForm(xml)`（静态） | 解析 XEP-0004 扩展表单 → `{ form: DataForm \| undefined }`；`xml` 为 `<query>` 时自动取其下首个 `jabber:x:data` 的 `<x>`，也可直接传 `<x>` 自身；`xml` 传 `undefined` 时抛 `TypeError` |
+| `XEP0128.parseDataForm(xml)`（静态） | 解析 XEP-0004 扩展表单 → `{ form: DataForm \| undefined }`；`xml` 为 `<query>` 时自动取其下首个 `jabber:x:data` 的 `<x>`，也可直接传 `<x>` 自身（命名空间不符抛 `Error`）；`xml` 传 `undefined` 时抛 `TypeError` |
 
 ## 使用示例
 

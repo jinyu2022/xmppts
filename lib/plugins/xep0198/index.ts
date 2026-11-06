@@ -26,7 +26,7 @@ const StreamStatus = {
 export default class XEP0198 extends StreamManagement implements Plugin {
 
     /** XMPP连接实例 */
-    readonly connection: Connection;
+    private readonly connection: Connection;
     /** 发送的stanza数量，也是服务端接收处理的stanza数量 */
     private outbound: number = 0;
     /** 已处理的stanza数量，即应答确认请求时的h值 */

@@ -8,6 +8,13 @@ import { EME } from "../../../lib/plugins/xep0380/eme";
  * @see https://xmpp.org/extensions/xep-0380.html 0.4.0 §2 Examples
  */
 describe("XEP-0380 加密标记", () => {
+  it("命名空间不符时抛错", () => {
+    const el = Parser.parse(
+      `<encryption xmlns="urn:example:wrong" namespace="urn:xmpp:otr:0"/>`,
+    );
+    expect(() => EME.parseEncryptionEl(el)).toThrow(TypeError);
+  });
+
   it("解析 Example 1 的 OTR 标记", () => {
     // §2 Example 1
     const el = Parser.parse(

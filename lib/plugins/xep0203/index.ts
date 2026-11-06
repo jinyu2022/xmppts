@@ -8,7 +8,7 @@ import { Delay } from "./delay";
  * @version 2.0 (2009-09-15)
  */
 export class XEP0203 extends Delay implements Plugin {
-    readonly connection: Connection;
+    private readonly connection: Connection;
     constructor(connection: Connection) {
         super();
         this.connection = connection;

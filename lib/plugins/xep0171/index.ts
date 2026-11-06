@@ -122,7 +122,7 @@ export interface XEP0171Options {
  */
 class XEP0171 extends LangTrans implements Plugin {
     static readonly dependencies = ["XEP0030"] as const;
-    readonly connection: Connection;
+    private readonly connection: Connection;
     private readonly provider?: LangTransProvider;
 
     constructor(connection: Connection, options?: XEP0171Options) {

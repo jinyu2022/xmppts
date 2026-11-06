@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import XEP0308 from "../../../lib/plugins/xep0308";
 import { Correction } from "../../../lib/plugins/xep0308/correction";
 import type { Connection } from "../../../lib/connection";
+import { Message } from "../../../lib/stanza";
+import { Parser } from "../../../lib/ltx/Parser";
 import { FakeConnection } from "../../helpers/fake-connection";
 
 /**
@@ -54,6 +56,50 @@ describe("XEP0308 插件入口", () => {
     );
     expect(sent.getElementsByTagName("body")[0].textContent).toBe(
       "But soft, what light through yonder window breaks?",
+    );
+  });
+
+  it("correctMessage 接受原消息对象并沿用 to/type/id", () => {
+    const { connection, plugin } = setup();
+    const original = new Message(
+      Parser.parse(`
+        <message xmlns="jabber:client" from="romeo@montague.lit/orchard"
+                 to="juliet@capulet.lit/balcony" id="orig1" type="chat">
+          <body>bad</body>
+        </message>
+      `),
+      connection as unknown as Connection,
+    );
+
+    plugin.correctMessage(original, "good");
+
+    const sent = connection.sent[0];
+    expect(sent.getAttribute("to")).toBe("juliet@capulet.lit/balcony");
+    expect(sent.getAttribute("type")).toBe("chat");
+    expect(
+      sent.getElementsByTagNameNS(Correction.NS, "replace")[0].getAttribute("id"),
+    ).toBe("orig1");
+    expect(sent.getElementsByTagName("body")[0].textContent).toBe("good");
+  });
+
+  it("correctMessage 拒绝缺少 to 或 id 的原消息", () => {
+    const { connection, plugin } = setup();
+    const noTo = new Message(
+      Parser.parse(`<message xmlns="jabber:client" id="1" type="chat"/>`),
+      connection as unknown as Connection,
+    );
+    expect(() => plugin.correctMessage(noTo, "x")).toThrow(
+      "原始消息缺少 to 属性",
+    );
+
+    const noId = new Message(
+      Parser.parse(
+        `<message xmlns="jabber:client" to="juliet@capulet.lit" type="chat"/>`,
+      ),
+      connection as unknown as Connection,
+    );
+    expect(() => plugin.correctMessage(noId, "x")).toThrow(
+      "原始消息缺少 id 属性，无法更正",
     );
   });
 });

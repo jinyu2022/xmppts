@@ -21,7 +21,7 @@ describe("XEP0060 插件入口", () => {
   it("继承 Pubsub，init 注册 pubsub#errors 命名空间的转换器", () => {
     const plugin = new XEP0060(new FakeConnection() as unknown as Connection);
     expect(plugin).toBeInstanceOf(Pubsub);
-    expect(plugin.connection).toBeDefined();
+    expect((plugin as unknown as { connection: Connection }).connection).toBeDefined();
     expect(setup().stanzaPlugins.get(Pubsub.NS.ERRORS)).toBe(Pubsub.parseErrorChildEl);
   });
 

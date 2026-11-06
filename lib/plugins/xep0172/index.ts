@@ -11,7 +11,7 @@ import { Nickname } from "./nickname";
  */
 class XEP0172 extends Nickname implements Plugin {
     static readonly dependencies = ["XEP0030", "XEP0163"] as const;
-    readonly connection: Connection;
+    private readonly connection: Connection;
     private selfNickPromise?: Promise<string | undefined>;
     constructor(connection: Connection) {
         super();

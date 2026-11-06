@@ -1,140 +1,257 @@
-import { describe, expect, it } from "vitest";
-import XEP0045 from "../../../lib/plugins/xep0045";
-import { MUC } from "../../../lib/plugins/xep0045/muc";
-import { XEP0030 } from "../../../lib/plugins/xep0030";
-import { Connection, type SocketEventMap } from "../../../lib/connection";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Connection } from "../../../lib/connection";
 import { Parser } from "../../../lib/ltx/Parser";
 import { JID } from "../../../lib/JID";
+import { XEP0045 } from "../../../lib/plugins/xep0045";
 import { FakeConnection } from "../../helpers/fake-connection";
+import {
+  createTcpConnection,
+  getServer,
+  negotiate,
+  serverRef,
+  waitForReceived,
+  type MockServer,
+} from "../../helpers/mock-transport";
+
+// 将 node:net / node:tls 替换为 Mock Socket，避免真实 TCP/TLS 连接
+vi.mock("node:net", async () => {
+  const { netMock } = await import("../../helpers/mock-transport");
+  return netMock();
+});
+// TLSSocket 需保留真实导出（传输层用 instanceof 判断 TLS 就绪）
+vi.mock("node:tls", async (importOriginal) => {
+  const { tlsMock } = await import("../../helpers/mock-transport");
+  return tlsMock(importOriginal);
+});
+
+const ROOM = "coven@chat.shakespeare.lit";
+const USER_NS = "http://jabber.org/protocol/muc#user";
+
+/** 已建立连接的引用，供 afterEach 统一断开 */
+const active = new Set<Connection>();
+
+/** 创建仅注册 XEP0045 的连接；XEP0030 在 connect() 时按依赖自动补齐 */
+function createConnection(): Connection {
+  const connection = createTcpConnection("crone1@shakespeare.lit/desktop");
+  active.add(connection);
+  connection.registerPlugin("XEP0045");
+  return connection;
+}
+
+/** 完成「连接 → 认证 → 绑定 → 服务器特性发现」 */
+async function connect() {
+  const connection = createConnection();
+  const sessionStart = new Promise<void>((resolve) =>
+    connection.once("session:start", () => resolve()),
+  );
+  await connection.connect();
+  const server = getServer();
+  await negotiate(server, "crone1@shakespeare.lit/desktop");
+  await sessionStart;
+
+  // XEP0030 在 session:start 后查询服务器特性，应答后连接才可继续
+  const disco = Parser.parse(
+    await waitForReceived(server, "http://jabber.org/protocol/disco#info"),
+  );
+  server.send(`<iq xmlns="jabber:client" type="result" from="shakespeare.lit" id="${disco.getAttribute("id")}">
+    <query xmlns="http://jabber.org/protocol/disco#info">
+      <feature var="http://jabber.org/protocol/muc"/>
+    </query>
+  </iq>`);
+  return { connection, server };
+}
+
+/** 服务端下发一个 presence */
+function sendPresence(server: MockServer, xml: string) {
+  server.send(`<presence xmlns="jabber:client" ${xml}</presence>`);
+}
+
+/** 以 self-presence（110）完成一次加入 */
+async function joinRoom(connection: Connection, server: MockServer) {
+  const pending = connection.XEP0045!.join(ROOM, "crone1");
+  await waitForReceived(server, `${ROOM}/crone1`);
+  sendPresence(
+    server,
+    `from="${ROOM}/crone1">
+      <x xmlns="${USER_NS}">
+        <item affiliation="owner" role="moderator"/>
+        <status code="110"/>
+      </x>`,
+  );
+  await expect(pending).resolves.toBeDefined();
+}
 
 /**
- * XEP-0045 插件入口测试：确认特性宣告、居住者转换器与全部房间事件注册。
- * 业务逻辑由 muc.test.ts 覆盖，此处只验证入口装配。
+ * XEP-0045 集成测试：只注册 XEP0045，由连接层自动补齐 XEP0030，
+ * 经 Mock Socket 完成真实流协商后再验证加入/离开与全部房间事件的派发。
  *
- * @see https://xmpp.org/extensions/xep-0045.html 1.34.6 §7.4 Sending a Message to All Occupants、
- *      §9.6 Kicking an Occupant、§9.7 Banning an Occupant（状态码 307/301）
+ * @see https://xmpp.org/extensions/xep-0045.html 1.34.6 §7.2.2（self-presence）、§7.4（群聊消息）、
+ *      §7.6（改名）、§7.14（离开）、§8.2（踢出）、§9.1（封禁）、§10.9（销毁）
  */
-describe("XEP0045 插件入口", () => {
-  function setup() {
-    const connection = new FakeConnection();
-    const plugin = new XEP0045(connection as unknown as Connection);
-    plugin.init();
-    return connection;
-  }
-
-  it("继承 MUC、声明 XEP0030 依赖且初始无已加入房间", () => {
-    const plugin = new XEP0045(new FakeConnection() as unknown as Connection);
-    expect(plugin).toBeInstanceOf(MUC);
-    expect(XEP0045.dependencies).toEqual(["XEP0030"]);
-    expect(plugin.rooms.size).toBe(0);
+describe("XEP0045 插件入口集成（Mock Socket，仅注册当前插件）", () => {
+  beforeEach(() => {
+    serverRef.current = null;
   });
 
-  it("init 宣告 MUC 特性并注册全部事件", () => {
-    const connection = setup();
-
-    expect(connection.features.has(MUC.NS.BASE)).toBe(true);
-    expect(connection.stanzaPlugins.get(MUC.NS.USER)).toBe(MUC.parsePresUser);
-    expect(connection.eventPlugins.map((e) => e.eventName).sort()).toEqual([
-      "muc:ban",
-      "muc:decline",
-      "muc:destroy",
-      "muc:groupchat",
-      "muc:join",
-      "muc:kick",
-      "muc:leave",
-      "muc:mediated-invite",
-      "muc:subject",
-      "muc:voice-request",
-    ]);
+  afterEach(() => {
+    for (const connection of active) {
+      connection.transport?.disconnect();
+    }
+    active.clear();
   });
 
-  it("muc:groupchat 事件只匹配带 body 的群聊消息", () => {
-    const connection = setup();
-    const [matcher] = connection.matchersOf("muc:groupchat");
+  it("仅注册 XEP0045 时自动补齐 XEP0030 并按 §7.2.1 完成加入", async () => {
+    const { connection, server } = await connect();
 
-    expect(matcher({ type: "groupchat", body: "hi" })).toBe(true);
-    expect(matcher({ type: "groupchat" })).toBe(false);
-    expect(matcher({ type: "chat", body: "hi" })).toBe(false);
-  });
-
-  it("muc:kick/muc:ban 事件要求 unavailable 且携带对应状态码", () => {
-    const connection = setup();
-
-    expect(
-      connection.matchersOf("muc:kick")[0]({
-        type: "unavailable",
-        muc: { item: {}, statuses: ["307"] },
-      }),
-    ).toBe(true);
-    expect(
-      connection.matchersOf("muc:kick")[0]({
-        type: "unavailable",
-        muc: { item: {}, statuses: ["301"] },
-      }),
-    ).toBe(false);
-    expect(
-      connection.matchersOf("muc:ban")[0]({
-        type: "unavailable",
-        muc: { item: {}, statuses: ["301"] },
-      }),
-    ).toBe(true);
-  });
-
-  it("真实连接：§7.4 的房内消息经转换层派发 muc:groupchat", () => {
-    const connection = new Connection("crone1@shakespeare.lit/desktop", "test123");
-    // 插件 init 依赖 XEP0030.addFeature，这里挂上真实实例而不触发会话事件
-    const disco = new XEP0030(connection);
-    disco.init();
-    Object.assign(connection, { XEP0030: disco });
-    new XEP0045(connection).init();
-
-    const groupchat: Array<SocketEventMap["muc:groupchat"]> = [];
-    connection.on("muc:groupchat", (message) => groupchat.push(message));
-
-    // §7.4 Example「Service Reflects Message to All Occupants」
-    // 绕过 socket 与 XML 流解析，直接把已解析的 stanza 交给连接层接收处理
-    connection._createSink().onStanza(
-      Parser.parse(`
-        <message xmlns="jabber:client" from="coven@chat.shakespeare.lit/thirdwitch" id="hysf1v37" to="crone1@shakespeare.lit/desktop" type="groupchat">
-          <body>Harpier cries: 'tis time, 'tis time.</body>
-        </message>
-      `),
+    expect(connection.XEP0045).toBeDefined();
+    expect(connection.XEP0030).toBeDefined();
+    expect(connection.XEP0030!.features.has("http://jabber.org/protocol/muc")).toBe(
+      true,
     );
 
-    expect(groupchat).toHaveLength(1);
-    expect(groupchat[0].body).toBe("Harpier cries: 'tis time, 'tis time.");
+    // §7.2.1：服务端先广播其他住户 presence，最后才发本人的 self-presence
+    const joined = new Promise<void>((resolve) =>
+      connection.once("muc:join", () => resolve()),
+    );
+    const pending = connection.XEP0045!.join(ROOM, "crone1");
+    await waitForReceived(server, `${ROOM}/crone1`);
+    sendPresence(
+      server,
+      `from="${ROOM}/thirdwitch">
+        <x xmlns="${USER_NS}"><item affiliation="none" role="participant"/></x>`,
+    );
+    await expect(joined).resolves.toBeUndefined();
+
+    sendPresence(
+      server,
+      `from="${ROOM}/crone1">
+        <x xmlns="${USER_NS}">
+          <item affiliation="owner" role="moderator"/>
+          <status code="110"/>
+        </x>`,
+    );
+    await expect(pending).resolves.toBeDefined();
+    expect(connection.XEP0045!.rooms.get(ROOM)?.nick).toBe("crone1");
   });
 
-  it("真实连接：§9.6 的踢出通知经转换层派发 muc:kick", () => {
-    const connection = new Connection("pistol@shakespeare.lit/harfleur", "test123");
-    const disco = new XEP0030(connection);
-    disco.init();
-    Object.assign(connection, { XEP0030: disco });
-    new XEP0045(connection).init();
+  it("房内消息派发 muc:groupchat / muc:subject / muc:voice-request / 邀请与拒绝", async () => {
+    const { connection, server } = await connect();
+    await joinRoom(connection, server);
 
-    const kicks: Array<SocketEventMap["muc:kick"]> = [];
-    connection.on("muc:kick", (presence) => kicks.push(presence));
-
-    // §9.6 Example「Service Removes Kicked Occupant」：actor/reason 在 item 内部
-    connection._createSink().onStanza(
-      Parser.parse(`
-        <presence xmlns="jabber:client" from="harfleur@chat.shakespeare.lit/pistol" to="pistol@shakespeare.lit/harfleur" type="unavailable">
-          <x xmlns="http://jabber.org/protocol/muc#user">
-            <item affiliation="none" role="none">
-              <actor nick="Fluellen"/>
-              <reason>Avaunt, you cullion!</reason>
-            </item>
-            <status code="110"/>
-            <status code="307"/>
-          </x>
-        </presence>
-      `),
+    const groupchat = new Promise<unknown>((resolve) =>
+      connection.once("muc:groupchat", resolve),
     );
+    server.send(`<message xmlns="jabber:client" from="${ROOM}/thirdwitch" to="crone1@shakespeare.lit/desktop" type="groupchat">
+      <body>Harpier cries: 'tis time, 'tis time.</body>
+    </message>`);
+    await expect(groupchat).resolves.toMatchObject({ type: "groupchat" });
 
-    expect(kicks).toHaveLength(1);
-    expect(kicks[0].muc.statuses).toEqual(["110", "307"]);
-    expect(kicks[0].muc.item?.actor?.nick).toBe("Fluellen");
-    expect(kicks[0].muc.item?.reason).toBe("Avaunt, you cullion!");
+    const subject = new Promise<unknown>((resolve) =>
+      connection.once("muc:subject", resolve),
+    );
+    server.send(`<message xmlns="jabber:client" from="${ROOM}/crone1" to="crone1@shakespeare.lit/desktop" type="groupchat">
+      <subject>Fire Burn and Cauldron Bubble</subject>
+    </message>`);
+    await expect(subject).resolves.toMatchObject({ type: "groupchat" });
+
+    const voice = new Promise<unknown>((resolve) =>
+      connection.once("muc:voice-request", resolve),
+    );
+    server.send(`<message xmlns="jabber:client" from="${ROOM}/thirdwitch" to="crone1@shakespeare.lit/desktop">
+      <x xmlns="jabber:x:data" type="form">
+        <field var="FORM_TYPE" type="hidden"><value>http://jabber.org/protocol/muc#request</value></field>
+        <field var="muc#role" type="list-single"><value>participant</value></field>
+      </x>
+    </message>`);
+    await expect(voice).resolves.toBeDefined();
+
+    const invite = new Promise<unknown>((resolve) =>
+      connection.once("muc:mediated-invite", resolve),
+    );
+    server.send(`<message xmlns="jabber:client" from="${ROOM}" to="crone1@shakespeare.lit/desktop">
+      <x xmlns="${USER_NS}">
+        <invite from="witches@shakespeare.lit"><reason>Join us</reason></invite>
+      </x>
+    </message>`);
+    await expect(invite).resolves.toBeDefined();
+
+    const decline = new Promise<unknown>((resolve) =>
+      connection.once("muc:decline", resolve),
+    );
+    server.send(`<message xmlns="jabber:client" from="${ROOM}" to="crone1@shakespeare.lit/desktop">
+      <x xmlns="${USER_NS}">
+        <decline from="romeo@montague.lit"><reason>Busy</reason></decline>
+      </x>
+    </message>`);
+    await expect(decline).resolves.toBeDefined();
+  });
+
+  it("离开房间派发 muc:leave", async () => {
+    const { connection, server } = await connect();
+    await joinRoom(connection, server);
+
+    const leaveEvent = new Promise<void>((resolve) =>
+      connection.once("muc:leave", () => resolve()),
+    );
+    const leaving = connection.XEP0045!.leave(ROOM, "goodbye");
+    await waitForReceived(server, 'type="unavailable"');
+    sendPresence(
+      server,
+      `from="${ROOM}/crone1" type="unavailable">
+        <x xmlns="${USER_NS}">
+          <item affiliation="owner" role="none"/>
+          <status code="110"/>
+        </x>`,
+    );
+    await expect(leaving).resolves.toBeUndefined();
+    await expect(leaveEvent).resolves.toBeUndefined();
+    expect(connection.XEP0045!.rooms.has(ROOM)).toBe(false);
+  });
+
+  it("踢出、封禁与销毁派发对应事件", async () => {
+    const { connection, server } = await connect();
+    await joinRoom(connection, server);
+
+    const kicked = new Promise<unknown>((resolve) =>
+      connection.once("muc:kick", resolve),
+    );
+    sendPresence(
+      server,
+      `from="${ROOM}/thirdwitch" type="unavailable">
+        <x xmlns="${USER_NS}">
+          <item affiliation="none" role="none"><actor nick="crone1"/><reason>bye</reason></item>
+          <status code="307"/>
+        </x>`,
+    );
+    await expect(kicked).resolves.toBeDefined();
+
+    const banned = new Promise<unknown>((resolve) =>
+      connection.once("muc:ban", resolve),
+    );
+    sendPresence(
+      server,
+      `from="${ROOM}/thirdwitch" type="unavailable">
+        <x xmlns="${USER_NS}">
+          <item affiliation="outcast" role="none"><actor nick="crone1"/></item>
+          <status code="301"/>
+        </x>`,
+    );
+    await expect(banned).resolves.toBeDefined();
+
+    const destroy = new Promise<unknown>((resolve) =>
+      connection.once("muc:destroy", resolve),
+    );
+    sendPresence(
+      server,
+      `from="${ROOM}/crone1" type="unavailable">
+        <x xmlns="${USER_NS}">
+          <item affiliation="owner" role="none"/>
+          <destroy jid="shakespeare.lit"><reason>going away</reason></destroy>
+          <status code="110"/>
+        </x>`,
+    );
+    await expect(destroy).resolves.toBeDefined();
+    expect(connection.XEP0045!.rooms.has(ROOM)).toBe(false);
   });
 
   describe("setNick", () => {
@@ -221,3 +338,4 @@ describe("XEP0045 插件入口", () => {
     });
   });
 });
+

@@ -34,8 +34,7 @@ export class Reply {
      */
     static parseReplyEl(replyEl: XMPPElement): { reply?: MessageReply } {
         if (replyEl.namespaceURI !== Reply.NS) {
-            log.warn(`忽略未知命名空间的消息回复元素: ${replyEl.toXMLString()}`);
-            return {};
+            throw new Error(`不是一个 reply 元素: ${replyEl.toXMLString()}`);
         }
 
         if (replyEl.localName !== "reply") {

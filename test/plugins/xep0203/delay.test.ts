@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { Delay } from "../../../lib/plugins/xep0203/delay";
-import { XMPPElement } from "../../../lib/ltx/Element";
 import { Parser } from "../../../lib/ltx/Parser";
 
 /**
@@ -41,7 +40,7 @@ describe("Delay", () => {
           </delay>
         </message>
       `);
-      const result = Delay.parseDelayEl(xml);
+      const result = Delay.parseDelayEl(xml.getElementsByTagName("delay")[0]);
       expect(result.delay.from).toBe("capulet.com");
       expect(result.delay.reason?.trim()).toBe("Offline Storage");
       expect(result.delay.stamp.getTime()).toBe(Date.UTC(2002, 8, 10, 23, 8, 25));
@@ -54,7 +53,7 @@ describe("Delay", () => {
           <delay xmlns="urn:xmpp:delay" from="juliet@capulet.com/balcony" stamp="2002-09-10T23:41:07Z"/>
         </presence>
       `);
-      const result = Delay.parseDelayEl(xml);
+      const result = Delay.parseDelayEl(xml.getElementsByTagName("delay")[0]);
       expect(result.delay.from).toBe("juliet@capulet.com/balcony");
       expect(result.delay.reason).toBeUndefined();
       expect(result.delay.stamp.getTime()).toBe(Date.UTC(2002, 8, 10, 23, 41, 7));
@@ -67,7 +66,7 @@ describe("Delay", () => {
           <delay xmlns="urn:xmpp:delay" from="coven@macbeth.shakespeare.lit" stamp="2002-09-10T23:05:37Z"/>
         </message>
       `);
-      const result = Delay.parseDelayEl(xml);
+      const result = Delay.parseDelayEl(xml.getElementsByTagName("delay")[0]);
       expect(result.delay.from).toBe("coven@macbeth.shakespeare.lit");
       expect(result.delay.stamp.getTime()).toBe(Date.UTC(2002, 8, 10, 23, 5, 37));
     });
@@ -78,15 +77,17 @@ describe("Delay", () => {
           <delay xmlns="urn:xmpp:delay" stamp="2002-09-10T23:08:25Z">Offline Storage</delay>
         </message>
       `);
-      const result = Delay.parseDelayEl(xml);
+      const result = Delay.parseDelayEl(xml.getElementsByTagName("delay")[0]);
       expect(result.delay.from).toBeUndefined();
       expect(result.delay.reason?.trim()).toBe("Offline Storage");
       expect(result.delay.stamp.getTime()).toBe(Date.UTC(2002, 8, 10, 23, 8, 25));
     });
 
-    it("未找到 delay 元素时抛错", () => {
-      const el = XMPPElement.createElement("message");
-      expect(() => Delay.parseDelayEl(el)).toThrow("未找到 delay 标签");
+    it("delay 元素命名空间不符时抛错", () => {
+      const el = Parser.parse(
+        `<delay xmlns="urn:example:wrong" stamp="2002-09-10T23:08:25Z"/>`
+      );
+      expect(() => Delay.parseDelayEl(el)).toThrow("不是一个 delay 元素");
     });
 
     it("stamp 非 dateTime 时抛错（§8 要求 xs:dateTime）", () => {

@@ -12,7 +12,7 @@ const log = logger.getLogger("XEP0280");
  */
 export class XEP0280 extends Carbons implements Plugin {
   static readonly dependencies = ["XEP0030", "XEP0297"] as const;
-  readonly connection: Connection;
+  private readonly connection: Connection;
   constructor(connection: Connection) {
     super();
     this.connection = connection;

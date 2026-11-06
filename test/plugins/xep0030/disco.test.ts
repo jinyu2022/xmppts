@@ -169,6 +169,23 @@ describe("XEP-0030", () => {
       `));
       expect(items).toEqual([]);
     });
+
+    it("直接传入 query 元素时按自身解析", () => {
+      const query = Parser.parse(`
+        <query xmlns="http://jabber.org/protocol/disco#items">
+          <item jid="a@capulet.lit"/>
+        </query>
+      `);
+      expect(Disco.parseDiscoItems(query)).toEqual([
+        { jid: "a@capulet.lit", node: undefined, name: undefined },
+      ]);
+    });
+
+    it("缺少 query 元素时抛错", () => {
+      expect(() =>
+        Disco.parseDiscoItems(Parser.parse(`<iq type="result"/>`)),
+      ).toThrow("disco#items 响应缺少 query 元素");
+    });
   });
 
   describe("本地 feature / identity / item 管理", () => {
@@ -227,6 +244,22 @@ describe("XEP-0030", () => {
       const result = Disco.parseDiscoInfo(iq);
       expect(result.identities).toEqual(identities.map((i) => ({ ...i, lang: undefined })));
       expect(result.features).toEqual(new Set(features));
+    });
+
+    it("带 queryNode 时在应答 query 上设置 node", () => {
+      const iq = Disco.createInfoResult(
+        [],
+        [],
+        "romeo@montague.net/orchard",
+        "info2",
+        "node-1",
+      );
+      const query = iq.getElementsByTagNameNS(
+        Disco.NS.DISCO_INFO,
+        "query",
+      )[0];
+
+      expect(query.getAttribute("node")).toBe("node-1");
     });
   });
 

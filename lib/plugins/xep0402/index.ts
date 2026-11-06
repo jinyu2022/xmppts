@@ -18,7 +18,7 @@ export default class XEP0402 extends Bookmarks implements Plugin {
     // XEP0060 只为解析错误里的 pubsub#errors 附加条件，便于调用方识别节点配置问题
     static readonly dependencies = ["XEP0030", "XEP0163", "XEP0060"] as const;
     static readonly NS_NOTIFY = "urn:xmpp:bookmarks:1+notify";
-    readonly connection: Connection;
+    private readonly connection: Connection;
     /** 书签列表 */
     bookmarks: Conference[] = [];
     constructor(connection: Connection) {

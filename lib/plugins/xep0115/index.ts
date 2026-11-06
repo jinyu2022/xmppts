@@ -11,7 +11,7 @@ import type { XMPPElement } from "@/ltx";
  */
 export default class XEP0115 extends EntityCaps implements Plugin {
     static readonly dependencies = ["XEP0030"] as const;
-    readonly connection: Connection;
+    private readonly connection: Connection;
     private selfCaps?: XMPPElement;
     constructor(connection: Connection) {
         super();

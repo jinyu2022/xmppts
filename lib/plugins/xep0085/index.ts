@@ -17,7 +17,7 @@ const log = logger.getLogger("XEP0085");
  */
 export class XEP0085 extends ChatState implements Plugin {
     static readonly dependencies = ["XEP0030"] as const;
-    readonly connection: Connection;
+    private readonly connection: Connection;
 
     constructor(connection: Connection) {
         super();

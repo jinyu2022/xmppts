@@ -45,7 +45,7 @@ type Forwarded = { delay?: XMPPElement | null } & (
 | 方法 | 说明 |
 |------|------|
 | `XEP0297.NS`（静态） | `"urn:xmpp:forward:0"` |
-| `XEP0297.parseForwardedEl(el)`（静态） | 解析 `<forwarded>` → `{ forwarded }`；缺 `<forwarded>` 或 payload 不唯一时抛普通 `Error` |
+| `XEP0297.parseForwardedEl(el)`（静态） | 解析 `<forwarded>` → `{ forwarded }`；元素命名空间不符、缺 `<forwarded>` 或 payload 不唯一时抛普通 `Error` |
 
 ## 使用示例
 

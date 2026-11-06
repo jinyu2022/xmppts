@@ -13,6 +13,9 @@ export default [
       ".agents/**",
       // 独立基准脚本，用 node 直接运行、不进类型检查（同 .agents 的理由）
       "benchmarks/**",
+      // 覆盖率报告与打包产物，均非源码
+      "coverage/**",
+      "**/*.bundle.mjs",
     ],
   },
   {
