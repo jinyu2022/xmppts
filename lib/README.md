@@ -72,6 +72,7 @@
 | [XEP-0424](plugins/xep0424/readme.md) | 消息撤回 | XEP-0030 |
 | [XEP-0425](plugins/xep0425/readme.md) | 审核消息撤回 | XEP-0030, XEP-0424 |
 | [XEP-0428](plugins/xep0428/readme.md) | 回退标记（Fallback） | XEP-0030 |
+| [XEP-0444](plugins/xep0444/readme.md) | 消息反应 | XEP-0030 |
 | [XEP-0461](plugins/xep0461/readme.md) | 消息回复 | XEP-0030 |
 | [XEP-0486](plugins/xep0486/readme.md) | MUC 房间头像 | —（复用 XEP-0054/XEP-0153 工具） |
 
