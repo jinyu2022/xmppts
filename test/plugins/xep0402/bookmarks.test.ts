@@ -28,6 +28,95 @@ describe("Bookmarks", () => {
     });
   });
 
+  describe("parseBookmarksIq", () => {
+    /** §3.2 Example 5：两个书签的检索结果 */
+    const RETRIEVE_IQ = `
+      <iq type="result" id="retrieve1">
+        <pubsub xmlns="http://jabber.org/protocol/pubsub">
+          <items node="urn:xmpp:bookmarks:1">
+            <item id="theplay@conference.shakespeare.lit">
+              <conference xmlns="urn:xmpp:bookmarks:1" name="The Play" autojoin="true">
+                <nick>JC</nick>
+              </conference>
+            </item>
+            <item id="orchard@conference.shakespeare.lit">
+              <conference xmlns="urn:xmpp:bookmarks:1" name="The Orchard">
+                <nick>JC</nick>
+              </conference>
+            </item>
+          </items>
+        </pubsub>
+      </iq>`;
+
+    it("Example 5：解析全部书签，JID 取自 item 的 id", () => {
+      const bookmarks = Bookmarks.parseBookmarksIq(Parser.parse(RETRIEVE_IQ));
+      expect(bookmarks).toHaveLength(2);
+      expect(bookmarks[0]).toMatchObject({
+        jid: "theplay@conference.shakespeare.lit",
+        name: "The Play",
+        autojoin: true,
+        nick: "JC",
+      });
+      expect(bookmarks[1].jid).toBe("orchard@conference.shakespeare.lit");
+      expect(bookmarks[1].autojoin).toBe(false);
+    });
+
+    // XEP-0402 §3.2 要求保留 `<extensions/>` 里的未知元素：其中的 item/conference 不是书签
+    it("忽略 `<extensions/>` 里的同名 item 与 conference", () => {
+      const iq = Parser.parse(`
+        <iq type="result">
+          <pubsub xmlns="http://jabber.org/protocol/pubsub">
+            <items node="urn:xmpp:bookmarks:1">
+              <item id="theplay@conference.shakespeare.lit">
+                <conference xmlns="urn:xmpp:bookmarks:1" name="The Play">
+                  <extensions>
+                    <state xmlns="http://myclient.example/bookmark/state" minimized="true">
+                      <item xmlns="http://myclient.example/bookmark/state"/>
+                      <conference xmlns="urn:xmpp:bookmarks:1" name="Wrong"/>
+                    </state>
+                  </extensions>
+                </conference>
+              </item>
+            </items>
+          </pubsub>
+        </iq>`);
+      const bookmarks = Bookmarks.parseBookmarksIq(iq);
+      expect(bookmarks).toHaveLength(1);
+      expect(bookmarks[0].name).toBe("The Play");
+      // extensions 仍按原样保留，供重新发布时回写
+      expect(bookmarks[0].extensions).toHaveLength(1);
+      expect(bookmarks[0].extensions![0].localName).toBe("state");
+    });
+
+    it("跳过缺 `<conference/>` 或 id 的项，其余照常解析", () => {
+      const iq = Parser.parse(`
+        <iq type="result">
+          <pubsub xmlns="http://jabber.org/protocol/pubsub">
+            <items node="urn:xmpp:bookmarks:1">
+              <item id="bad@conference.shakespeare.lit"/>
+              <item>
+                <conference xmlns="urn:xmpp:bookmarks:1" name="无 id"/>
+              </item>
+              <item id="good@conference.shakespeare.lit">
+                <conference xmlns="urn:xmpp:bookmarks:1" name="Good"/>
+              </item>
+            </items>
+          </pubsub>
+        </iq>`);
+      const bookmarks = Bookmarks.parseBookmarksIq(iq);
+      expect(bookmarks).toHaveLength(1);
+      expect(bookmarks[0]).toMatchObject({
+        jid: "good@conference.shakespeare.lit",
+        name: "Good",
+      });
+    });
+
+    it("没有 `<items/>` 时返回空列表", () => {
+      const iq = Parser.parse(`<iq type="result"><pubsub xmlns="http://jabber.org/protocol/pubsub"/></iq>`);
+      expect(Bookmarks.parseBookmarksIq(iq)).toEqual([]);
+    });
+  });
+
   describe("parseConferenceEl", () => {
     it("Example 1：解析 name/autojoin/nick", () => {
       const el = Parser.parse(EXAMPLE_1_CONFERENCE);

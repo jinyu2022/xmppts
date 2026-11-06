@@ -335,7 +335,7 @@ export class XEP0045 extends MUC implements Plugin {
         const roomJid = this.requireJoined(room);
         const pres = XEP0045.createSetNickPres(roomJid, nick);
         const id = pres.getAttribute("id")!;
-        const selfRoomJid = `${roomJid.bare}/${this.rooms.get(roomJid.bare)!.nick}`;
+        const targetRoomJid = `${roomJid.bare}/${nick}`;
         return new Promise<Presence>((resolve, reject) => {
             const timeoutId = setTimeout(() => {
                 cleanup();
@@ -355,14 +355,24 @@ export class XEP0045 extends MUC implements Plugin {
                     return;
                 }
 
-                // 成功响应：来自自身旧 room JID，且包含 110 self-presence
-                // 房间状态（nick、occupants）由全局 presence handler 管理，这里只确认成功
-                if (presence.from.full === selfRoomJid &&
-                    presence.muc?.statuses?.includes(MUCStatusCode.SelfPresence)) {
-                    cleanup();
-                    log.debug("设置昵称成功");
-                    resolve(presence);
+                // §7.6：一次改名会收到两条 self-presence，都带 110：
+                // 1. 旧昵称的 unavailable + 303（303 同时带出新昵称）；
+                // 2. 新昵称的 available。
+                // 必须先排除第 1 条：此时 rooms.nick 还是旧昵称，提前 resolve 会让
+                // 随后的 leave()/setSubject() 继续用旧昵称。
+                if (presence.type === "unavailable") return;
+                const statuses = presence.muc?.statuses ?? [];
+                if (!statuses.includes(MUCStatusCode.SelfPresence)) return;
+                // 服务端可改写昵称并在响应里带 210（§7.6 Example 51），此时 from 不是请求的昵称
+                if (
+                    presence.from.full !== targetRoomJid &&
+                    !statuses.includes(MUCStatusCode.NickAssigned)
+                ) {
+                    return;
                 }
+                cleanup();
+                log.debug("设置昵称成功");
+                resolve(presence);
             };
             this.connection.on("presence", handler);
             try {
