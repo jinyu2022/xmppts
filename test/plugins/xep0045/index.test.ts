@@ -4,6 +4,7 @@ import { MUC } from "../../../lib/plugins/xep0045/muc";
 import { XEP0030 } from "../../../lib/plugins/xep0030";
 import { Connection, type SocketEventMap } from "../../../lib/connection";
 import { Parser } from "../../../lib/ltx/Parser";
+import { JID } from "../../../lib/JID";
 import { FakeConnection } from "../../helpers/fake-connection";
 
 /**
@@ -134,5 +135,89 @@ describe("XEP0045 插件入口", () => {
     expect(kicks[0].muc.statuses).toEqual(["110", "307"]);
     expect(kicks[0].muc.item?.actor?.nick).toBe("Fluellen");
     expect(kicks[0].muc.item?.reason).toBe("Avaunt, you cullion!");
+  });
+
+  describe("setNick", () => {
+    const ROOM = "coven@chat.shakespeare.lit";
+
+    /** 构造 handler 需要的 presence 形状（不经过转换层） */
+    function presence(
+      from: string,
+      options: { type?: "unavailable"; statuses?: string[] } = {},
+    ) {
+      return {
+        from: new JID(from),
+        type: options.type,
+        id: undefined,
+        xml: Parser.parse("<presence/>"),
+        muc: { item: undefined, statuses: options.statuses },
+      };
+    }
+
+    function setupRoom() {
+      const connection = new FakeConnection();
+      const plugin = new XEP0045(connection as unknown as Connection);
+      plugin.init();
+      plugin.rooms.set(ROOM, { nick: "thirdwitch", occupants: new Map() });
+      return { connection, plugin };
+    }
+
+    // §7.6 Example 50：改名先收到旧昵称的 unavailable（303 + 110），再收到新昵称的 available（110）
+    it("旧昵称的 303 unavailable self-presence 不算成功", async () => {
+      const { connection, plugin } = setupRoom();
+      let settled = false;
+      const pending = plugin.setNick(ROOM, "oldhag");
+      pending.then(
+        () => (settled = true),
+        () => (settled = true),
+      );
+
+      connection.emit(
+        "presence",
+        presence(`${ROOM}/thirdwitch`, {
+          type: "unavailable",
+          statuses: ["303", "110"],
+        }),
+      );
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      connection.emit(
+        "presence",
+        presence(`${ROOM}/oldhag`, { statuses: ["110"] }),
+      );
+      const result = await pending;
+      expect(result.from.full).toBe(`${ROOM}/oldhag`);
+    });
+
+    // §7.7：自身旧昵称上的状态更新也是 available + 110，但不是改名结果
+    it("旧昵称上的 available presence 更新不 resolve", async () => {
+      const { connection, plugin } = setupRoom();
+      let settled = false;
+      const pending = plugin.setNick(ROOM, "oldhag");
+      pending.then(
+        () => (settled = true),
+        () => (settled = true),
+      );
+
+      connection.emit(
+        "presence",
+        presence(`${ROOM}/thirdwitch`, { statuses: ["110"] }),
+      );
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      pending.catch(() => undefined);
+    });
+
+    // §7.6 Example 51：服务端改写昵称时在发给本人的 presence 里带 210
+    it("服务端改写昵称（210）同样视为成功", async () => {
+      const { connection, plugin } = setupRoom();
+      const pending = plugin.setNick(ROOM, "OldHag");
+      connection.emit(
+        "presence",
+        presence(`${ROOM}/oldhag`, { statuses: ["110", "210"] }),
+      );
+      await expect(pending).resolves.toBeDefined();
+    });
   });
 });

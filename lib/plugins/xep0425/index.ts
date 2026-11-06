@@ -89,15 +89,20 @@ export class XEP0425 extends Moderation implements Plugin {
 
 declare module "../../stanza" {
     interface Message {
-        /** XEP0425: 消息已被审核标记 */
-        moderated?: { by?: string; reason?: string };
+        /**
+         * XEP0425: 消息已被审核标记。
+         * `<moderated/>` 的 schema 是 simpleContent，只有 `by` 属性；`<reason/>` 是它在该消息里
+         * `<retract/>` / `<retracted/>` 下的**兄弟**元素（§3.1 Example 5、§4 Example 8），
+         * 由 XEP0424 解析为 `retract.reason` / `retracted.reason`
+         */
+        moderated?: { by?: string };
     }
 }
 
 declare module "../../connection" {
     interface SocketEventMap {
-        /** XEP0425: 消息已被审核 */
-        "message:moderated": Message & { moderated: { by?: string; reason?: string } };
+        /** XEP0425: 消息已被审核（`reason` 请读 `retract` / `retracted`） */
+        "message:moderated": Message & { moderated: { by?: string } };
     }
 }
 

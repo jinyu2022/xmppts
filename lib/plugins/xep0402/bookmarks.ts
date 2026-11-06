@@ -62,15 +62,19 @@ export class Bookmarks {
     }
 
     static parseBookmarksIq(iq: XMPPElement): Conference[] {
-        const item = iq.getElementsByTagName("item");
-        return Array.from(item).map((item) => {
-            const conferenceEl = item.getElementsByTagName("conference")[0];
-            return {
+        const bookmarks: Conference[] = [];
+        for (const itemEl of iq.querySelectorAll(":scope > pubsub > items > item")) {
+            // `conference` 同样只取直接子元素，避免从 `<extensions/>` 深处误取
+            const conferenceEl = itemEl.querySelector(":scope > conference");
+            const jid = itemEl.getAttribute("id");
+            if (!jid || !conferenceEl) continue;
+            bookmarks.push({
                 ...Bookmarks.parseConferenceEl(conferenceEl).conference,
                 // XEP-0402 书签的 JID 是 item 的 id 属性，conference不再包含jid属性
-                jid: item.getAttribute("id")!,
-            };
-        });
+                jid,
+            });
+        }
+        return bookmarks;
     }
 
     static parseConferenceEl(

@@ -61,6 +61,21 @@ describe("Forward", () => {
       expect(forwarded.delay).toBeUndefined();
     });
 
+    // XEP-0297 §2：`<delay/>` 必须是 `<forwarded/>` 的直接子元素
+    it("不把被转发 stanza 自己的 delay 当成转发延迟", () => {
+      const forwarded = parse(
+        Parser.parse(`
+          <forwarded xmlns="urn:xmpp:forward:0">
+            <message from="juliet@capulet.lit/orchard" type="chat" xmlns="jabber:client">
+              <body>Hi</body>
+              <delay xmlns="urn:xmpp:delay" stamp="2010-07-10T23:08:25Z"/>
+            </message>
+          </forwarded>`)
+      );
+      expect(forwarded.message).toBeDefined();
+      expect(forwarded.delay).toBeUndefined();
+    });
+
     it("§8 XML Schema：允许转发 presence", () => {
       const forwarded = parse(
         Parser.parse(`
