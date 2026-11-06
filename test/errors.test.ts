@@ -102,4 +102,19 @@ describe("XMPPError", () => {
     expect(ErrorConditions).toContain("unexpected-request");
     expect(new Set(ErrorConditions).size).toBe(ErrorConditions.length);
   });
+
+  it("parseErrorChildEl：区分 text 与 condition，非 stanza error 命名空间抛错", () => {
+    const text = Parser.parse(`<text xmlns="${XMPPError.NS}">boom</text>`);
+    expect(XMPPError.parseErrorChildEl(text)).toEqual({ text: "boom" });
+
+    const condition = Parser.parse(`<conflict xmlns="${XMPPError.NS}"/>`);
+    expect(XMPPError.parseErrorChildEl(condition)).toEqual({
+      condition: "conflict",
+    });
+
+    const foreign = Parser.parse(`<conflict xmlns="urn:example:other"/>`);
+    expect(() => XMPPError.parseErrorChildEl(foreign)).toThrow(
+      "不是一个stanza error元素",
+    );
+  });
 });

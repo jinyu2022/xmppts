@@ -15,11 +15,8 @@ class XEP0368 implements Plugin {
   static readonly SRV_SERVICE = "_xmpps-client._tcp";
   /** 回退服务：RFC 6120 §3.2.1 常规 SRV 记录 */
   static readonly FALLBACK_SERVICE = "_xmpp-client._tcp";
-  /** @private */
-  readonly connection: Connection;
   // 考虑到意外的断链可能是服务器ip相关问题，因此不进行缓存
   constructor(connection: Connection) {
-    this.connection = connection;
     // 构造函数先于传输创建：覆盖默认 xmpp 传输，在 create() 中决定直连 TLS 或明文 TCP
     connection.registerTransport(
       "xmpp",

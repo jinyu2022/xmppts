@@ -16,7 +16,7 @@ const log = logger.getLogger("XEP0045");
  */
 export class XEP0045 extends MUC implements Plugin {
     static readonly dependencies = ["XEP0030"] as const;
-    readonly connection: Connection;
+    private readonly connection: Connection;
 
     /** 存储已加入的房间信息，键是房间的jid */
     readonly rooms: Map<string,
@@ -140,8 +140,10 @@ export class XEP0045 extends MUC implements Plugin {
             const room = pres.from.bare;
             const userJid = pres.from.full;
             const user = {
-                nick: pres.from.resource!,
+                // item 可能携带昵称变更后的新昵称（§7.6）；住户标识始终以 presence 的
+                // resource 为准，放在展开之后，避免 item 缺省 nick 时覆盖成 undefined
                 ...pres.muc.item,
+                nick: pres.from.resource!,
             };
             if (pres.type === "unavailable") {
                 if (pres.muc.statuses?.includes(MUCStatusCode.SelfPresence)) {

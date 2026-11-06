@@ -14,7 +14,7 @@ import { OccupantId, type OccupantID } from "./occupantId";
  */
 export class XEP0421 extends OccupantId implements Plugin {
     static readonly dependencies = ["XEP0030"] as const;
-    readonly connection: Connection;
+    private readonly connection: Connection;
 
     constructor(connection: Connection) {
         super();

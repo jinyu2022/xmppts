@@ -34,7 +34,7 @@ interface Message {
 | 方法 | 说明 |
 |------|------|
 | `XEP0203.NS`（静态） | `"urn:xmpp:delay"` |
-| `XEP0203.parseDelayEl(el)`（静态） | 解析 `<delay/>` → `{ delay }`；`stamp` 非法抛 `Error` |
+| `XEP0203.parseDelayEl(el)`（静态） | 解析 `<delay/>` → `{ delay }`；元素命名空间不符或 `stamp` 非法抛 `Error` |
 | `XEP0203.createDelayEl(stamp, from, reason)`（静态） | 构造 `<delay/>` 元素（`reason` 按规范可选，当前签名为必填） |
 
 ## 使用示例

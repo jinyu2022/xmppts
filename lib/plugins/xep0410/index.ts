@@ -65,7 +65,7 @@ export class XEP0410 extends MucSelfPing implements Plugin {
     /** 定时器扫描间隔（毫秒），检测延迟最多比失活阈值多一个间隔。 */
     checkInterval: 5 * 60_000,
   };
-  readonly connection: Connection;
+  private readonly connection: Connection;
 
   /**
    * 房间 bare JID -> 最后活动时间戳（Date.now()）。

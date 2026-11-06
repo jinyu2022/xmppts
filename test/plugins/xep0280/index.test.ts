@@ -1,10 +1,11 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { Connection } from "../../../lib/connection";
 import { JID } from "../../../lib/JID";
 import type { Message } from "../../../lib/stanza";
 import { Parser } from "../../../lib/ltx/Parser";
 import { XEP0030 } from "../../../lib/plugins/xep0030";
 import XEP0280 from "../../../lib/plugins/xep0280";
+import { FakeConnection } from "../../helpers/fake-connection";
 
 /**
  * XEP-0280 事件来源校验：碳拷贝包装消息的 from 必须是本账号 bare JID（§11），
@@ -69,6 +70,9 @@ describe("XEP0280 碳拷贝来源校验", () => {
     expect(
       matchers["carbon:received"](fakeMessage("tybalt@capulet.example/home", "received")),
     ).toBe(false);
+    expect(
+      matchers["carbon:sent"](fakeMessage("tybalt@capulet.example/home", "sent")),
+    ).toBe(false);
   });
 
   it("缺失 from 时视为隐式来自自身，触发", () => {
@@ -121,5 +125,65 @@ describe("XEP0280 碳拷贝来源校验", () => {
     expect(received).toHaveLength(1);
     expect(received[0].carbon?.type).toBe("received");
     expect(received[0].from.bare).toBe("romeo@montague.example");
+  });
+});
+
+describe("XEP0280 会话管理与启用/禁用", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function setup() {
+    const connection = new FakeConnection();
+    const plugin = new XEP0280(connection as unknown as Connection);
+    plugin.init();
+    return { connection, plugin };
+  }
+
+  it("session:start 且服务器声明 carbons 时自动启用", async () => {
+    const { connection } = setup();
+    connection.serverFeatures.add(XEP0280.NS);
+    connection.emit("session:start");
+
+    await vi.waitFor(() => expect(connection.sentAsync).toHaveLength(1));
+    expect(connection.sentAsync[0].getAttribute("type")).toBe("set");
+    expect(
+      connection.sentAsync[0].getElementsByTagNameNS(XEP0280.NS, "enable"),
+    ).toHaveLength(1);
+  });
+
+  it("服务器不支持时不启用", async () => {
+    const { connection } = setup();
+    connection.emit("session:start");
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(connection.sentAsync).toHaveLength(0);
+  });
+
+  it("特性查询失败被吞掉，不抛未处理拒绝", async () => {
+    const { connection } = setup();
+    vi.spyOn(connection.XEP0030, "getServerFeatures").mockRejectedValue(
+      new Error("boom"),
+    );
+
+    connection.emit("session:start");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(connection.sentAsync).toHaveLength(0);
+  });
+
+  it("enable/disable 以 result 判定成功，非 result 与异常返回 false", async () => {
+    const { connection, plugin } = setup();
+
+    connection.sendAsyncResult = Parser.parse(`<iq type="result"/>`);
+    await expect(plugin.enable()).resolves.toBe(true);
+    await expect(plugin.disable()).resolves.toBe(true);
+
+    connection.sendAsyncResult = Parser.parse(`<iq type="error"/>`);
+    await expect(plugin.enable()).resolves.toBe(false);
+    await expect(plugin.disable()).resolves.toBe(false);
+
+    connection.sendAsync = () => Promise.reject(new Error("closed"));
+    await expect(plugin.enable()).resolves.toBe(false);
+    await expect(plugin.disable()).resolves.toBe(false);
   });
 });

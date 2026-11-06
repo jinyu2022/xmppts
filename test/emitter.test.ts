@@ -311,4 +311,37 @@ describe("Emitter", () => {
     // @ts-expect-error 数组载荷不能展开成多个参数
     emitter.emit("items", "a", "b");
   });
+
+  it("addListener/prependListener/removeListener 与 on/off 等价", () => {
+    const emitter = new Emitter<NoArgEvents>();
+    const calls: string[] = [];
+    const first = () => calls.push("first");
+    const third = () => calls.push("third");
+
+    emitter.addListener("event", first);
+    emitter.on("event", () => calls.push("second"));
+    emitter.prependListener("event", third);
+    // 连续 prepend 时后插入的更靠前（与 Node 一致）
+    emitter.prependListener("event", () => calls.push("zero"));
+
+    emitter.emit("event");
+    expect(calls).toEqual(["zero", "third", "first", "second"]);
+
+    emitter.removeListener("event", third);
+    calls.length = 0;
+    emitter.emit("event");
+    expect(calls).toEqual(["zero", "first", "second"]);
+  });
+
+  it("默认兜底处理器：未处理的 error 与监听器抛错都不向外传播", () => {
+    // 不替换静态处理器，执行其默认实现
+    const emitter = new Emitter<ErrorEvents>();
+    expect(() => emitter.emit("error", new Error("boom"))).not.toThrow();
+
+    const throwing = new Emitter<NoArgEvents>();
+    throwing.on("event", () => {
+      throw new Error("listener failed");
+    });
+    expect(() => throwing.emit("event")).not.toThrow();
+  });
 });

@@ -251,6 +251,10 @@ export class MUC {
     return iq;
   }
 
+  /**
+   * 构造角色变更 IQ（§8）
+   * @param nick 住户昵称；传 JID 时取其 resource（§8.2 的 item@nick 是 occupant 昵称）
+   */
   static createSetRoleIq(
     room: string | JID,
     nick: string | JID,
@@ -258,7 +262,12 @@ export class MUC {
     reason?: string
   ) {
     if (typeof room !== "string") room = room.toString();
-    if (typeof nick !== "string") nick = nick.toString();
+    if (typeof nick !== "string") {
+      if (!nick.resource) {
+        throw new Error("必须为包含昵称的完整 occupant JID");
+      }
+      nick = nick.resource;
+    }
     const iq = XMPPElement.createElement("iq", { to: room, type: "set" });
 
     const query = XMPPElement.createElementNS(MUC.NS.ADMIN, "query");
@@ -298,6 +307,9 @@ export class MUC {
    * message stanza 可能只包含状态码，不一定包含 item。
    */
   static parsePresUser(xEl: XMPPElement): { muc: MUCUserPres } {
+    if (xEl.namespaceURI !== MUC.NS.USER) {
+      throw new Error(`不是一个 muc#user 元素: ${xEl.toXMLString()}`);
+    }
     if (xEl.tagName !== "x") return { muc: {} };
 
     const statuses = Array.from(xEl.getElementsByTagName("status"))

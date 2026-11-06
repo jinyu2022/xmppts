@@ -11,7 +11,7 @@ import { EME, type EncryptionInfo } from "./eme";
  */
 export class XEP0380 extends EME implements Plugin {
     static readonly dependencies = ["XEP0030"] as const;
-    readonly connection: Connection;
+    private readonly connection: Connection;
 
     constructor(connection: Connection) {
         super();

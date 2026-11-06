@@ -12,7 +12,7 @@ import type { JID } from "@/JID";
  */
 export class XEP0084 extends Avatar implements Plugin {
     static readonly dependencies = ["XEP0030", "XEP0163"] as const;
-    readonly connection: Connection;
+    private readonly connection: Connection;
 
     constructor(connection: Connection) {
         super();

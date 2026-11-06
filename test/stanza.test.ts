@@ -306,6 +306,23 @@ describe("Message", () => {
       expect(Message.parseMessage(el).message.subjects).toEqual({});
     });
 
+    it("单个 body/subject 也按 xml:lang 归档，缺省语言不进入字典", () => {
+      const el = buildMessageXml({ type: "chat" });
+      const body = XMPPElement.createElement("body");
+      body.setAttribute("xml:lang", "zh");
+      body.textContent = "你好";
+      const subject = XMPPElement.createElement("subject");
+      subject.textContent = "topic";
+      el.appendChild(body);
+      el.appendChild(subject);
+
+      const msg = Message.parseMessage(el).message;
+      expect(msg.body).toBe("你好");
+      expect(msg.bodies).toEqual({ zh: "你好" });
+      expect(msg.subject).toBe("topic");
+      expect(msg.subjects).toEqual({});
+    });
+
     it("应忽略 XEP 子元素中嵌套的 subject", () => {
       const el = buildMessageXml({ type: "chat" });
       const x = XMPPElement.createElementNS("some:xep", "x");

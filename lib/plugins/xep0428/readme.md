@@ -31,7 +31,7 @@ interface Message {
 |------|------|
 | `XEP0428.stripFallback(text, regions)`（静态） | 按回退区间移除文本片段 |
 | `XEP0428.createFallbackEl(info)`（静态） | 构造 `<fallback/>` |
-| `XEP0428.parseFallbackEl(fallbackEl)`（静态） | 从父元素收集全部 fallback |
+| `XEP0428.parseFallbackEl(fallbackEl)`（静态） | 从父元素收集全部 fallback；命名空间不符抛 `Error` |
 | `XEP0428.NS`（静态） | `"urn:xmpp:fallback:0"` |
 
 ## 使用示例

@@ -51,6 +51,7 @@ await client.connect();
 
 ## 贡献
 
+本项目使用了 LLM 技术辅助研究与开发， LLM 仅负责生成文档与测试文件，其余代码均由人工编写而成。
 欢迎提交 Issue 和 Pull Request。这是一个 JS/TS 与 XMPP 的学习项目，不足之处欢迎指正。
 
 ## 感谢

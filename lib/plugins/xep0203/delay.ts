@@ -4,6 +4,9 @@ export class Delay {
     static readonly NS = "urn:xmpp:delay" as const;
 
     static parseDelayEl(delay: XMPPElement) {
+        if (delay.namespaceURI !== Delay.NS) {
+            throw new Error(`不是一个 delay 元素: ${delay.toXMLString()}`);
+        }
         const delayElement =
             delay.tagName === "delay"
                 ? delay

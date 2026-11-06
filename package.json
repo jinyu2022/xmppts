@@ -32,6 +32,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.6.5",
+    "@vitest/coverage-v8": "^5.1.0",
     "eslint": "^10.13.0",
     "globals": "^17.13.0",
     "tsdown": "^0.23.2",

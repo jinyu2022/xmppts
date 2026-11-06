@@ -21,6 +21,9 @@ export class Carbons {
 
 
   static parseCarbonEl(carbon: XMPPElement) {
+    if (carbon.namespaceURI !== Carbons.NS) {
+      throw new Error(`不是一个 carbon 元素: ${carbon.toXMLString()}`);
+    }
     // 判断当前节点是否为 received/sent
     const received =
       carbon.tagName === "received"

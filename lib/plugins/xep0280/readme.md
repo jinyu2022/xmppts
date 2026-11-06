@@ -45,7 +45,7 @@ interface Message {
 | `enable()` | 发送启用碳副本的 IQ |
 | `disable()` | 发送停用碳副本的 IQ |
 | `XEP0280.NS`（静态） | `"urn:xmpp:carbons:2"` |
-| `XEP0280.parseCarbonEl(el)`（静态） | 解析 `<received/>` / `<sent/>` → `{ carbon }` |
+| `XEP0280.parseCarbonEl(el)`（静态） | 解析 `<received/>` / `<sent/>` → `{ carbon }`；元素命名空间不符抛 `Error` |
 | `XEP0280.createEnableIq()` / `createDisableIq()`（静态） | 构造启用/停用 IQ |
 
 ## 使用示例

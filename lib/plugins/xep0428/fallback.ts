@@ -40,6 +40,9 @@ export class Fallback {
     static parseFallbackEl(
         fallbackEl: XMPPElement,
     ): { fallbacks?: FallbackInfo[]; } {
+        if (fallbackEl.namespaceURI !== Fallback.NS) {
+            throw new Error(`不是一个 fallback 元素: ${fallbackEl.toXMLString()}`);
+        }
         const parent = fallbackEl.parentElement;
         if (parent && parent.localName !== "message") {
             log.warn(`忽略非消息中的 fallback: ${fallbackEl.toXMLString()}`);

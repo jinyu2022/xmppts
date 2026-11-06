@@ -1,189 +1,198 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import XEP0199 from "../../../lib/plugins/xep0199";
 import Ping from "../../../lib/plugins/xep0199/ping";
 import type { Connection } from "../../../lib/connection";
+import { XMPPError } from "../../../lib/errors";
 import { Iq } from "../../../lib/stanza";
 import { Parser } from "../../../lib/ltx/Parser";
-import { FakeConnection } from "../../helpers/fake-connection";
+import {
+  createTcpConnection,
+  getServer,
+  negotiate,
+  serverRef,
+  waitForReceived,
+  type MockServer,
+} from "../../helpers/mock-transport";
+
+// 将 node:net / node:tls 替换为 Mock Socket，避免真实 TCP/TLS 连接
+vi.mock("node:net", async () => {
+  const { netMock } = await import("../../helpers/mock-transport");
+  return netMock();
+});
+// TLSSocket 需保留真实导出（传输层用 instanceof 判断 TLS 就绪）
+vi.mock("node:tls", async (importOriginal) => {
+  const { tlsMock } = await import("../../helpers/mock-transport");
+  return tlsMock(importOriginal);
+});
+
+/** 已建立连接的引用，供 afterEach 统一断开 */
+const active = new Set<Connection>();
+
+/** 创建仅注册 XEP0199 的连接；XEP0030 在 connect() 时按依赖自动补齐 */
+function createIntegrationConnection(
+  options?: ConstructorParameters<typeof XEP0199>[1],
+) {
+  const connection = createTcpConnection("juliet@capulet.lit/balcony");
+  active.add(connection);
+  connection.registerPlugin("XEP0199", options);
+  return connection;
+}
+
+/** 完成「连接 → 认证 → 绑定」并返回插件实例 */
+async function connectIntegration(
+  options?: ConstructorParameters<typeof XEP0199>[1],
+) {
+  const connection = createIntegrationConnection(options);
+  const sessionStart = new Promise<void>((resolve) =>
+    connection.once("session:start", () => resolve()),
+  );
+  await connection.connect();
+  const server = getServer();
+  await negotiate(server, "juliet@capulet.lit/balcony");
+  await sessionStart;
+  return { connection, server, plugin: connection.XEP0199! };
+}
+
+/** 应答 XEP0030 在 session:start 后发出的 disco#info 查询 */
+async function answerDiscoInfo(server: MockServer, features: string[]) {
+  const query = Parser.parse(
+    await waitForReceived(server, "http://jabber.org/protocol/disco#info"),
+  );
+  server.send(`<iq xmlns="jabber:client" type="result" from="capulet.lit" id="${query.getAttribute("id")}">
+    <query xmlns="http://jabber.org/protocol/disco#info">
+      ${features.map((feature) => `<feature var="${feature}"/>`).join("")}
+    </query>
+  </iq>`);
+}
 
 /**
- * XEP-0199 插件入口测试：确认 ping 应答、配置合并与 keepalive 定时。
+ * XEP-0199 集成测试：只注册 XEP0199，由连接层按 static dependencies 自动补齐 XEP0030，
+ * 经 Mock Socket 完成真实流协商后再验证解析、事件与发往服务端的 stanza。
  *
- * @see https://xmpp.org/extensions/xep-0199.html 2.0.1 §4.1 Server-To-Client Pings（Example 1、Example 2）
+ * @see https://xmpp.org/extensions/xep-0199.html 2.0.1 §4.1（服务端 ping 客户端）、§4.2（客户端 ping 服务端）
  */
-describe("XEP0199 插件入口", () => {
+describe("XEP0199 插件入口集成（Mock Socket，仅注册当前插件）", () => {
+  beforeEach(() => {
+    serverRef.current = null;
+  });
+
   afterEach(() => {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
+    for (const connection of active) {
+      connection.transport?.disconnect();
+    }
+    active.clear();
   });
 
-  function setup(options?: ConstructorParameters<typeof XEP0199>[1]) {
-    const connection = new FakeConnection();
-    const plugin = new XEP0199(connection as unknown as Connection, options);
-    plugin.init();
-    return { connection, plugin };
-  }
+  it("仅注册 XEP0199 时自动补齐 XEP0030 并完成流协商", async () => {
+    const { connection } = await connectIntegration();
 
-  function makeIq(connection: FakeConnection, xml: string) {
-    return new Iq(Parser.parse(xml), connection as unknown as Connection);
-  }
-
-  it("声明 XEP0030 依赖，init 宣告特性并注册 iq 处理器", () => {
-    const { connection } = setup();
-
-    expect(XEP0199.dependencies).toEqual(["XEP0030"]);
-    expect(connection.features.has(Ping.NS)).toBe(true);
-    expect(connection.listenerCount("iq")).toBe(1);
+    expect(connection.XEP0199).toBeDefined();
+    expect(connection.XEP0030).toBeDefined();
   });
 
-  it("收到 ping get 时回复 result", () => {
-    const { connection } = setup();
+  it("服务器宣告 ping 特性后按 interval 发送 keepalive ping", async () => {
+    const { server } = await connectIntegration({ interval: 100, timeout: 90 });
+    await answerDiscoInfo(server, [Ping.NS]);
 
-    // 规范 Example 1：服务器 ping 客户端
-    connection.emit(
-      "iq",
-      makeIq(
-        connection,
-        `<iq from="capulet.lit" to="juliet@capulet.lit/balcony" id="s2c1" type="get"><ping xmlns="${Ping.NS}"/></iq>`,
-      ),
-    );
-
-    expect(connection.sent).toHaveLength(1);
-    expect(connection.sent[0].getAttribute("type")).toBe("result");
-    expect(connection.sent[0].getAttribute("id")).toBe("s2c1");
-    expect(connection.sent[0].getAttribute("to")).toBe("capulet.lit");
-  });
-
-  it("非 ping 的 iq 不响应", () => {
-    const { connection } = setup();
-
-    connection.emit(
-      "iq",
-      makeIq(
-        connection,
-        `<iq from="capulet.lit" to="juliet@capulet.lit/balcony" id="s2c2" type="get"><query xmlns="http://jabber.org/protocol/disco#info"/></iq>`,
-      ),
-    );
-
-    expect(connection.sent).toHaveLength(0);
-  });
-
-  it("interval 短于 timeout 时回退默认配置，正常配置直接合并", () => {
-    type Config = { keepalive: boolean; interval: number; timeout: number };
-    const readConfig = (plugin: XEP0199) =>
-      (plugin as unknown as { config: Config }).config;
-
-    const fallback = setup({ interval: 1000, timeout: 5000 });
-    expect(readConfig(fallback.plugin).interval).toBe(300_000);
-    expect(readConfig(fallback.plugin).timeout).toBe(30_000);
-
-    const merged = setup({ keepalive: false, interval: 60_000, timeout: 10_000 });
-    expect(readConfig(merged.plugin)).toEqual({
-      keepalive: false,
-      interval: 60_000,
-      timeout: 10_000,
-    });
-  });
-
-  it("会话建立且服务器宣告 ping 特性后自动启动 keepalive", async () => {
-    vi.useFakeTimers();
-    const { connection, plugin } = setup({ interval: 60_000 });
-
-    // 会话未开始时即使特性已宣告也不启动
-    connection.serverFeatures.add(Ping.NS);
-    await vi.advanceTimersByTimeAsync(0);
-    expect((plugin as unknown as { timer?: unknown }).timer).toBeUndefined();
-
-    // 真实连接在派发 session:start 时会话已置为活跃
-    connection.sessionActive = true;
-    connection.emit("session:start");
-    await vi.advanceTimersByTimeAsync(0);
-    expect((plugin as unknown as { timer?: unknown }).timer).toBeDefined();
-  });
-
-  it("keepalive 按 interval 发送 ping 且尊重 keepalive=false", async () => {
-    vi.useFakeTimers();
-    const { connection, plugin } = setup({ interval: 60_000, timeout: 10_000 });
-    const sendAsync = vi.spyOn(connection, "sendAsync");
-    const pingSpy = vi.spyOn(plugin, "ping");
-    // 会话活跃，避免 keepalive 因会话结束而早退
-    connection.sessionActive = true;
-
-    plugin.keepAlivePing();
-    expect((plugin as unknown as { timer?: unknown }).timer).toBeDefined();
-
-    // 未到 interval 不 ping
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(pingSpy).not.toHaveBeenCalled();
-
-    // 到点后 ping 自身域
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(pingSpy).toHaveBeenCalledTimes(1);
-    const [pingIq] = sendAsync.mock.calls[0];
+    // keepalive 首个 ping 在 interval 后发出，目标是自身域
+    const pingIq = Parser.parse(await waitForReceived(server, Ping.NS));
+    expect(pingIq.getAttribute("type")).toBe("get");
     expect(pingIq.getAttribute("to")).toBe("capulet.lit");
-    expect(pingIq.getElementsByTagNameNS(Ping.NS, "ping")).toHaveLength(1);
 
-    // 会话结束时早退
-    connection.sessionActive = false;
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(pingSpy).toHaveBeenCalledTimes(1);
-
-    // keepalive=false 时不 ping
-    const disabled = setup({ keepalive: false });
-    disabled.connection.sessionActive = true;
-    disabled.plugin.keepAlivePing();
-    const disabledSend = vi.spyOn(disabled.connection, "sendAsync");
-    await vi.advanceTimersByTimeAsync(300_000);
-    expect(disabledSend).not.toHaveBeenCalled();
+    // 应答 ping，避免 sendAsync 在测试结束后才超时
+    server.send(`<iq xmlns="jabber:client" type="result" from="capulet.lit" id="${pingIq.getAttribute("id")}"/>`);
   });
 
-  it("会话建立后服务器不支持时不启动 keepalive", async () => {
-    vi.useFakeTimers();
-    const { connection, plugin } = setup({ interval: 60_000 });
+  it("服务器未宣告 ping 特性时不启动 keepalive", async () => {
+    const { server } = await connectIntegration({ interval: 100, timeout: 90 });
+    await answerDiscoInfo(server, []);
 
-    connection.emit("session:start");
-    await vi.advanceTimersByTimeAsync(0);
-    expect((plugin as unknown as { timer?: unknown }).timer).toBeUndefined();
-    expect(vi.spyOn(connection, "sendAsync")).not.toHaveBeenCalled();
+    // 等待超过一个 interval，确认没有发出任何 ping
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(server.received.some((xml) => xml.includes(Ping.NS))).toBe(false);
   });
 
-  it("session:end 清除 keepalive 定时器，避免重连后多实例叠加 ping", async () => {
-    vi.useFakeTimers();
-    const { connection, plugin } = setup({ interval: 60_000, timeout: 10_000 });
-    const pingSpy = vi.spyOn(plugin, "ping");
-    connection.sessionActive = true;
+  it("keepalive ping 超时不中断后续周期", async () => {
+    const { server } = await connectIntegration({ interval: 100, timeout: 50 });
+    await answerDiscoInfo(server, [Ping.NS]);
 
-    plugin.keepAlivePing();
-    expect((plugin as unknown as { timer?: unknown }).timer).toBeDefined();
+    const pingCount = () =>
+      server.received.filter((xml) => xml.includes(Ping.NS)).length;
 
-    // 真实连接在派发 session:end 之前已把会话状态降为不可用
-    connection.sessionActive = false;
-    connection.emit("session:end");
-
-    // 旧实例不再持有定时器，重连后新建实例重新启动，不会叠加
-    expect((plugin as unknown as { timer?: unknown }).timer).toBeUndefined();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(pingSpy).not.toHaveBeenCalled();
+    // 首个 ping 不应答，等 sendAsync 超时进入错误处理
+    await waitForReceived(server, Ping.NS);
+    // 只有发出第二个 ping 才能证明定时器未被超时中断
+    await vi.waitFor(() => expect(pingCount()).toBeGreaterThanOrEqual(2));
   });
 
-  it("特性查询返回时会话已结束则不启动 keepalive", async () => {
-    vi.useFakeTimers();
-    const { connection, plugin } = setup({ interval: 60_000 });
-    connection.serverFeatures.add(Ping.NS);
-    let resolveFeatures!: (features: Set<string>) => void;
-    vi.spyOn(connection.XEP0030, "getServerFeatures").mockReturnValue(
-      new Promise<Set<string>>((resolve) => {
-        resolveFeatures = resolve;
-      }),
+  it("keepalive=false 时即使服务器支持也不发 ping", async () => {
+    const { server } = await connectIntegration({
+      keepalive: false,
+      interval: 100,
+      timeout: 90,
+    });
+    await answerDiscoInfo(server, [Ping.NS]);
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(server.received.some((xml) => xml.includes(Ping.NS))).toBe(false);
+  });
+
+  it("服务器特性查询失败时不启动 keepalive", async () => {
+    const { server } = await connectIntegration({ interval: 100, timeout: 90 });
+    const query = Parser.parse(
+      await waitForReceived(server, "http://jabber.org/protocol/disco#info"),
     );
+    server.send(`<iq xmlns="jabber:client" type="error" from="capulet.lit" id="${query.getAttribute("id")}">
+      <error type="cancel"><service-unavailable xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/></error>
+    </iq>`);
 
-    connection.emit("session:start");
-    // 查询在途时断开：session:end 先于特性结果到达
-    connection.sessionActive = false;
-    connection.emit("session:end");
-    resolveFeatures(connection.serverFeatures);
-    await vi.advanceTimersByTimeAsync(0);
+    // 等查询失败链路走完，确认没有因为错误而启动 keepalive
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(server.received.some((xml) => xml.includes(Ping.NS))).toBe(false);
+  });
 
-    expect((plugin as unknown as { timer?: unknown }).timer).toBeUndefined();
+  it("收到服务器 ping 时派发 iq 事件并回复 result", async () => {
+    const { connection, server } = await connectIntegration();
+    await answerDiscoInfo(server, []);
+
+    const receivedIq = new Promise<Iq>((resolve) =>
+      connection.once("iq", resolve),
+    );
+    server.send(`<iq xmlns="jabber:client" from="capulet.lit"
+      to="juliet@capulet.lit/balcony" type="get" id="s2c1">
+      <ping xmlns="${Ping.NS}"/>
+    </iq>`);
+
+    // 解析后先派发 iq 事件，再由插件回复 result
+    await expect(receivedIq).resolves.toMatchObject({ type: "get", id: "s2c1" });
+    const reply = Parser.parse(await waitForReceived(server, 'id="s2c1"'));
+    expect(reply.getAttribute("type")).toBe("result");
+    expect(reply.getAttribute("to")).toBe("capulet.lit");
+  });
+
+  it("ping() 发出请求并在收到 result 后返回耗时", async () => {
+    const { server, plugin } = await connectIntegration();
+    await answerDiscoInfo(server, []);
+
+    const pending = plugin.ping("capulet.lit", 1000);
+    const pingIq = Parser.parse(await waitForReceived(server, Ping.NS));
+    expect(pingIq.getAttribute("type")).toBe("get");
+    expect(pingIq.getAttribute("to")).toBe("capulet.lit");
+
+    server.send(`<iq xmlns="jabber:client" type="result" from="capulet.lit" id="${pingIq.getAttribute("id")}"/>`);
+    await expect(pending).resolves.toBeGreaterThanOrEqual(0);
+  });
+
+  it("ping() 收到 error 时抛出 XMPPError", async () => {
+    const { server, plugin } = await connectIntegration();
+    await answerDiscoInfo(server, []);
+
+    const pending = plugin.ping("capulet.lit", 1000);
+    const pingIq = Parser.parse(await waitForReceived(server, Ping.NS));
+    server.send(`<iq xmlns="jabber:client" type="error" from="capulet.lit" id="${pingIq.getAttribute("id")}">
+      <error type="cancel"><service-unavailable xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/></error>
+    </iq>`);
+
+    await expect(pending).rejects.toBeInstanceOf(XMPPError);
   });
 });

@@ -13,7 +13,7 @@ import { Reply, type MessageReply } from "./reply";
  */
 export class XEP0461 extends Reply implements Plugin {
     static readonly dependencies = ["XEP0030"] as const;
-    readonly connection: Connection;
+    private readonly connection: Connection;
 
     constructor(connection: Connection) {
         super();

@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { Carbons } from "../../../lib/plugins/xep0280/carbons";
-import { XMPPElement } from "../../../lib/ltx/Element";
 import { Parser } from "../../../lib/ltx/Parser";
 
 /**
@@ -62,21 +61,25 @@ describe("Carbons", () => {
 
   describe("parseCarbonEl", () => {
     it("Example 10：解析 received carbon 及其 forwarded", () => {
-      const result = Carbons.parseCarbonEl(Parser.parse(EXAMPLE_10));
+      const result = Carbons.parseCarbonEl(
+        Parser.parse(EXAMPLE_10).getElementsByTagName("received")[0],
+      );
       expect(result.carbon.type).toBe("received");
       expect(result.carbon.forwarded).toBeDefined();
       expect(result.carbon.forwarded.getElementsByTagName("message")).toHaveLength(1);
     });
 
     it("Example 13：解析 sent carbon 及其 forwarded", () => {
-      const result = Carbons.parseCarbonEl(Parser.parse(EXAMPLE_13));
+      const result = Carbons.parseCarbonEl(
+        Parser.parse(EXAMPLE_13).getElementsByTagName("sent")[0],
+      );
       expect(result.carbon.type).toBe("sent");
       expect(result.carbon.forwarded).toBeDefined();
     });
 
-    it("未找到 carbon 元素时抛错", () => {
-      const el = XMPPElement.createElement("message");
-      expect(() => Carbons.parseCarbonEl(el)).toThrow("未找到 carbon 元素");
+    it("carbon 元素命名空间不符时抛错", () => {
+      const el = Parser.parse(`<received xmlns="urn:example:wrong"/>`);
+      expect(() => Carbons.parseCarbonEl(el)).toThrow("不是一个 carbon 元素");
     });
   });
 });

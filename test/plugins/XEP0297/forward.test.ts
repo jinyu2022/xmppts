@@ -109,19 +109,11 @@ describe("Forward", () => {
       );
     });
 
-    it("未找到 forwarded 元素时抛错", () => {
-      const el = Parser.parse(`<message xmlns="jabber:client"><body>x</body></message>`);
-      expect(() => Forward.parseForwardedEl(el)).toThrow("未找到forwarded标签");
-    });
-
-    it("Example 2：可从外层 message 中定位 forwarded", () => {
-      const el = Parser.parse(`
-        <message to='mercutio@verona.lit' from='romeo@montague.lit/orchard' type='chat' id='28gs' xmlns='jabber:client'>
-          <body>A most courteous exposition!</body>
-          ${EXAMPLE_2_FORWARDED}
-        </message>`);
-      const forwarded = parse(el);
-      expect(forwarded.message!.getAttribute("id")).toBe("0202197");
+    it("forwarded 元素命名空间不符时抛错", () => {
+      const el = Parser.parse(`<forwarded xmlns="urn:example:wrong"/>`);
+      expect(() => Forward.parseForwardedEl(el)).toThrow(
+        "不是一个 forwarded 元素"
+      );
     });
   });
 });

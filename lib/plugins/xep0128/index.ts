@@ -9,6 +9,9 @@ import type { XMPPElement } from "@/ltx";
 export class XEP0128 {
     static parseDataForm(xml: XMPPElement) {
         if (xml.namespaceURI !== Form.NS) {
+            if (xml.localName === "x") {
+                throw new Error(`不是一个 x 元素: ${xml.toXMLString()}`);
+            }
             xml = xml.getElementsByTagNameNS(Form.NS, "x")[0];
             if (!xml) {
                 return { form: void 0 };
