@@ -75,6 +75,7 @@
 | [XEP-0334](plugins/xep0334/readme.md) | 消息处理提示 | — |
 | [XEP-0352](plugins/xep0352/readme.md) | 客户端状态指示（CSI） | — |
 | [XEP-0359](plugins/xep0359/readme.md) | 唯一且稳定的节 ID | XEP-0030 |
+| [XEP-0363](plugins/xep0363/readme.md) | HTTP 文件上传 | XEP-0030 |
 | [XEP-0368](plugins/xep0368/readme.md) | 直连 TLS 的 SRV 记录 | — |
 | [XEP-0372](plugins/xep0372/readme.md) | 引用（@提及） | XEP-0030 |
 | [XEP-0380](plugins/xep0380/readme.md) | 显式加密标记（EME） | XEP-0030 |
