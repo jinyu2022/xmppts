@@ -64,6 +64,7 @@
 | [XEP-0308](plugins/xep0308/readme.md) | 消息更正 | XEP-0030 |
 | [XEP-0313](plugins/xep0313/readme.md) | 消息归档管理（MAM） | XEP-0004, XEP-0030 |
 | [XEP-0359](plugins/xep0359/readme.md) | 唯一且稳定的节 ID | XEP-0030 |
+| [XEP-0363](plugins/xep0363/readme.md) | HTTP 文件上传 | XEP-0030 |
 | [XEP-0368](plugins/xep0368/readme.md) | 直连 TLS 的 SRV 记录 | — |
 | [XEP-0380](plugins/xep0380/readme.md) | 显式加密标记（EME） | XEP-0030 |
 | [XEP-0402](plugins/xep0402/readme.md) | PEP 原生书签 | XEP-0030、XEP-0163、XEP-0060 |

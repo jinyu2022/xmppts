@@ -21,6 +21,7 @@ export const pluginLoaders = {
   XEP0308: () => import("./xep0308").then((mod) => mod.default),
   XEP0313: () => import("./xep0313").then((mod) => mod.default),
   XEP0359: () => import("./xep0359").then((mod) => mod.default),
+  XEP0363: () => import("./xep0363").then((mod) => mod.default),
   XEP0368: () => import("./xep0368").then((mod) => mod.default),
   XEP0380: () => import("./xep0380").then((mod) => mod.default),
   XEP0402: () => import("./xep0402").then((mod) => mod.default),

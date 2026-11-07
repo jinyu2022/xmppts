@@ -48,6 +48,8 @@ export class FakeConnection extends EventEmitter {
       extensions?: DataForm;
     }
   >();
+  /** 已查询过 disco#info 的实体，按调用顺序记录 */
+  readonly discoInfoCalls: string[] = [];
   readonly XEP0030 = {
     addFeature: (ns: string) => void this.features.add(ns),
     addIdentity: (category: string, type: string, name?: string, lang?: string) => {
@@ -66,6 +68,7 @@ export class FakeConnection extends EventEmitter {
     getDiscoItems: (to: string | JID) =>
       Promise.resolve(this.discoItems.get(to.toString()) ?? []),
     getDiscoInfo: (to: string | JID) => {
+      this.discoInfoCalls.push(to.toString());
       const info = this.discoInfo.get(to.toString());
       return info
         ? Promise.resolve(info)
