@@ -716,13 +716,17 @@ export class Connection extends Emitter<SocketEventMap> {
         this.transformNested(value as Record<string, unknown>, visited);
       }
     }
+    // 逐个直接子元素按命名空间派发；同一命名空间出现多个元素时 handler 会被调用多次，
+    // 数组字段按调用顺序拼接，其余字段整体覆盖
     for (const child of instance.xml.children) {
       const handler = this.stanzaPlugins.get(child.namespaceURI ?? "");
+      // 没有对应转换器时保留元素本身，由使用者自行处理
       if (!handler) continue;
       visited.add(child);
       const transformed = handler(child);
+      // handler 只解析自己命名空间的元素，返回值中保留的其他命名空间元素在这里接续转换
       this.transformNested(transformed, visited);
-      Object.assign(instance, transformed);
+      this.mergeTransformed(instance, transformed);
     }
     return instance;
   }
@@ -740,14 +744,46 @@ export class Connection extends Emitter<SocketEventMap> {
       if (value instanceof XMPPElement) {
         if (visited.has(value)) continue;
         const handler = this.stanzaPlugins.get(value.namespaceURI ?? "");
+        // 没有对应转换器时保留元素本身，由使用者自行处理
         if (!handler) continue;
         visited.add(value);
         const transformed = handler(value);
         this.transformNested(transformed, visited);
+        // 先删掉元素字段
         delete obj[key];
-        Object.assign(obj, transformed);
+        this.mergeTransformed(obj, transformed);
       } else if (value && Object.getPrototypeOf(value) === Object.prototype) {
+        // 嵌套的普通对象继续下钻，如 forwarded 内的转发内容容器
         this.transformNested(value as Record<string, unknown>, visited);
+      }
+    }
+  }
+
+  /**
+   * 把 handler 的转换结果合并到目标对象
+   *
+   * 同一命名空间下的多个元素会各自触发一次 handler，因此数组按顺序拼接，
+   * 其余字段仍整体覆盖。返回数组的 handler 只应放入当前元素的数据，
+   * 不能返回整组结果，否则会被重复累加。
+   * @param target 合并目标：stanza 实例或 handler 返回的普通对象
+   * @param transformed handler 返回的字段
+   */
+  private mergeTransformed(target: object, transformed: Record<string, unknown>) {
+    for (const [key, value] of Object.entries(transformed)) {
+      const existing = Reflect.get(target, key) as unknown;
+      // 只追加自己写入过的数组：原型 getter 返回的数组可能是共享的
+      if (
+        Object.hasOwn(target, key) &&
+        Array.isArray(existing) &&
+        Array.isArray(value)
+      ) {
+        existing.push(...value as unknown[]);
+      } else if (!Reflect.set(target, key, value)) {
+        // 写入被拒：字段与只读属性或 getter 同名，需要插件换字段名
+        log.error(
+          "转换结果写入失败，可能被 getter 或只读属性拦截，请检查插件实现",
+          transformed,
+        );
       }
     }
   }

@@ -252,6 +252,27 @@ describe("Connection（单元测试，假传输层）", () => {
     expect(others).toEqual(["r"]);
   });
 
+  it("接收路由：同一命名空间多个元素的数组结果按顺序拼接", () => {
+    const { connection, transport } = setup();
+    connection.registerStanzaPlugin("urn:test:item", (el) => ({
+      items: [el.getAttribute("id")],
+    }));
+    const messages: Message[] = [];
+    connection.on("message", (message) => messages.push(message));
+
+    transport.sink.onStanza(
+      Parser.parse(
+        `<message to="juliet@capulet.lit">
+           <item xmlns="urn:test:item" id="1"/>
+           <item xmlns="urn:test:item" id="2"/>
+         </message>`,
+      ),
+    );
+
+    const items = (messages[0] as Message & { items?: string[] }).items;
+    expect(items).toEqual(["1", "2"]);
+  });
+
   it("接收路由：无转换器的子元素一律不留在实例上", () => {
     const { connection, transport } = setup();
     const messages: Message[] = [];
