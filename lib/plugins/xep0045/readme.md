@@ -29,8 +29,8 @@
 
 ```typescript
 interface RoomState {
-  /** 当前会话在该房间使用的昵称 */
-  nick: string;
+  /** 当前会话在该房间使用的昵称；undefined 表示尚未确认自己是否在房间内 */
+  selfNick?: string;
   /** 房间内 occupant，键为完整 occupant JID */
   occupants: Map<string, MUCUser>;
   /** 加入时使用的房间密码（如有） */
@@ -51,7 +51,7 @@ interface MUCUser {
 |------|------|
 | 收到带 `muc.item` 的 available presence（非 error） | 房间条目不存在时自动创建，并登记/更新 `occupants` 中的该用户 |
 | 收到带 `muc.item` 的他人 unavailable presence | 从 `occupants` 移除该用户（离开、被踢/禁、改名的旧昵称均走此路径） |
-| 自身 available presence（含 110） | 更新房间的 `nick` |
+| 自身 available presence（含 110） | 更新房间的 `selfNick` |
 | 自身 unavailable 且含 110（非 303） | 删除整个房间条目 |
 | 自身改名 unavailable（110 + 303） | 仅移除旧昵称，保留房间 |
 
@@ -138,7 +138,7 @@ interface Message {
 | 方法 | 说明 |
 |------|------|
 | `join(room, nick, options?, timeout?)` | 加入房间；options：`maxchars` / `maxstanzas` / `seconds` / `since` / `password` |
-| `leave(roomJid, reason?)` | 离开房间 |
+| `leave(roomJid, reason?, timeout?)` | 离开房间；`timeout` 为等待 unavailable self-presence 的毫秒数，默认 10000 |
 | `setNick(room, nick)` | 修改昵称；以新昵称的 available self-presence（§7.6）为完成标志 |
 | `requestVoice(room)` | 请求发言权（§7.13） |
 | `setSubject(room, subject)` | 设置主题（§8.1） |
@@ -149,7 +149,7 @@ interface Message {
 | `createPrivateRoom(room, roomName)` | 创建成员制 + 审核的私有房间 |
 | `createPublicRoom(room, roomName)` | 创建公开房间 |
 
-除 `join()` 外，各方法都要求已加入对应房间（多数经内部 `requireJoined` 校验；`leave()` 自检、`create*Room()` 经 `getRoomConfig` 间接校验）。
+除 `join()` 外，各方法都要求已加入对应房间（多数经内部 `isJoined` 判断，未加入时由各方法自行拒绝；`leave()` 自检、`create*Room()` 经 `getRoomConfig` 间接校验）。
 
 ## 使用示例
 

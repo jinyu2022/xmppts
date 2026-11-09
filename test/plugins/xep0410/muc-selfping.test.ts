@@ -84,7 +84,7 @@ describe("XEP0410 失活检测", () => {
   /** 伪造 connection：只需 XEP0045 房间表与 XEP0199 ping 能力 */
   type FakeConnection = EventEmitter & {
     XEP0045: {
-      rooms: Map<string, { nick: string; occupants: Map<string, unknown> }>;
+      rooms: Map<string, { selfNick?: string; occupants: Map<string, unknown> }>;
       join: Mock;
     };
     XEP0199: { ping: Mock };
@@ -107,7 +107,7 @@ describe("XEP0410 失活检测", () => {
     const connection = new EventEmitter() as FakeConnection;
     connection.isSessionActive = true;
     connection.XEP0045 = {
-      rooms: new Map([[roomJid, { nick: "JuliC", occupants: new Map() }]]),
+      rooms: new Map([[roomJid, { selfNick: "JuliC", occupants: new Map() }]]),
       join,
     };
     connection.XEP0199 = { ping };

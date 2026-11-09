@@ -42,7 +42,7 @@ describe("XEP0045 插件入口", () => {
 
   /** 模拟已加入房间，供需要 rooms 条目的 API 用例使用 */
   function joinedRoom(plugin: XEP0045) {
-    plugin.rooms.set(ROOM, { nick: "crone1", occupants: new Map() });
+    plugin.rooms.set(ROOM, { selfNick: "crone1", occupants: new Map() });
   }
 
   /** 首次进入房间所需的 self-presence（§7.2.2）；离开相关通知需显式传 unavailable */
@@ -122,26 +122,10 @@ describe("XEP0045 插件入口", () => {
   });
 
   describe("全局 presence 状态机", () => {
-    it.fails("未加入房间时远端 presence 不创建房间条目", () => {
-      const { connection, plugin } = setup();
-
-      connection.emit(
-        "presence",
-        makePresence(
-          connection,
-          `<presence xmlns="jabber:client" from="${ROOM}/thirdwitch">
-            <x xmlns="${USER_NS}"><item affiliation="none" role="participant"/></x>
-          </presence>`,
-        ),
-      );
-
-      // 没有本地加入请求时，不应把该房间标记为已加入
-      expect(plugin.rooms.has(ROOM)).toBe(false);
-    });
-
     it("已加入房间时记录其他住户的 available presence", () => {
       const { connection, plugin } = setup();
-      plugin.rooms.set(ROOM, { nick: "crone1", occupants: new Map() });
+      // 先置入已加入的房间条目（selfNick 已确认）
+      plugin.rooms.set(ROOM, { selfNick: "crone1", occupants: new Map() });
 
       connection.emit(
         "presence",
@@ -161,16 +145,16 @@ describe("XEP0045 插件入口", () => {
 
     it("收到自身 available 时更新房间昵称", () => {
       const { connection, plugin } = setup();
-      plugin.rooms.set(ROOM, { nick: "old", occupants: new Map() });
+      plugin.rooms.set(ROOM, { selfNick: "old", occupants: new Map() });
 
       connection.emit("presence", selfPresence(connection, "new"));
 
-      expect(plugin.rooms.get(ROOM)?.nick).toBe("new");
+      expect(plugin.rooms.get(ROOM)?.selfNick).toBe("new");
     });
 
     it("自身 unavailable + 303 只移除旧昵称，保留房间", () => {
       const { connection, plugin } = setup();
-      plugin.rooms.set(ROOM, { nick: "crone1", occupants: new Map() });
+      plugin.rooms.set(ROOM, { selfNick: "crone1", occupants: new Map() });
       plugin.rooms.get(ROOM)!.occupants.set(`${ROOM}/crone1`, {
         nick: "crone1",
       });
@@ -186,7 +170,7 @@ describe("XEP0045 插件入口", () => {
 
     it("自身 unavailable 无 303 时删除整个房间", () => {
       const { connection, plugin } = setup();
-      plugin.rooms.set(ROOM, { nick: "crone1", occupants: new Map() });
+      plugin.rooms.set(ROOM, { selfNick: "crone1", occupants: new Map() });
 
       connection.emit(
         "presence",
@@ -198,7 +182,7 @@ describe("XEP0045 插件入口", () => {
 
     it("房间销毁时清理房间条目", () => {
       const { connection, plugin } = setup();
-      plugin.rooms.set(ROOM, { nick: "crone1", occupants: new Map() });
+      plugin.rooms.set(ROOM, { selfNick: "crone1", occupants: new Map() });
 
       connection.emit(
         "presence",
@@ -245,7 +229,7 @@ describe("XEP0045 插件入口", () => {
       connection.emit("presence", selfPresence(connection, "crone1"));
       await expect(pending).resolves.toBeDefined();
       expect(plugin.rooms.get(ROOM)?.password).toBe("secret");
-      expect(plugin.rooms.get(ROOM)?.nick).toBe("crone1");
+      expect(plugin.rooms.get(ROOM)?.selfNick).toBe("crone1");
     });
 
     it("加入过程中收到其他住户 presence 不阻塞 110 兑现", async () => {
@@ -264,28 +248,47 @@ describe("XEP0045 插件入口", () => {
       connection.emit("presence", selfPresence(connection, "crone1"));
 
       await expect(pending).resolves.toBeDefined();
-      // 房间条目由 join() 自己建立，nick 取本次请求的昵称
-      expect(plugin.rooms.get(ROOM)?.nick).toBe("crone1");
+      // 房间条目由 join() 自己建立，selfNick 取本次请求的昵称
+      expect(plugin.rooms.get(ROOM)?.selfNick).toBe("crone1");
       expect(plugin.rooms.get(ROOM)?.occupants.has(`${ROOM}/thirdwitch`)).toBe(true);
     });
 
-    it.fails("unavailable 的 110 presence 不判定加入成功", async () => {
+    it("unavailable 的 110 presence 不判定加入成功，而是 reject（§7.14/§8.2/§11.1/§11.2）", async () => {
       const { connection, plugin } = setup();
-      const pending = plugin.join(ROOM, "crone1").catch(() => undefined);
-      let settled = false;
-      void pending.then(() => {
-        settled = true;
-      });
+      const pending = plugin.join(ROOM, "crone1");
 
-      // §7.2：unavailable 表示离开或失败，不能作为加入完成的信号
+      // 110 只表示「这是自己的 presence」，unavailable 表示自己已不在房间
       connection.emit(
         "presence",
-        selfPresence(connection, "crone1", ["110"], "unavailable"),
+        selfPresence(connection, "crone1", ["110", "333"], "unavailable"),
+      );
+
+      await expect(pending).rejects.toBeInstanceOf(XMPPError);
+    });
+
+    it("改名产生的 unavailable + 303 + 110 不提前兑现，等新昵称 available（§7.6）", async () => {
+      const { connection, plugin } = setup();
+      const pending = plugin.join(ROOM, "crone1");
+      let settled = false;
+      void pending.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+
+      connection.emit(
+        "presence",
+        selfPresence(connection, "crone1", ["110", "303"], "unavailable"),
       );
       await Promise.resolve();
       await Promise.resolve();
-
       expect(settled).toBe(false);
+
+      connection.emit("presence", selfPresence(connection, "crone1"));
+      await expect(pending).resolves.toBeDefined();
     });
 
     it("error presence 时 reject XMPPError 并清理房间", async () => {
@@ -383,6 +386,25 @@ describe("XEP0045 插件入口", () => {
       expect(connection.listenerCount("presence")).toBe(baseline);
     });
 
+    it("timeout 参数控制超时时间", async () => {
+      vi.useFakeTimers();
+      const { connection, plugin } = setup();
+      joinedRoom(plugin);
+      const baseline = connection.listenerCount("presence");
+      const pending = plugin.leave(ROOM, undefined, 1_000).catch((error: unknown) => error);
+      let settled = false;
+      void pending.finally(() => { settled = true; });
+
+      // 自定义 1 秒：999ms 时仍未结算
+      await vi.advanceTimersByTimeAsync(999);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      const error = await pending;
+      expect((error as DOMException).name).toBe("TimeoutError");
+      expect(connection.listenerCount("presence")).toBe(baseline);
+    });
+
     it("send 抛错时 reject", async () => {
       const { connection, plugin } = setup();
       joinedRoom(plugin);
@@ -428,7 +450,7 @@ describe("XEP0045 插件入口", () => {
       // 第二条：新昵称的 available self-presence 才算完成
       connection.emit("presence", selfPresence(connection, "new"));
       await expect(pending).resolves.toBeDefined();
-      expect(plugin.rooms.get(ROOM)?.nick).toBe("new");
+      expect(plugin.rooms.get(ROOM)?.selfNick).toBe("new");
     });
 
     it("回显同 id 的 error 时 reject XMPPError", async () => {

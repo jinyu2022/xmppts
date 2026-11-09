@@ -131,7 +131,7 @@ describe("XEP0045 插件入口集成（Mock Socket，仅注册当前插件）", 
         </x>`,
     );
     await expect(pending).resolves.toBeDefined();
-    expect(connection.XEP0045!.rooms.get(ROOM)?.nick).toBe("crone1");
+    expect(connection.XEP0045!.rooms.get(ROOM)?.selfNick).toBe("crone1");
   });
 
   it("房内消息派发 muc:groupchat / muc:subject / muc:voice-request / 邀请与拒绝", async () => {
@@ -275,7 +275,7 @@ describe("XEP0045 插件入口集成（Mock Socket，仅注册当前插件）", 
       const connection = new FakeConnection();
       const plugin = new XEP0045(connection as unknown as Connection);
       plugin.init();
-      plugin.rooms.set(ROOM, { nick: "thirdwitch", occupants: new Map() });
+      plugin.rooms.set(ROOM, { selfNick: "thirdwitch", occupants: new Map() });
       return { connection, plugin };
     }
 

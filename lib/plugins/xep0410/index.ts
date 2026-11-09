@@ -118,9 +118,10 @@ export class XEP0410 extends MucSelfPing implements Plugin {
       this.stop();
 
       // 为所有已加入房间设置活动基线，避免会话恢复时立即触发 ping。
+      // 只认 selfNick：join 在途或残留条目的昵称尚未确认，不纳入监控。
       // todo 应该改为监听加入事件
-      for (const roomJid of this.connection.XEP0045?.rooms.keys() ?? []) {
-        this.lastActivity.set(roomJid, Date.now());
+      for (const [roomJid, info] of this.connection.XEP0045?.rooms ?? []) {
+        if (info.selfNick) this.lastActivity.set(roomJid, Date.now());
       }
       // 定时器已被上方 stop() 清除，直接重建。
       this.tickTimer = setInterval(
@@ -144,7 +145,7 @@ export class XEP0410 extends MucSelfPing implements Plugin {
         this.lastActivity.delete(roomJid);
         this.staleSince.delete(roomJid);
         return;
-      };
+      }
 
       // 房间活动只刷新基线；muc:fresh 只由 ping 通 / 重入成功上报。
       this.lastActivity.set(roomJid, Date.now());
@@ -247,6 +248,10 @@ export class XEP0410 extends MucSelfPing implements Plugin {
     }
 
     for (const [roomJid, info] of muc.rooms) {
+      // 昵称未确认（110 未到）说明加入尚未完成，此时无法构造 occupant JID，跳过。
+      const selfNick = info.selfNick;
+      if (!selfNick) continue;
+
       // 已有正在进行的 ping 或重入，跳过避免重复操作。
       if (this.pendingPings.has(roomJid) || this.pendingRejoins.has(roomJid))
         continue;
@@ -268,7 +273,7 @@ export class XEP0410 extends MucSelfPing implements Plugin {
 
       // ping 的成败由 PingResult 表达并交给 handlePingResult 分派；catch 只兜住
       // handlePingResult 自身的异常（本地缺陷），记录后不修改状态以免掩盖问题。
-      this.pingOccupant(`${roomJid}/${info.nick}`)
+      this.pingOccupant(`${roomJid}/${selfNick}`)
         .then((status) => this.handlePingResult(roomJid, status))
         .catch((error: unknown) => {
           log.error(`Self-ping ${roomJid} 处理异常:`, error);
@@ -368,9 +373,9 @@ export class XEP0410 extends MucSelfPing implements Plugin {
     // 已有重入在途，跳过，避免并发 join。
     if (this.pendingRejoins.has(roomJid)) return;
 
-    // 房间信息以 XEP0045.rooms 为准，找不到说明已离开，跳过。
+    // 房间信息以 XEP0045.rooms 为准；找不到或昵称未确认（110 未到）都跳过。
     const info = muc.rooms.get(roomJid);
-    if (!info) return;
+    if (!info?.selfNick) return;
 
     // 进入重入流程：登记在途，join 结束后由 finally 释放标记。
     this.pendingRejoins.add(roomJid);
@@ -378,7 +383,7 @@ export class XEP0410 extends MucSelfPing implements Plugin {
     try {
       // join 前再次确认会话仍有效，避免断线后的异步恢复请求。
       if (!this.connection.isSessionActive) return;
-      await muc.join(roomJid, info.nick, { password: info.password });
+      await muc.join(roomJid, info.selfNick, { password: info.password });
       rejoined = true;
     } catch (e) {
       // 重入失败不抛出，记录日志后等待下一轮检查重试。
@@ -410,14 +415,18 @@ export class XEP0410 extends MucSelfPing implements Plugin {
     const muc = this.connection.XEP0045;
     if (!muc) return Promise.resolve([]);
 
-    return Promise.all(
-      Array.from(muc.rooms, ([roomJid, info]) =>
-        this.pingOccupant(`${roomJid}/${info.nick}`).then((status) => ({
+    const pings: Promise<{ roomJid: string; status: PingResult }>[] = [];
+    for (const [roomJid, info] of muc.rooms) {
+      // 昵称未确认（110 未到）的房间无法构造 occupant JID，跳过
+      if (!info.selfNick) continue;
+      pings.push(
+        this.pingOccupant(`${roomJid}/${info.selfNick}`).then((status) => ({
           roomJid,
           status,
         })),
-      ),
-    );
+      );
+    }
+    return Promise.all(pings);
   }
 
   /**

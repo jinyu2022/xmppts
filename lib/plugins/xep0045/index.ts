@@ -21,8 +21,8 @@ export class XEP0045 extends MUC implements Plugin {
     /** 存储已加入的房间信息，键是房间的jid */
     readonly rooms: Map<string,
         {
-            /** 自己的昵称 */
-            nick: string;
+            /** 自己的昵称，undefined代表自己未加入 */
+            selfNick?: string;
             /** 键是用户的roomjid */
             occupants: Map<string, MUCUser>;
             /** 加入时使用的房间密码（如有），供重入复用 */
@@ -116,7 +116,8 @@ export class XEP0045 extends MUC implements Plugin {
         this.connection.registerEventPlugin("muc:voice-request", {
             tagName: "message",
             matcher: (msg) => {
-                if (!this.rooms.has(msg.from.bare) || msg.type === "groupchat") return false;
+                // 审批表单只会发到已加入房间的 occupant；薛定谔房间不应触发
+                if (!this.isJoined(msg.from.bare) || msg.type === "groupchat") return false;
                 // XEP-0045 §8.6：审批表单为 type=form 且 FORM_TYPE 为 muc#request
                 const formEl = msg.xml.getElementsByTagNameNS(XEP0004.NS, "x")[0];
                 if (!formEl) return false;
@@ -132,6 +133,7 @@ export class XEP0045 extends MUC implements Plugin {
             },
         });
 
+        //维护房间状态
         this.connection.on("presence", (pres) => {
             if (!pres.muc?.item) return;
             // XMPP error presences 不代表房间状态变化，跳过
@@ -162,27 +164,25 @@ export class XEP0045 extends MUC implements Plugin {
             } else {
                 // 确保房间存在（昵称变更后旧 nick 的 unavailable 已保留房间）
                 if (!this.rooms.has(room)) {
+                    // NOTE: 服务端异常时会出现薛定谔房间（自身不在房间中，却收到该房间的 presence）。
                     this.rooms.set(room, {
-                        nick: pres.from.resource!, // 这里不对呀，保证是自己？
                         occupants: new Map(),
                     });
                 }
                 // 收到自身 available presence 时更新存储的昵称
                 if (pres.muc.statuses?.includes(MUCStatusCode.SelfPresence)) {
-                    this.rooms.get(room)!.nick = pres.from.resource!;
+                    this.rooms.get(room)!.selfNick = pres.from.resource!;
                 }
-                this.rooms.get(room)?.occupants.set(userJid, user);
+                this.rooms.get(room)!.occupants.set(userJid, user);
             }
         });
     }
 
-    /** 归一化房间 JID（bare 键）并确认已加入，返回该 JID */
-    private requireJoined(room: string | JID) {
+    /** 归一化房间 JID（bare 键）并判断是否已加入 */
+    private isJoined(room: string | JID): boolean {
         const roomJid = typeof room === "string" ? new JID(room) : room;
-        if (!this.rooms.has(roomJid.bare)) {
-            throw new Error(`未加入房间${roomJid.bare}`);
-        }
-        return roomJid;
+        // 必须检查 selfNick 是否存在，避免薛定谔的房间（自身不在房间中，但仍有 occupants）
+        return Boolean(this.rooms.get(roomJid.bare)?.selfNick);
     }
 
     /**
@@ -244,7 +244,7 @@ export class XEP0045 extends MUC implements Plugin {
                 // init() 中注册的全局 presence 处理器会通过 rooms.get(room) 添加用户
                 if (!this.rooms.has(presence.from.bare)) {
                     this.rooms.set(presence.from.bare, {
-                        nick,
+                        selfNick: undefined,
                         occupants: new Map(),
                     });
                 }
@@ -254,8 +254,26 @@ export class XEP0045 extends MUC implements Plugin {
                 // 后续每个 presence 都重置超时
                 resetTimer();
 
-                // self-presence → 加入成功
-                if (presence.muc?.statuses?.includes(MUCStatusCode.SelfPresence)) {
+                // self-presence：110 只表示这是自己的 presence，加入成功必须是 available（§7.2.2）
+                const statuses = presence.muc?.statuses;
+                if (statuses?.includes(MUCStatusCode.SelfPresence)) {
+                    if (presence.type === "unavailable") {
+                        // §7.6 改名：旧昵称的 unavailable + 303 也带 110，紧随其后才是新昵称的
+                        // available self-presence；此时房间仍在，继续等待
+                        if (statuses.includes(MUCStatusCode.NewNick)) return;
+                        // 失败清除已加入的房间条目，避免后续操作误认为已加入
+                        this.rooms.delete(room.bare);
+                        cleanup();
+                        // 其余 unavailable + 110 表示自己已不在房间：
+                        // §7.14 离开 / §8.2 被踢 / §11.1 服务端错误移除 / §11.2 服务关闭
+                        reject(
+                            new XMPPError(
+                                presence.xml,
+                                `加入房间失败：收到 unavailable self-presence（${statuses.join(",")}）`
+                            )
+                        );
+                        return;
+                    }
                     cleanup();
                     log.debug("加入房间成功");
                     // 仅加入成功才记录密码供重入复用（房间条目已由上方保证存在）
@@ -280,16 +298,30 @@ export class XEP0045 extends MUC implements Plugin {
         });
     }
 
-    async leave(to: string | JID, reason?: string) {
+    /**
+     * 离开房间（XEP-0045 §7.14）
+     *
+     * 向自己的 occupant JID（`room/selfNick`）发送 unavailable presence，
+     * 收到服务端回送的、带 110 的 unavailable self-presence 后 resolve。
+     *
+     * @param room 房间 JID
+     * @param reason 离开原因，可选；作为 `<status/>` 随 presence 发送给房间
+     * @param timeout 等待 unavailable self-presence 的超时毫秒数，默认 10000
+     * @returns 收到 unavailable self-presence 后 resolve
+     * @throws 未加入该房间、或昵称尚未确认（薛定谔房间）时 reject `Error`
+     * @throws 服务端返回 error presence 时 reject `XMPPError`
+     * @throws 超过 `timeout` 未收到 self-presence 时 reject `TimeoutError`
+     */
+    async leave(room: string | JID, reason?: string, timeout = 10_000) {
         // 规范化为 bare JID 用于房间查找
-        const roomJid = typeof to === "string" ? new JID(to) : to;
+        const roomJid = typeof room === "string" ? new JID(room) : room;
         const bare = roomJid.bare;
-        const room = this.rooms.get(bare);
-        if (!room) throw new Error(`未加入房间${bare}`);
+        // 离开必须知道自己的昵称，无法构造 occupant JID 时只能拒绝
+        const selfNick = this.rooms.get(bare)?.selfNick;
+        if (!selfNick) throw new Error(`未加入房间${bare}`);
 
         // 构造完整的 occupant JID: room/nick
-        const fullJid = `${bare}/${room.nick}`;
-        const pres = XEP0045.createLeavePres(fullJid, reason);
+        const pres = XEP0045.createLeavePres(`${bare}/${selfNick}`, reason);
 
         // 不使用 sendAsync，因为 presence 的 id 回显不保证
         // 成功标志是收到 status code 110 的 self-presence，type=unavailable
@@ -297,7 +329,7 @@ export class XEP0045 extends MUC implements Plugin {
             const timeoutId = setTimeout(() => {
                 cleanup();
                 reject(new DOMException("离开房间超时", "TimeoutError"));
-            }, 10_000);
+            }, timeout);
             timeoutId.unref?.();
 
             const handler = (presence: Presence) => {
@@ -333,8 +365,22 @@ export class XEP0045 extends MUC implements Plugin {
         });
     }
 
+    /**
+     * 修改自己在房间中的昵称（XEP-0045 §7.6）
+     *
+     * 向 `room/新昵称` 发送不含 type 的 presence。一次改名会收到两条 self-presence
+     * （都带 110）：旧昵称的 unavailable + 303、新昵称的 available；只有后者算完成。
+     *
+     * @param room 房间 JID，bare 或 full 均可，内部只取 bare
+     * @param nick 新昵称；服务端可能改写并在响应里带 210（`NickAssigned`）
+     * @returns 新昵称的 available self-presence
+     * @throws 未加入该房间、或昵称尚未确认时**同步**抛 `Error`（本方法不是 async）
+     * @throws 服务端回显同 id 的 error presence 时 reject `XMPPError`
+     * @throws 10 秒内未收到新昵称的 self-presence 时 reject `TimeoutError`
+     */
     setNick(room: string | JID, nick: string) {
-        const roomJid = this.requireJoined(room);
+        const roomJid = typeof room === "string" ? new JID(room) : room;
+        if (!this.isJoined(roomJid)) throw new Error(`未加入房间${roomJid.bare}`);
         const pres = XEP0045.createSetNickPres(roomJid, nick);
         const id = pres.getAttribute("id")!;
         const targetRoomJid = `${roomJid.bare}/${nick}`;
@@ -360,7 +406,7 @@ export class XEP0045 extends MUC implements Plugin {
                 // §7.6：一次改名会收到两条 self-presence，都带 110：
                 // 1. 旧昵称的 unavailable + 303（303 同时带出新昵称）；
                 // 2. 新昵称的 available。
-                // 必须先排除第 1 条：此时 rooms.nick 还是旧昵称，提前 resolve 会让
+                // 必须先排除第 1 条：此时 rooms.selfNick 还是旧昵称，提前 resolve 会让
                 // 随后的 leave()/setSubject() 继续用旧昵称。
                 if (presence.type === "unavailable") return;
                 const statuses = presence.muc?.statuses ?? [];
@@ -392,7 +438,8 @@ export class XEP0045 extends MUC implements Plugin {
      * @param room 房间jid
      */
     requestVoice(room: string | JID) {
-        this.requireJoined(room);
+        const roomJid = typeof room === "string" ? new JID(room) : room;
+        if (!this.isJoined(roomJid)) throw new Error(`未加入房间${roomJid.bare}`);
         const pres = XEP0045.createRequestVoiceMsg(room);
         this.connection.send(pres);
     }
@@ -404,7 +451,8 @@ export class XEP0045 extends MUC implements Plugin {
      * @link https://xmpp.org/extensions/xep-0045.html#enter-subject
      */
     async setSubject(room: string | JID, subject: string) {
-        this.requireJoined(room);
+        const roomJid = typeof room === "string" ? new JID(room) : room;
+        if (!this.isJoined(roomJid)) throw new Error(`未加入房间${roomJid.bare}`);
         const msg = XEP0045.createSetSubjectMsg(room, subject);
         const res = await this.connection.sendAsync(msg);
         if (res.getAttribute("type") === "error") {
@@ -421,7 +469,8 @@ export class XEP0045 extends MUC implements Plugin {
      * @param reason 原因
      */
     async kick(room: string | JID, nick: string, reason?: string) {
-        this.requireJoined(room);
+        const roomJid = typeof room === "string" ? new JID(room) : room;
+        if (!this.isJoined(roomJid)) throw new Error(`未加入房间${roomJid.bare}`);
         const iq = XEP0045.createSetRoleIq(room, nick, "none", reason);
         const res = await this.connection.sendAsync(iq);
         if (res.getAttribute("type") === "error") {
@@ -439,7 +488,8 @@ export class XEP0045 extends MUC implements Plugin {
      * @param reason 原因
      */
     async ban(room: string | JID, jid: string | JID, reason?: string) {
-        this.requireJoined(room);
+        const roomJid = typeof room === "string" ? new JID(room) : room;
+        if (!this.isJoined(roomJid)) throw new Error(`未加入房间${roomJid.bare}`);
         // §9.1：归属基于 bare JID 操作
         const target = typeof jid === "string" ? new JID(jid).bare : jid.bare;
         const iq = XEP0045.createSetAffiliationIq(room, target, "outcast", reason);
@@ -453,7 +503,8 @@ export class XEP0045 extends MUC implements Plugin {
     }
 
     async getRoomConfig(room: string | JID) {
-        this.requireJoined(room);
+        const roomJid = typeof room === "string" ? new JID(room) : room;
+        if (!this.isJoined(roomJid)) throw new Error(`未加入房间${roomJid.bare}`);
         const iq = XEP0045.createGetRoomConfigIq(room);
         const res = await this.connection.sendAsync(iq);
         if (res.getAttribute("type") === "error") {
@@ -465,7 +516,8 @@ export class XEP0045 extends MUC implements Plugin {
     }
 
     async setRoomConfig(room: string | JID, dataForm: DataForm) {
-        this.requireJoined(room);
+        const roomJid = typeof room === "string" ? new JID(room) : room;
+        if (!this.isJoined(roomJid)) throw new Error(`未加入房间${roomJid.bare}`);
         const iq = XEP0045.createSetRoomConfigIq(room, dataForm);
         const res = await this.connection.sendAsync(iq);
         if (res.getAttribute("type") === "error") {
