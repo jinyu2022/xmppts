@@ -57,4 +57,5 @@ const { rsm } = RSM.parseSetEl(setEl);
 - UID 对客户端不透明，不能按内容解析或推断顺序。
 - `<max>0</max>` 只返回 `count`，不返回条目。
 - `count` 与 `first@index` 都是可选的，服务器可以省略（XEP-0059 §2.2）。
+- `count` 与 `first@index` 必须是整数：空串、非数字、负数、小数按缺失处理（不写入 `rsm`）并记 warn。
 - 同时提供 `after` 与 `before` 的行为未在规范中定义；需要取两个 UID 之间的区间时，改用 MAM 的 `before-id` / `after-id` 字段。
