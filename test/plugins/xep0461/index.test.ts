@@ -115,6 +115,7 @@ describe("XEP0461 插件入口", () => {
       "anna@example.com/tablet",
       "message-id1",
       "Hi",
+      "chat",
     );
 
     const sent = connection.sent[0];

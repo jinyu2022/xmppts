@@ -58,14 +58,14 @@ export class Correction {
      * @param to - 消息接收者的 JID
      * @param replaceId - 要更正的原消息 ID
      * @param newBody - 更正后的消息正文
-     * @param type - 消息类型，默认为 "chat"
+     * @param type - 消息类型，应与原始消息一致
      * @returns 返回包含更正内容的可发送的消息节
      */
     static createCorrectionMessageEl(
         to: string | JID,
         replaceId: string,
         newBody: string,
-        type: MsgType = "chat",
+        type: MsgType,
     ) {
         const message = Message.createMessage(to, newBody, type);
         message.appendChild(Correction.createReplaceEl(replaceId));

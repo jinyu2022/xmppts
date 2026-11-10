@@ -29,7 +29,7 @@ interface Message {
 | 方法 | 说明 |
 |------|------|
 | `reply(originalMessage, body, quote?)` | 从原消息推断收件人、引用目标、被引用 ID 与消息类型；`quote` 为 `true` 时加入引用块与 XEP-0428 回退 |
-| `sendReply(to, replyTo, replyId, body, type?)` | 显式指定引用目标 |
+| `sendReply(to, replyTo, replyId, body, type)` | 显式指定引用目标 |
 | `XEP0461.createReplyEl(to, id)`（静态） | 创建 `<reply/>` |
 | `XEP0461.createReplyMessage(to, replyEl, body, type, quotedBody?)`（静态） | 用给定的 `<reply/>` 创建回复消息；提供 `quotedBody` 时在正文前插入引用块并附加 XEP-0428 回退 |
 | `XEP0461.getReferenceEl(message)`（静态） | 按 §3.1 规则从原消息构造 `<reply/>` |
@@ -53,6 +53,7 @@ client.XEP0461!.sendReply(
   "anna@example.com/tablet",
   "message-id1",
   "Great idea!",
+  "chat",
 );
 ```
 

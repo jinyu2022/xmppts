@@ -47,7 +47,8 @@ describe("Correction", () => {
       const msg = Correction.createCorrectionMessageEl(
         "juliet@capulet.net/balcony",
         "bad1",
-        "But soft, what light through yonder window breaks?"
+        "But soft, what light through yonder window breaks?",
+        "chat",
       );
       expect(msg.tagName).toBe("message");
       expect(msg.getAttribute("to")).toBe("juliet@capulet.net/balcony");

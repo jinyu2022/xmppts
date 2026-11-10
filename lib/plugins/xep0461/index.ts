@@ -60,7 +60,7 @@ export class XEP0461 extends Reply implements Plugin {
      * @param replyTo 被回复消息作者的 JID
      * @param replyId 被回复消息的 ID；群聊中应为房间分配的 stanza-id
      * @param body 回复正文
-     * @param type 消息类型，默认为 `chat`
+     * @param type 消息类型，应与原始消息一致
      * @returns 已发送的消息元素
      */
     sendReply(
@@ -68,7 +68,7 @@ export class XEP0461 extends Reply implements Plugin {
         replyTo: string | JID | undefined,
         replyId: string,
         body: string,
-        type: MsgType = "chat",
+        type: MsgType,
     ) {
         const message = Reply.createReplyMessage(
             to,

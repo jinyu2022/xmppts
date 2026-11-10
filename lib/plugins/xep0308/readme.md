@@ -40,7 +40,7 @@ interface Message {
 | `XEP0308.isCorrection(msg)`（静态） | 检查消息是否含 `<replace/>`（类型收窄） |
 | `XEP0308.NS`（静态） | `"urn:xmpp:message-correct:0"` |
 | `XEP0308.createReplaceEl(id)`（静态） | 创建 `<replace/>` |
-| `XEP0308.createCorrectionMessageEl(to, replaceId, newBody, type?)`（静态） | 构造完整的更正消息 |
+| `XEP0308.createCorrectionMessageEl(to, replaceId, newBody, type)`（静态） | 构造完整的更正消息 |
 
 ## 使用示例
 
