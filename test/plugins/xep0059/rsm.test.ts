@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import logger from "../../../lib/log";
 import { XMPPElement } from "../../../lib/ltx/Element";
 import { Parser } from "../../../lib/ltx/Parser";
 import { RSM } from "../../../lib/plugins/xep0059/rsm";
@@ -108,6 +109,55 @@ describe("RSM", () => {
                 </fin>
             `);
             expect(RSM.parseSetEl(xml).rsm.last).toBe("09af3-cc343-b409f");
+        });
+
+        it.each(["", "abc", "-5", "1.5"])(
+            "§2.2：count 为 %j 时省略该字段",
+            (content) => {
+                const xml = Parser.parse(`
+                    <set xmlns="http://jabber.org/protocol/rsm">
+                      <count>${content}</count>
+                    </set>
+                `);
+                expect(RSM.parseSetEl(xml).rsm).toEqual({});
+            },
+        );
+
+        it.each(["", "abc", "-1"])(
+            "§2.2：first 的 index 为 %j 时只给 value",
+            (index) => {
+                const xml = Parser.parse(`
+                    <set xmlns="http://jabber.org/protocol/rsm">
+                      <first index="${index}">uid-1</first>
+                    </set>
+                `);
+                expect(RSM.parseSetEl(xml).rsm.first).toEqual({
+                    value: "uid-1",
+                });
+            },
+        );
+
+        it("§2.7：count 为 0 时保留", () => {
+            const xml = Parser.parse(`
+                <set xmlns="http://jabber.org/protocol/rsm">
+                  <count>0</count>
+                </set>
+            `);
+            expect(RSM.parseSetEl(xml).rsm).toEqual({ count: 0 });
+        });
+
+        it("非法 count 记 warn，便于排查服务端问题", () => {
+            const warn = vi
+                .spyOn(logger.getLogger("XEP0059"), "warn")
+                .mockImplementation(() => {});
+            const xml = Parser.parse(`
+                <set xmlns="http://jabber.org/protocol/rsm">
+                  <count>abc</count>
+                </set>
+            `);
+            RSM.parseSetEl(xml);
+            expect(warn).toHaveBeenCalledWith("忽略非法的 <count>", '"abc"');
+            warn.mockRestore();
         });
 
         it("未找到 set 时抛错", () => {

@@ -82,7 +82,8 @@ export class XEP0363 extends HttpUpload implements Plugin {
         const items = await this.connection.XEP0030!
             .getDiscoItems(domain)
             .catch(() => []);
-        // 在列出的 items 中找有没有 upload 字段的
+        // 规范只要求服务在 disco#info 中声明 urn:xmpp:http:upload:0，未规定 JID 命名；
+        // 查全部 items 代价高，这里依据名字进行猜测
         const candidates = items.filter((item) =>
             item.jid.toLowerCase().includes("upload"),
         );

@@ -206,11 +206,12 @@ perf 实测（`FORM`）：`children` 85 ns，`firstElementChild` 10 ns。200 子
 ### 三级：低收益，暂不处理
 
 - **序列化不要收集到数组再 `join`**：配对实测比现状慢 41.9%（87.70 → 124.89 µs）。要往 socket 直接写就用 `write(writer)`。
-- **`getElementsByTagName` 不要改成显式栈**：配对实测迭代版比递归版慢 11.1%（2.169 → 2.402 µs，门槛 ±4.57%）。深树栈溢出的处理，不要在热路径上做这次改写。
+- **`getElementsByTagName` 不要改成显式栈**：配对实测迭代版比递归版慢 11.1%（2.169 → 2.402 µs，门槛 ±4.57%）。深树栈溢出属已知限制（XMPP 深度 ≤ 8，实际不触发），不要在热路径上做这次改写。
 - **`namespaceURI` 每次上溯、无缓存**：深度 5 约 25 ns（bench），XMPP 报文深度 ≤ 8，一次全树 NS 查询在真实语料上是 0.7~1.0 µs（见上文「查询」表）。缓存要处理节点移动、祖先增删 `xmlns` 的失效，收益不抵复杂度。
 - **兄弟轴 O(k²)**：[Element.ts#L282-L295](Element.ts#L282-L295) 的 `previousElementSibling` 与 [#L297-L310](Element.ts#L297-L310) 的 `nextElementSibling` 都用 `_childNodes.indexOf(this)` 定位，每次 O(兄弟数)；`~` 组合符的链式收集（[QuerySelector.ts#L194-L206](QuerySelector.ts#L194-L206)）因此是 O(k²)。`lib/` 全量搜索无 `+` / `~` 调用点，先登记：修法可选元素级缓存"子元素数组 + 兄弟下标"，或把 `~` 分支改成一次线性扫描。
 - **相邻文本节点不合并**：与 DOM 语义一致（真 DOM 也不自动合并，需 `normalize()`），且只在"注释/指令/CDATA 夹在文本之间"或调用方多次 `append` 时产生，属非缺陷。
 - **`createElement` 走 null-proto 逐键写入**（6 属性 758 ns；bench 4 属性 324.6 ns）：换取的是 `__proto__` / `constructor` 这类属性名的安全，代价约 +53 ns/属性，而且只有出站构造路径付（解析路径已接管冻结表）。
+- **`_findNS` / 遍历改迭代**：只对深树值钱（XMPP 深度 ≤ 8），且注意上一条的配对结论（无脑迭代化可能更慢）。深链栈溢出属已知限制。
 - **`EventEmitter` 的 3 个解析事件**：配对实测约 6%~9%，收益有限。
 - **用法反模式：每条 stanza 重喂流头**：配对实测比复用 `Parser` 实例多花 **49.31%**（3.565 vs 2.365 µs，门槛 ±3.80%）。同一条 TCP 连接上的所有 stanza 应当喂给同一个实例（复用 vs 每条新建的构造开销可忽略：89.03 vs 88.07 MiB/s）。库这边可做的是在 [lib/README.md](../README.md) 或 `Parser.parse()` 的文档里写明"仅用于单条 stanza，流式场景请复用实例"。
 - **`unescapeXMLText` 的数字实体**：每次调用 1 517 ns（数字实体要 `String.fromCodePoint`，是反转义里最贵的一支）；`unescapeXML` 命名实体 730 ns / 45 字符、无实体短路 32 ns，无特殊字符的 `escapeXMLText` 98 ns / 68 字符。XMPP 正文里最常见的是 URL 里的 `&`，密度上不去。
@@ -219,10 +220,12 @@ perf 实测（`FORM`）：`children` 85 ns，`firstElementChild` 10 ns。200 子
 ### 设计项（策略决定，与缺陷修复解耦）
 
 - **跨块 remainder 每次重拼**（[LtxParser.ts#L112](LtxParser.ts#L112)、[#L338](LtxParser.ts#L338)）：长文本跨多个小块且块内无 `<` 时，每次 `write` 都把旧 remainder 与新块拼成 ConsString，随后 fast-path 的 `indexOf` 触发扁平化，总复制量 ∝ N²/块长。真实语料下不显形——`SESSION` 27 KB 切 16 KB × 2 块，分块 SAX 比整块慢约 8%（495 927 → 538 250 ns），建树两侧差异在噪声内（653 286 / 640 955 ns）。要处理的前提是先确认实际读块尺寸（socket / TLS 记录），块越小放大越厉害。
+- **输入资源上限**：单 stanza 大小 / 嵌套深度 / 未完成 token 长度，目前都没有限制。这是策略决定，不是性能缺陷。
 - **查询结果缓存**：happy-dom 用 per-node 结果缓存 + 失效广播。是否值得做取决于插件对同一条 stanza 的重复查询频率——先量再定，现在没有数据支持。
 
 ## 本文局限
 
 - 绝对值只出自单机单进程、同一 Node 版本；跨平台（尤其 arm64）未复测，不同 harness 的绝对值不可混比。
 - 没有做并发 / 多连接压力测试（结论覆盖的是单线程吞吐与单连接语义）。
+- 没有测 XML 炸弹、超长属性等恶意输入的防护成本——那是资源上限策略。
 - `QuerySelector` 的选择器解析缓存（上限 1000 条、溢出后整表清空）没有专项测试，高基数选择器场景下可能抖动。

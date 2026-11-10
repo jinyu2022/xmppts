@@ -1,4 +1,7 @@
+import logger from "@/log";
 import { XMPPElement } from "@/ltx/Element";
+
+const log = logger.getLogger("XEP0059");
 
 /** RSM 请求参数（XEP-0059 §2） */
 export interface RsmRequest {
@@ -65,6 +68,7 @@ export class RSM {
 
     /**
      * 解析 `<set/>` 响应
+     *
      * @param el `<set/>` 元素，或其直接包含 `<set/>` 的父元素
      * @returns 合并到 stanza 上的 `{ rsm }`
      * @throws 未找到 `<set/>` 时抛出 Error
@@ -82,11 +86,26 @@ export class RSM {
         const result: RsmResult = {};
         if (firstEl) {
             result.first = { value: firstEl.textContent };
-            const index = firstEl.getAttribute("index");
-            if (index !== null) result.first.index = Number(index);
+            const raw = firstEl.getAttribute("index");
+            if (raw !== null) {
+                const index = raw.trim() === "" ? NaN : Number(raw);
+                if (Number.isInteger(index) && index >= 0) {
+                    result.first.index = index;
+                } else {
+                    log.warn("忽略非法的 <first index>", JSON.stringify(raw));
+                }
+            }
         }
         if (lastEl) result.last = lastEl.textContent;
-        if (countEl) result.count = Number(countEl.textContent);
+        if (countEl) {
+            const raw = countEl.textContent;
+            const count = raw.trim() === "" ? NaN : Number(raw);
+            if (Number.isInteger(count) && count >= 0) {
+                result.count = count;
+            } else {
+                log.warn("忽略非法的 <count>", JSON.stringify(raw));
+            }
+        }
         return { rsm: result };
     }
 }
