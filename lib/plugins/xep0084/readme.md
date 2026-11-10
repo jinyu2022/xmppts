@@ -2,7 +2,7 @@
 
 基于 PEP 的个人头像发布与获取。
 
-- **依赖**：XEP-0030（服务发现）、XEP-0163（PEP）；源码 `dependencies` 目前只声明 XEP-0030，单独注册本插件时 `pep:avatar` 不会触发
+- **依赖**：XEP-0030（服务发现）、XEP-0163（PEP）；源码 `dependencies` 目前只声明 XEP-0030，单独注册本插件时 `pep:avatar` 不会触发。
 - **实例访问**：`connection.XEP0084`
 
 ## 可配置项
@@ -83,7 +83,7 @@ if (avatar?.data) {
 
 ```typescript
 client.on("pep:avatar", (message) => {
-  const metadata = message.event?.item?.metadata;
+  const metadata = message.event?.items?.[0]?.metadata;
   if (metadata) console.log(metadata.id, metadata.type, metadata.bytes);
 });
 ```

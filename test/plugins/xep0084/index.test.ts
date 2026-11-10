@@ -61,7 +61,7 @@ describe("XEP0084 插件入口", () => {
 
     expect(received).toHaveLength(1);
     expect(received[0].event?.node).toBe(XEP0084.NS.metadata);
-    expect(received[0].event?.item).toMatchObject({
+    expect(received[0].event?.items?.[0]).toMatchObject({
       id: ID,
       metadata: { id: ID, type: "image/png", bytes: 12345, width: 64, height: 64 },
     });

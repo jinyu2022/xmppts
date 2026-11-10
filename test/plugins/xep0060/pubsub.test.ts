@@ -81,7 +81,7 @@ describe("Pubsub (XEP-0060)", () => {
       const eventEl = Parser.parse(EXAMPLE_2_EVENT).getElementsByTagName("event")[0];
       const result = Pubsub.parseEventEl(eventEl);
       expect(result.event.node).toBe("princely_musings");
-      expect(result.event.item?.id).toBe("ae890ac52d0df67ed7cfdf51b644e901");
+      expect(result.event.items?.[0]?.id).toBe("ae890ac52d0df67ed7cfdf51b644e901");
     });
 
     it("Example 3：解析无 payload 的瞬态通知", () => {
@@ -94,7 +94,7 @@ describe("Pubsub (XEP-0060)", () => {
     it("Example 100：payload 挂在 item 的 localName 键下", () => {
       const eventEl = Parser.parse(EXAMPLE_100_EVENT).getElementsByTagName("event")[0];
       const result = Pubsub.parseEventEl(eventEl);
-      expect(result.event.item?.entry).toBeDefined();
+      expect(result.event.items?.[0]?.entry).toBeDefined();
     });
 
     it("Example 117：解析 retract 通知", () => {

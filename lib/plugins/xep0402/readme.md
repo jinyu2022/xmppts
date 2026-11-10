@@ -14,7 +14,7 @@
 1. **注册 disco 特性** — 向 XEP-0030 添加 `urn:xmpp:bookmarks:1+notify`。
 2. **注册 conference 解析器** — 用 `parseConferenceEl` 把 `urn:xmpp:bookmarks:1` 命名空间的 `<conference>` 解析为 `{ conference: Conference }`。
 3. **注册事件**（均为 `tagName = "message"`，且来源必须是本账号的 bare JID）：
-   - `bookmark:update` — 匹配 `event.node === "urn:xmpp:bookmarks:1" && event.item?.conference != null`，命中后按 item id 新增或替换 `bookmarks` 中的对应项
+   - `bookmark:update` — 匹配 `event.node === "urn:xmpp:bookmarks:1"` 且每项都带 `id` 与 `conference`（任一项不合规则整条通知丢弃），命中后逐个按 item id 新增或替换 `bookmarks` 中的对应项
    - `bookmark:delete` — 匹配 `event.node === "urn:xmpp:bookmarks:1" && event.retracts != null`，命中后按 item id 从 `bookmarks` 中移除
 4. **装载书签并自动加入房间** — 首次 `session:start` 时触发（`once`）：
    1. `retrieveBookmarks()` 拉取全部书签并写入 `this.bookmarks`，失败仅 `log.error` 并中止（与是否加载 XEP-0045 无关）；
@@ -98,12 +98,12 @@ interface Conference {
 
 | 事件 | 触发条件 | 回调参数 | 读取方式 |
 |------|---------|----------|---------|
-| `bookmark:update` | 收到来自本账号 bare JID（XEP-0163 §4.3.1）的 `urn:xmpp:bookmarks:1` 书签更新通知 | `Message`（载荷类型已收窄） | `message.event.item.conference`、`message.event.item.id` |
+| `bookmark:update` | 收到来自本账号 bare JID（XEP-0163 §4.3.1）的 `urn:xmpp:bookmarks:1` 书签更新通知 | `Message`（载荷类型已收窄） | `message.event.items[i].conference`、`message.event.items[i].id` |
 | `bookmark:delete` | 收到来自本账号 bare JID 的 `urn:xmpp:bookmarks:1` 书签撤回通知 | `Message`（载荷类型已收窄） | `message.event.retracts` |
 
 来源校验用于排除联系人的同名 PEP 节点事件：书签节点位于本账号的 PEP 服务上，只有本账号发布的事件才是自己的书签。
 
-`message.event` 由 XEP-0163 解析，结构见 [xep0163/readme.md](../xep0163/readme.md)；`event.items[]` 含全部项目，`event.item` 是首个项目的快捷方式。
+`message.event` 由 XEP-0163 解析，结构见 [xep0163/readme.md](../xep0163/readme.md)；`event.items[]` 含本次通知的全部项目。
 
 ## 公开 API
 
@@ -161,7 +161,9 @@ for (const b of bookmarks) {
 
 ```typescript
 client.on("bookmark:update", (message) => {
-  console.log("书签更新", message.event.item.conference.name);
+  for (const item of message.event.items) {
+    console.log("书签更新", item.id, item.conference.name);
+  }
 });
 
 client.on("bookmark:delete", (message) => {

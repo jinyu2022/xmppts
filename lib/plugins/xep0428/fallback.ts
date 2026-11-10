@@ -32,39 +32,18 @@ export class Fallback {
     static readonly NS = "urn:xmpp:fallback:0" as const;
 
     /**
-     * 解析 `urn:xmpp:fallback:0` 命名空间下的 `<fallback/>`
-     *
-     * 一条消息可以有多条 fallback，故从父元素一次收集全量。
-     * @param fallbackEl 任一 fallback 元素
+     * 一条消息可携带多条 fallback，框架会对每个元素各调用一次，
+     * 并把每次返回的数组拼接到同一个字段。
+     * @param fallbackEl 待解析的 fallback 元素
+     * @returns 只含当前 fallback 的数组
      */
     static parseFallbackEl(
         fallbackEl: XMPPElement,
-    ): { fallbacks?: FallbackInfo[]; } {
+    ): { fallbacks?: FallbackInfo[] } {
         if (fallbackEl.namespaceURI !== Fallback.NS) {
             throw new Error(`不是一个 fallback 元素: ${fallbackEl.toXMLString()}`);
         }
-        const parent = fallbackEl.parentElement;
-        if (parent && parent.localName !== "message") {
-            log.warn(`忽略非消息中的 fallback: ${fallbackEl.toXMLString()}`);
-            return {};
-        }
-        const elements = parent
-            ? Array.from(parent.children).filter(
-                (child) =>
-                    child.namespaceURI === Fallback.NS &&
-                    child.localName === "fallback",
-            )
-            : [fallbackEl];
 
-        const fallbacks: FallbackInfo[] = [];
-        for (const element of elements) {
-            fallbacks.push(Fallback.parseOne(element));
-        }
-        return fallbacks.length > 0 ? { fallbacks } : {};
-    }
-
-    /** 解析单条 fallback */
-    private static parseOne(fallbackEl: XMPPElement): FallbackInfo {
         const info: FallbackInfo = {
             for: fallbackEl.getAttribute("for") ?? "",
         };
@@ -106,7 +85,7 @@ export class Fallback {
         } else if (!hasRegion) {
             log.warn(`忽略没有有效区间的 fallback: ${fallbackEl.toXMLString()}`);
         }
-        return info;
+        return { fallbacks: [info] };
     }
 
     /**

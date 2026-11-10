@@ -88,6 +88,22 @@ const EXAMPLE_13_ITEMS = `<items node="urn:xmpp:bookmarks:1">
   </item>
 </items>`;
 
+/** §3.2 Example 5 的多项形态：一条通知同时携带两个书签 */
+const MULTI_ITEM_ITEMS = `<items node="urn:xmpp:bookmarks:1">
+  <item id="theplay@conference.shakespeare.lit">
+    <conference xmlns="urn:xmpp:bookmarks:1"
+                name="The Play&apos;s the Thing"
+                autojoin="true">
+      <nick>JC</nick>
+    </conference>
+  </item>
+  <item id="garden@conference.shakespeare.lit">
+    <conference xmlns="urn:xmpp:bookmarks:1" name="The Garden">
+      <nick>JC</nick>
+    </conference>
+  </item>
+</items>`;
+
 /** 已建立连接的引用，供 afterEach 统一断开 */
 const active = new Set<Connection>();
 
@@ -191,6 +207,22 @@ describe("XEP0402 插件入口", () => {
     );
     expect(connection.XEP0402!.bookmarks).toHaveLength(2);
     expect(connection.XEP0402!.bookmarks[0].autojoin).toBe(true);
+  });
+
+  it("一条通知携带多个书签时逐项写入", async () => {
+    const { connection, server } = await connectAndAnswerRetrieve(RETRIEVE_ORCHARD);
+
+    sendNotification(server, MULTI_ITEM_ITEMS);
+
+    await vi.waitFor(() =>
+      expect(connection.XEP0402!.bookmarks.map((b) => b.jid)).toEqual([
+        "orchard@conference.shakespeare.lit",
+        "theplay@conference.shakespeare.lit",
+        "garden@conference.shakespeare.lit",
+      ]),
+    );
+    expect(connection.XEP0402!.bookmarks[1].name).toBe("The Play's the Thing");
+    expect(connection.XEP0402!.bookmarks[2].name).toBe("The Garden");
   });
 
   it("bookmark:delete 通知按 item id 移除书签", async () => {

@@ -43,17 +43,22 @@ describe("XEP-0428 回退标记", () => {
     });
   });
 
-  it("从父元素收集多条 fallback", () => {
-    const el = fallbackOf(
+  it("一次只解析当前 fallback 元素", () => {
+    const messageEl = Parser.parse(
       `<message>
          <fallback xmlns="urn:xmpp:fallback:0" for="urn:xmpp:reply:0"><body/></fallback>
          <fallback xmlns="urn:xmpp:fallback:0" for="urn:xmpp:reference:0"/>
        </message>`,
     );
+    const [first, second] = Array.from(messageEl.children).filter(
+      (child) => child.namespaceURI === Fallback.NS,
+    );
 
-    expect(Fallback.parseFallbackEl(el).fallbacks).toEqual([
+    expect(Fallback.parseFallbackEl(first).fallbacks).toEqual([
       { for: "urn:xmpp:reply:0", body: [{}] },
-      // 无子元素：正文与主题整体都是回退内容
+    ]);
+    // 无子元素：正文与主题整体都是回退内容
+    expect(Fallback.parseFallbackEl(second).fallbacks).toEqual([
       { for: "urn:xmpp:reference:0", body: [], subject: [] },
     ]);
   });

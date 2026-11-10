@@ -65,7 +65,7 @@ type PubsubEvent                 // <event/> 可判别联合，见「parseEventE
 
 `PubsubEventItem`：`{ id?, publisher?, [key: string]: unknown }`，节点不同载荷元素不同，按载荷根元素的 `localName` 挂载（如 `item.entry`、`item.conference`）。
 
-`<items/>` 中的 item 与其载荷只对**首项**做完整转换：`item`（即 `items[0]`，同一对象）的载荷会被换成解析后的对象，而 `items[1..]` 仍是原 XML 元素——转换层不处理数组。逐项处理 `event.items` 时须自行判断载荷类型。
+`<items/>` 中的每一项都会走转换：数组元素里的载荷字段（如 `item.entry`、`item.conference`）被换成对应插件解析出的对象；未注册转换器的载荷保留原 XML 元素。数组元素本身若是 XML 元素（如 `extensions`）不会被替换。
 
 ## 公开 API
 
@@ -161,7 +161,7 @@ type PubsubEvent = { node?: string } & (
 
 | `type` | 附加字段 | 取值来源 |
 |--------|---------|---------|
-| `items` | `items?: PubsubEventItem[]`、`item?: PubsubEventItem`（首个）、`retracts?: string[]` | §7.1.2 / §7.2.2.1 |
+| `items` | `items?: PubsubEventItem[]`、`retracts?: string[]` | §7.1.2 / §7.2.2.1 |
 | `collection` | `associate?`、`disassociate?` | `<associate/>`/`<disassociate/>` 的 `node` 属性 |
 | `configuration` | `form?: XMPPElement` | `<configuration/>` 内的 `jabber:x:data` 表单 |
 | `delete` | `redirect?` | `<redirect/>` 的 `uri` 属性 |
@@ -169,7 +169,7 @@ type PubsubEvent = { node?: string } & (
 | `subscription` | `jid?`、`subid?`、`subscription?`（状态字符串，非元素）、`expiry?` | `<subscription/>` 自身的属性；`expiry` 为 §12.5 租约到期时间 |
 | `unknown` | 无 | 未列举的子元素（规范扩展） |
 
-各分支都声明了全部载荷字段（未用到的为 `never`），所以 `event.item`、`event.redirect` 这类读取可以直接写；未列举的子元素归入 `unknown`，原 XML 可从 `message.xml` 取。
+各分支都声明了全部载荷字段（未用到的为 `never`），所以 `event.items`、`event.redirect` 这类读取可以直接写；未列举的子元素归入 `unknown`，原 XML 可从 `message.xml` 取。
 
 ## 使用示例
 

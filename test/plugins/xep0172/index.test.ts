@@ -75,7 +75,7 @@ describe("XEP0172 插件入口", () => {
       if (!message) return;
       // 编译期校验：事件载荷已收窄到昵称节点与必填 nick
       const node: typeof XEP0172.NS = message.event.node;
-      const nick: string = message.event.item.nick;
+      const nick: string = message.event.items[0].nick;
       expect(node).toBe(XEP0172.NS);
       expect(nick).toBe("CallMeIshmael");
       received.push(message);
@@ -97,7 +97,7 @@ describe("XEP0172 插件入口", () => {
 
     expect(received).toHaveLength(1);
     expect(received[0].event?.node).toBe(XEP0172.NS);
-    expect(received[0].event?.item?.nick).toBe("CallMeIshmael");
+    expect(received[0].event?.items?.[0]?.nick).toBe("CallMeIshmael");
   });
 
   it("init 注册转换器与 pep:nickname 事件", () => {
@@ -107,9 +107,9 @@ describe("XEP0172 插件入口", () => {
     expect(connection.matchersOf("pep:nickname")).toHaveLength(1);
     const matcher = connection.matchersOf("pep:nickname")[0];
     // PEP 通知：node 与 item.nick 都匹配
-    expect(matcher({ event: { node: XEP0172.NS, item: { nick: "Ishmael" } } })).toBe(true);
+    expect(matcher({ event: { node: XEP0172.NS, items: [{ nick: "Ishmael" }] } })).toBe(true);
     // node 匹配但载荷为空，或 node 不匹配
-    expect(matcher({ event: { node: XEP0172.NS, item: {} } })).toBe(false);
+    expect(matcher({ event: { node: XEP0172.NS, items: [{}] } })).toBe(false);
     expect(matcher({ event: { node: "other" } })).toBe(false);
     // 直接挂在消息上的 nick 不是 PEP 事件
     expect(matcher({ nick: "Ishmael" })).toBe(false);

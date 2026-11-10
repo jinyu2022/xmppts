@@ -34,11 +34,19 @@ export default class XEP0402 extends Bookmarks implements Plugin {
         );
         this.connection.registerEventPlugin("bookmark:update", {
             tagName: "message",
-            matcher: (message) =>
-                message.event?.node === Bookmarks.NS &&
-                message.event?.item?.conference != null &&
+            matcher: (message) => {
+                if (message.event?.node !== Bookmarks.NS) return false;
+                // 规范要求每个 item 都带 id 与 conference（§2），不合规的通知整条丢弃
+                if (
+                    !message.event.items?.every(
+                        (item) => item.id && item.conference,
+                    )
+                ) {
+                    return false;
+                }
                 // PEP 协议要求通知必须是来自本账号的 bare JID（XEP-0163 §4.3.1）
-                message.from.bare === this.connection.jid.bare,
+                return message.from.bare === this.connection.jid.bare;
+            },
         });
 
         this.connection.registerEventPlugin("bookmark:delete", {
@@ -52,8 +60,10 @@ export default class XEP0402 extends Bookmarks implements Plugin {
 
         // 其他客户端对书签的增删改经 PEP 通知同步到本地状态（XEP-0402 §4）
         this.connection.on("bookmark:update", (message) => {
-            const { id, conference } = message.event.item;
-            this.upsertBookmark({ ...conference, jid: id });
+            // 一条通知可以携带多个书签项（§3.2 Example 5），匹配器已保证每项都完整
+            for (const item of message.event.items) {
+                this.upsertBookmark({ ...item.conference, jid: item.id });
+            }
         });
         this.connection.on("bookmark:delete", (message) => {
             const { retracts } = message.event;
@@ -187,11 +197,11 @@ declare module "../xep0060/pubsub" {
 
 declare module "../../connection" {
     interface SocketEventMap {
-        /** XEP0402：匹配器已保证来自本账号、node 为书签节点、首个 item 带 item id 与 conference */
+        /** XEP0402：匹配器已保证来自本账号、node 为书签节点、每项都带 item id 与 conference */
         "bookmark:update": Message & {
             event: PubsubEvent & {
                 node: typeof Bookmarks.NS;
-                item: { id: string; conference: Omit<Conference, "jid"> };
+                items: Array<{ id: string; conference: Omit<Conference, "jid"> }>;
             };
         };
         /** XEP0402：匹配器已保证来自本账号、node 为书签节点、retracts 非空 */

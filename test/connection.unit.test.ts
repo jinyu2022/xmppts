@@ -352,7 +352,8 @@ describe("Connection（单元测试，假传输层）", () => {
     connection.registerEventPlugin("bookmark:update", {
       tagName: "message",
       matcher: (message) =>
-        message.event?.node === XEP0402.NS && message.event?.item?.conference != null,
+        message.event?.node === XEP0402.NS &&
+        message.event?.items?.some((item) => item.conference != null) === true,
     });
     const messages: Message[] = [];
     const updates: Message[] = [];
@@ -392,13 +393,24 @@ describe("Connection（单元测试，假传输层）", () => {
               </extensions>
             </conference>
           </item>
+          <item id="garden@conference.shakespeare.lit">
+            <conference xmlns="urn:xmpp:bookmarks:1" name="The Garden">
+              <nick>JC</nick>
+            </conference>
+          </item>
         </items>
       </event>
     </message>`;
     expect(() => transport.sink.onStanza(Parser.parse(bookmarkMessage))).not.toThrow();
     expect(updates).toHaveLength(1);
+    const items = updates[0].event?.type === "items" ? updates[0].event.items : undefined;
+    // 数组里的每一项都要走转换，而不是只有首项
+    expect(items?.map((item) => item.conference?.name)).toEqual([
+      "The Orchard",
+      "The Garden",
+    ]);
     expect(
-      updates[0].event?.item?.conference?.extensions?.map((el) => el.localName),
+      items?.[0]?.conference?.extensions?.map((el) => el.localName),
     ).toEqual(["state"]);
   });
 

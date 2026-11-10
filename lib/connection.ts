@@ -711,7 +711,7 @@ export class Connection extends Emitter<SocketEventMap> {
     const visited = new Set<unknown>();
     // 构造阶段产出的普通对象字段（如 error 的附加条件元素）也需转换
     for (const value of Object.values(instance)) {
-      // 不需要访问数组、类实例、null、undefined、原型链上继承的对象；只访问普通对象
+      // 这一层只处理实例自身的普通对象字段；数组字段由 transformNested 的数组分支递归
       if (value && Object.getPrototypeOf(value) === Object.prototype) {
         this.transformNested(value as Record<string, unknown>, visited);
       }
@@ -752,6 +752,13 @@ export class Connection extends Emitter<SocketEventMap> {
         // 先删掉元素字段
         delete obj[key];
         this.mergeTransformed(obj, transformed);
+      } else if (Array.isArray(value)) {
+        // 数组自身没有可写回的字段位置，只递归其中的普通对象（如 PEP 事件的 items 项）
+        for (const element of value) {
+          if (!element || typeof element !== "object") continue;
+          if (Object.getPrototypeOf(element) !== Object.prototype) continue;
+          this.transformNested(element as Record<string, unknown>, visited);
+        }
       } else if (value && Object.getPrototypeOf(value) === Object.prototype) {
         // 嵌套的普通对象继续下钻，如 forwarded 内的转发内容容器
         this.transformNested(value as Record<string, unknown>, visited);

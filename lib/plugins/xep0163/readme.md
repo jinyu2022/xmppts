@@ -28,7 +28,7 @@ declare module "../../stanza" {
 
 // <event/> 只含一个子元素（§17.3），故为可判别联合，type 即子元素名
 type PubsubEvent = { node?: string } & (
-  | { type: "items"; items?: PubsubEventItem[]; item?: PubsubEventItem; retracts?: string[] }
+  | { type: "items"; items?: PubsubEventItem[]; retracts?: string[] }
   | { type: "collection"; associate?: string; disassociate?: string }
   | { type: "configuration"; form?: XMPPElement }
   | { type: "delete"; redirect?: string }
@@ -45,7 +45,7 @@ interface PubsubEventItem {
 }
 ```
 
-各分支的字段含义与 `<items/>` 首项限制见 [xep0060/readme.md](../xep0060/readme.md#parseEventEl-返回值)。
+各分支的字段含义见 [xep0060/readme.md](../xep0060/readme.md#parseEventEl-返回值)。
 
 ## 可监听事件
 

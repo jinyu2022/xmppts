@@ -34,9 +34,21 @@ describe("XEP0402 插件入口", () => {
     const ownMessage = (event: unknown) => ({ from: { bare: "juliet@capulet.lit" }, event });
     expect(
       connection.matchersOf("bookmark:update")[0](
-        ownMessage({ node: Bookmarks.NS, item: { conference: {} } }),
+        ownMessage({ node: Bookmarks.NS, items: [{ id: "room@example.com", conference: {} }] }),
       ),
     ).toBe(true);
+    // 任一项缺少 id 或 conference 时整条通知不派发，与事件类型“每项都完整”一致
+    expect(
+      connection.matchersOf("bookmark:update")[0](
+        ownMessage({
+          node: Bookmarks.NS,
+          items: [
+            { id: "room@example.com", conference: {} },
+            { id: "second@example.com" },
+          ],
+        }),
+      ),
+    ).toBe(false);
     expect(
       connection.matchersOf("bookmark:delete")[0](
         ownMessage({ node: Bookmarks.NS, retracts: {} }),
@@ -49,7 +61,7 @@ describe("XEP0402 插件入口", () => {
     expect(
       connection.matchersOf("bookmark:update")[0]({
         from: { bare: "romeo@montague.lit" },
-        event: { node: Bookmarks.NS, item: { conference: {} } },
+        event: { node: Bookmarks.NS, items: [{ id: "room@example.com", conference: {} }] },
       }),
     ).toBe(false);
   });

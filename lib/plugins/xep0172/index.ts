@@ -25,7 +25,7 @@ class XEP0172 extends Nickname implements Plugin {
             matcher: (message) => {
                 // 只认 PEP 通知（§4.2 Example 6）；直接挂在 <message/> 上的 <nick/> 不是 PEP 事件
                 if (message.event?.node !== XEP0172.NS) return false;
-                const nick = message.event.item?.nick;
+                const nick = message.event.items?.[0]?.nick;
                 if (typeof nick !== "string") return false;
                 return true;
             },
@@ -84,7 +84,8 @@ declare module "../../connection" {
         "pep:nickname"?: Message & {
             event: PubsubEvent & {
                 node: typeof XEP0172.NS;
-                item: { nick: string };
+                /** 该节点每次只发布一个 item，matcher 也只校验首项 */
+                items: Array<{ nick: string }>;
             };
         };
     }

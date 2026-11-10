@@ -178,7 +178,7 @@ interface PubsubEventBase {
 /** `<event/>` 各子元素对应的载荷（§17.3 模式），键即子元素名 */
 interface PubsubEventPayloads {
     /** §7.1.2 发布 / §7.2.2.1 撤回；两者均为空表示瞬态通知 */
-    items: { items?: PubsubEventItem[]; item?: PubsubEventItem; retracts?: string[] };
+    items: { items?: PubsubEventItem[]; retracts?: string[] };
     /** XEP-0248 §4：节点加入或移出集合，取 `<associate/>`/`<disassociate/>` 的目标节点 */
     collection: { associate?: string; disassociate?: string };
     /** §8.2.5.3：节点配置变更，`form` 为 `jabber:x:data` 配置表单（原样保留） */
@@ -216,7 +216,7 @@ type PubsubEventVariants = {
  * 六个子元素互斥，故为可判别联合：`type` 即子元素名，`switch` 可穷尽；
  * 子元素内的协议数据已展开为普通字段（如 `delete` 分支的 `redirect`），不再保留元素本身，
  * 需要原始 XML 时见 `message.xml`。未列举的子元素（规范会扩展）归入 `unknown`，只保留 node。
- * 各分支都声明了全部载荷字段（未用到的为 never），因此 `event.item` 一类读取无需先窄化。
+ * 各分支都声明了全部载荷字段（未用到的为 never），因此 `event.redirect` 一类读取无需先窄化。
  */
 export type PubsubEvent = PubsubEventBase &
     (PubsubEventVariants[keyof PubsubEventVariants] | ({ type: "unknown" } & Only<never>));
@@ -759,6 +759,7 @@ export class Pubsub {
         for (const child of eventEl.children) {
             if (child.namespaceURI !== Pubsub.NS.EVENT) continue;
             const event = Pubsub.parseEventChild(child);
+            // §17.3 的 schema 为 xs:choice，<event/> 至多一个事件子元素，找到可识别者即返回
             if (event) return { event };
             // 未列举的事件元素同样保留 node，避免整条 stanza 的分发被打断
             unknownNode ??= child.getAttribute("node") ?? undefined;
@@ -779,7 +780,7 @@ export class Pubsub {
                 const event: PubsubEvent = {
                     type: "items",
                     node: childNode,
-                    ...(items.length ? { items, item: items[0] } : {}),
+                    ...(items.length ? { items } : {}),
                     ...(retracts.length ? { retracts } : {}),
                 };
                 return event;
