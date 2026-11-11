@@ -294,12 +294,13 @@ describe("Connection（单元测试，假传输层）", () => {
     expect(messages[0].thread).toBe("t1");
   });
 
-  it("接收：扩展解析抛错只上报 error，不断开且后续报文照常派发", () => {
+  it("接收：单个扩展解析抛错不影响报文派发，其余扩展照常解析", () => {
     const { connection, transport } = setup();
     const disconnect = vi.spyOn(connection, "disconnect");
     connection.registerStanzaPlugin("urn:test:bad", () => {
       throw new Error("扩展解析失败");
     });
+    connection.registerStanzaPlugin("urn:test:caps", () => ({ caps: { node: "n1" } }));
     const messages: Message[] = [];
     const errors: Error[] = [];
     connection.on("error", (error) => errors.push(error));
@@ -308,24 +309,50 @@ describe("Connection（单元测试，假传输层）", () => {
     expect(() =>
       transport.sink.onStanza(
         Parser.parse(
-          '<message from="romeo@montague.lit/orchard" to="juliet@capulet.lit"><x xmlns="urn:test:bad"/></message>',
+          '<message from="romeo@montague.lit/orchard" to="juliet@capulet.lit">' +
+            '<x xmlns="urn:test:bad"/><x xmlns="urn:test:caps"/></message>',
         ),
       ),
     ).not.toThrow();
 
-    // 出错的报文被丢弃，会话与传输都不受影响
-    expect(messages).toHaveLength(0);
-    expect(errors).toHaveLength(1);
-    expect(errors[0].message).toBe("扩展解析失败");
+    // 报文本体照常派发，解析失败的扩展留在原始 XML 中，其余扩展正常转换
+    expect(errors).toHaveLength(0);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].xml.getElementsByTagName("x")).toHaveLength(2);
+    expect((messages[0] as Message & { caps?: unknown }).caps).toEqual({ node: "n1" });
     expect(disconnect).not.toHaveBeenCalled();
     expect(connection.transport).toBe(transport);
     expect(connection.isSessionActive).toBe(true);
+  });
 
-    // 后续报文不被牵连
+  it("接收：嵌套扩展解析抛错时保留元素字段，同层其他字段照常合并", () => {
+    const { connection, transport } = setup();
+    connection.registerStanzaPlugin("urn:test:bad", () => {
+      throw new Error("嵌套扩展解析失败");
+    });
+    connection.registerStanzaPlugin("urn:test:outer", (el) => ({
+      outer: {
+        node: el.getAttribute("node"),
+        child: el.firstElementChild,
+      },
+    }));
+    const messages: Message[] = [];
+    connection.on("message", (message) => messages.push(message));
+
     transport.sink.onStanza(
-      Parser.parse('<message from="a@example.com" to="juliet@capulet.lit"><body>ok</body></message>'),
+      Parser.parse(
+        '<message from="a@example.com" to="juliet@capulet.lit">' +
+          '<outer xmlns="urn:test:outer" node="n1"><child xmlns="urn:test:bad"/></outer>' +
+          "</message>",
+      ),
     );
-    expect(messages).toHaveLength(1);
+
+    const outer = (messages[0] as Message & {
+      outer?: { node?: string | null; child?: XMPPElement | null };
+    }).outer;
+    expect(outer?.node).toBe("n1");
+    // 解析失败的元素没有被删除，调用方仍能读到原始 XML
+    expect(outer?.child).toBeInstanceOf(XMPPElement);
   });
 
   it("接收：中间件抛错同样只上报 error", () => {

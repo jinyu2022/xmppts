@@ -702,6 +702,7 @@ export class Connection extends Emitter<SocketEventMap> {
 
   /**
    * 把 stanza 的直接子元素交给对应命名空间的转换器，结果合并到实例上；无转换器的子元素跳过。
+   * 单个转换器抛错时只保留该元素的原始 XML，继续处理其余元素，不丢弃整条报文。
    * 会直接修改原实例
    * @param instance stanza 实例
    * @returns 返回 instance
@@ -723,7 +724,18 @@ export class Connection extends Emitter<SocketEventMap> {
       // 没有对应转换器时保留元素本身，由使用者自行处理
       if (!handler) continue;
       visited.add(child);
-      const transformed = handler(child);
+      let transformed: Record<string, unknown>;
+      try {
+        transformed = handler(child);
+      } catch (error) {
+        // 单个扩展解析失败不能连累同一报文的其他扩展与监听器；原始 XML 仍保留在 xml.children 中
+        log.warn(
+          "扩展解析失败，保留原始元素:",
+          error,
+          () => child.toXMLString(),
+        );
+        continue;
+      }
       // handler 只解析自己命名空间的元素，返回值中保留的其他命名空间元素在这里接续转换
       this.transformNested(transformed, visited);
       this.mergeTransformed(instance, transformed);
@@ -747,7 +759,18 @@ export class Connection extends Emitter<SocketEventMap> {
         // 没有对应转换器时保留元素本身，由使用者自行处理
         if (!handler) continue;
         visited.add(value);
-        const transformed = handler(value);
+        let transformed: Record<string, unknown>;
+        try {
+          transformed = handler(value);
+        } catch (error) {
+          // 解析失败的元素留在原字段，调用方仍能拿到原始 XML
+          log.warn(
+            "扩展解析失败，保留原始元素:",
+            error,
+            () => value.toXMLString(),
+          );
+          continue;
+        }
         this.transformNested(transformed, visited);
         // 先删掉元素字段
         delete obj[key];
