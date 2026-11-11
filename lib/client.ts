@@ -2,8 +2,20 @@ import Connection from "./connection";
 import { JID } from "./JID";
 import { pluginLoaders } from "./plugins";
 import { Message, type MsgType } from "@/stanza";
+import type { Options } from "./types";
 
 export class Client extends Connection {
+  /**
+   * @param jid 完整的账号，如 `user@example.com/resource`
+   * @param password 密码
+   * @param options 连接配置
+   */
+  constructor(jid: string, password: string, options?: Options) {
+    super(jid, password, options);
+    // roster 便捷方法依赖 RFC6121，随实例自动登记，避免调用方遗漏
+    this.registerPlugin("RFC6121");
+  }
+
   /**
    * 注册默认插件
    *

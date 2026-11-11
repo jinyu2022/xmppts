@@ -1,25 +1,23 @@
 {
   "name": "xmppts",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "基于 TypeScript 的 XMPP 协议库，支持 Node.js 与浏览器环境，扩展协议以插件形式实现",
   "license": "MPL-2.0",
   "type": "module",
   "files": [
-    "dist/",
-    "index.d.ts",
-    "index.js"
+    "dist/"
   ],
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     },
     "./lib/*": {
-      "import": "./dist/lib/*",
-      "types": "./dist/lib/*"
+      "types": "./dist/lib/*.d.ts",
+      "import": "./dist/lib/*.js"
     }
   },
   "scripts": {
@@ -27,7 +25,8 @@
     "build": "tsc --noEmit && tsdown && node scripts/check-dts-augmentation.mjs",
     "check:dts": "node scripts/check-dts-augmentation.mjs",
     "ts-check": "tsc --noEmit",
-    "test": "vitest"
+    "test": "vitest",
+    "prepublishOnly": "npm run build"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

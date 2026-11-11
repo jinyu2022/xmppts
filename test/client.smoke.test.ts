@@ -82,6 +82,17 @@ describe("Client 冒烟（默认插件 + 完整会话）", () => {
     }
   });
 
+  it("构造时自动登记 RFC6121，不依赖 registerDefaultPlugins", () => {
+    const active = new Client(SELF, "test123", { ...TCP_TEST_ENDPOINT });
+    client = active;
+    // 插件表是私有的，这里只验证已登记；实例化在 connect() 内部完成
+    const pending = (
+      active as unknown as { pendingPlugins: Map<string, unknown> }
+    ).pendingPlugins;
+    expect(pending.has("RFC6121")).toBe(true);
+    expect(active.RFC6121).toBeUndefined();
+  });
+
   it("装齐默认插件后完成会话、收发 stanza 并断开", async () => {
     const active = new Client(SELF, "test123", { ...TCP_TEST_ENDPOINT });
     client = active;
