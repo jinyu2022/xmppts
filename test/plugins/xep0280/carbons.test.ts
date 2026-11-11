@@ -64,17 +64,27 @@ describe("Carbons", () => {
       const result = Carbons.parseCarbonEl(
         Parser.parse(EXAMPLE_10).getElementsByTagName("received")[0],
       );
-      expect(result.carbon.type).toBe("received");
-      expect(result.carbon.forwarded).toBeDefined();
-      expect(result.carbon.forwarded.getElementsByTagName("message")).toHaveLength(1);
+      expect(result.carbon!.type).toBe("received");
+      expect(result.carbon!.forwarded).toBeDefined();
+      expect(result.carbon!.forwarded.getElementsByTagName("message")).toHaveLength(1);
     });
 
     it("Example 13：解析 sent carbon 及其 forwarded", () => {
       const result = Carbons.parseCarbonEl(
         Parser.parse(EXAMPLE_13).getElementsByTagName("sent")[0],
       );
-      expect(result.carbon.type).toBe("sent");
-      expect(result.carbon.forwarded).toBeDefined();
+      expect(result.carbon!.type).toBe("sent");
+      expect(result.carbon!.forwarded).toBeDefined();
+    });
+
+    it("§9：<private/> 解析为 carbonPrivate 标记", () => {
+      const el = Parser.parse(`<private xmlns="${Carbons.NS}"/>`);
+      expect(Carbons.parseCarbonEl(el)).toEqual({ carbonPrivate: true });
+    });
+
+    it("同命名空间的未知元素返回空对象，不抛错", () => {
+      const el = Parser.parse(`<unknown xmlns="${Carbons.NS}"/>`);
+      expect(Carbons.parseCarbonEl(el)).toEqual({});
     });
 
     it("carbon 元素命名空间不符时抛错", () => {

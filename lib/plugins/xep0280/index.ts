@@ -107,15 +107,17 @@ declare module "../../stanza" {
       type: "received" | "sent";
       forwarded: Forwarded;
     };
+    /** 由插件XEP0280添加：消息带有 <private/>，发送方声明不要复制到其他资源（§9） */
+    readonly carbonPrivate?: true;
   }
 }
 
 declare module "../../connection" {
   interface SocketEventMap {
     /** 由插件XEP0280添加 */
-    "carbon:received": Message & { carbon: { type: "received"; forwarded: Forwarded } };
+    "carbon:received": Message & Readonly<{ carbon: { type: "received"; forwarded: Forwarded } }>;
     /** 由插件XEP0280添加 */
-    "carbon:sent": Message & { carbon: { type: "sent"; forwarded: Forwarded } };
+    "carbon:sent": Message & Readonly<{ carbon: { type: "sent"; forwarded: Forwarded } }>;
   }
 }
 

@@ -15,7 +15,7 @@
 
 1. **注册 disco 特性** — 向 XEP-0030 添加 `urn:xmpp:carbons:2`。
 2. **自动启用** — 会话开始后经 `getServerFeatures()` 查询，服务器支持则调用 `enable()`，否则 warn。
-3. **注册 carbon 解析器** — 解析 message 中的 `<received/>` / `<sent/>` 为 `message.carbon`。
+3. **注册 carbon 解析器** — 解析 message 中的 `<received/>` / `<sent/>` 为 `message.carbon`，`<private/>` 为 `message.carbonPrivate`。
 4. **注册事件** — `carbon:received` 与 `carbon:sent`。
 
 ## 扩展字段
@@ -26,6 +26,8 @@ interface Message {
     type: "received" | "sent";
     forwarded: Forwarded;   // 来自 XEP-0297
   };
+  /** 消息带有 <private/>，发送方声明不要复制到其他资源 */
+  carbonPrivate?: true;
 }
 ```
 
@@ -45,7 +47,7 @@ interface Message {
 | `enable()` | 发送启用碳副本的 IQ |
 | `disable()` | 发送停用碳副本的 IQ |
 | `XEP0280.NS`（静态） | `"urn:xmpp:carbons:2"` |
-| `XEP0280.parseCarbonEl(el)`（静态） | 解析 `<received/>` / `<sent/>` → `{ carbon }`；元素命名空间不符抛 `Error` |
+| `XEP0280.parseCarbonEl(el)`（静态） | 解析 `<received/>` / `<sent/>` → `{ carbon }`；`<private/>` → `{ carbonPrivate: true }`；未知元素返回 `{}` 并 warn；元素命名空间不符抛 `Error` |
 | `XEP0280.createEnableIq()` / `createDisableIq()`（静态） | 构造启用/停用 IQ |
 
 ## 使用示例
@@ -76,4 +78,4 @@ client.on("carbon:sent", (message) => {
 - 碳副本消息中同时存在 XEP-0297 解析出的 `message.forwarded`。
 - 服务器不支持时打印 warn，不影响正常通信。
 - §11 要求 carbon 必须来自本人 bare JID：两个 matcher 均已校验包装消息的 `from`，不符或缺失时忽略并 warn。
-- §9 的 `<private/>` 免碳复制尚未支持。
+- §9 的 `<private/>` 在接收侧解析为 `message.carbonPrivate`，不影响消息派发；发送侧暂不自动追加该元素。

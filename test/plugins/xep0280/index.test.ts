@@ -126,6 +126,35 @@ describe("XEP0280 碳拷贝来源校验", () => {
     expect(received[0].carbon?.type).toBe("received");
     expect(received[0].from.bare).toBe("romeo@montague.example");
   });
+
+  it("§9：带 <private/> 的普通消息不报错并照常派发", () => {
+    const connection = new Connection("romeo@montague.example/home", "test123");
+    const disco = new XEP0030(connection);
+    disco.init();
+    Object.assign(connection, { XEP0030: disco });
+    new XEP0280(connection).init();
+
+    const messages: Message[] = [];
+    const errors: Error[] = [];
+    connection.on("message", (message) => messages.push(message));
+    connection.on("error", (error) => errors.push(error));
+
+    connection._createSink().onStanza(
+      Parser.parse(`
+        <message xmlns="jabber:client" from="juliet@capulet.example/balcony" to="romeo@montague.example/home" type="chat">
+          <body>What light through yonder window breaks?</body>
+          <private xmlns="urn:xmpp:carbons:2"/>
+        </message>
+      `),
+    );
+
+    // 服务器不再保证剥离 <private/>，接收方必须把它当作普通消息处理
+    expect(errors).toHaveLength(0);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].body).toBe("What light through yonder window breaks?");
+    expect(messages[0].carbonPrivate).toBe(true);
+    expect(messages[0].carbon).toBeUndefined();
+  });
 });
 
 describe("XEP0280 会话管理与启用/禁用", () => {
