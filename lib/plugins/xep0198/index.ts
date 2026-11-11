@@ -72,11 +72,17 @@ export default class XEP0198 extends StreamManagement implements Plugin {
             void this.enable().catch((error: unknown) => log.error('启用流管理失败', error));
         this.connection.on("session:start", onSessionReady);
         this.connection.on("reconnected", onSessionReady);
-        // 断线 → 记录时刻供恢复判定；服务器建议的端点只用于下一次连接（XEP-0198 §3），写入后立即清空
+        // 断线 → 可恢复时只记录时刻供恢复判定；不可恢复时旧流的计数与状态一并作废，新流需重新 <enable/>
+        // 服务器建议的端点只用于下一次连接（XEP-0198 §3），写入后立即清空
         this.connection.on("connection:lost", () => {
-            this.disconnectedAt = Date.now();
             const endpoint = this.reconnectEndpoint;
             this.reconnectEndpoint = undefined;
+            if (this.resumable && this.previd) {
+                this.disconnectedAt = Date.now();
+            } else {
+                log.debug("本次会话无法恢复，旧流状态已复位，新流将重新启用流管理");
+                this.reset();
+            }
             const target = this.connection.transport;
             if (!endpoint || !target) return;
             target.host = endpoint.host;

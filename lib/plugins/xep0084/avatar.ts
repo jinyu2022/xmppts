@@ -18,9 +18,10 @@ export class Avatar {
 
     /** 浏览器环境 */
     private static async browserImageParser(image: File) {
-        const base64Data = await new Promise<string>((resolve) => {
+        const base64Data = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => resolve((reader.result as string).split(",")[1]);
+            reader.onerror = () => reject(reader.error ?? new Error("读取图片失败"));
             reader.readAsDataURL(image);
         });
 
@@ -32,24 +33,28 @@ export class Avatar {
                     .join("")
             );
 
-        const metadata = await new Promise<AvatarMetadata>((resolve) => {
-            const img = new Image();
-            img.onload = () => {
-                resolve({
-                    id: sha1,
-                    type: image.type,
-                    bytes: image.size,
-                    width: img.width,
-                    height: img.height,
-                });
+        const objectUrl = URL.createObjectURL(image);
+        try {
+            const metadata = await new Promise<AvatarMetadata>((resolve, reject) => {
+                const img = new Image();
+                img.onload = () =>
+                    resolve({
+                        id: sha1,
+                        type: image.type,
+                        bytes: image.size,
+                        width: img.width,
+                        height: img.height,
+                    });
+                img.onerror = () => reject(new Error("加载图片失败"));
+                img.src = objectUrl;
+            });
+            return {
+                base64Data,
+                metadata,
             };
-            img.src = URL.createObjectURL(image);
-        });
-
-        return {
-            base64Data,
-            metadata,
-        };
+        } finally {
+            URL.revokeObjectURL(objectUrl);
+        }
     }
 
     private static async nodeImageParser(imagePath: string) {

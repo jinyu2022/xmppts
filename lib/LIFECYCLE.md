@@ -62,7 +62,7 @@
 #### 接收管线 (Receive Pipeline)
 1.  **底层**: Parser 解析出完整 XML Tree，传输层调用 `TransportSink.onStanza` 交给高层。
 2.  **拦截器**: 执行 `receive` 拦截器链。
-3.  **转换器 (`transformExtensions`)**: 扫描直接子元素与构造期字段中的元素，将匹配 `StanzaPlugin` 的 XML 节点转换为结构化 JS 对象并合并到实例上。
+3.  **转换器 (`transformExtensions`)**: 扫描直接子元素与构造期字段中的元素，将匹配 `StanzaPlugin` 的 XML 节点转换为结构化 JS 对象并合并到实例上。合并规则：数组字段按出现顺序拼接，其余字段整体覆盖——同一命名空间的多个元素写入单值字段时只有最后一个可见，这是预期行为。
 4.  **请求兑现**: 节的 id 命中请求表时，结束对应的 `sendAsync` Promise。
 5.  **分发**: 发出 `message`, `iq`, `presence` 等具体事件。
 

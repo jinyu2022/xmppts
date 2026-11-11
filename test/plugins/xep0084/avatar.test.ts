@@ -117,10 +117,15 @@ describe("Avatar", () => {
         }
       }
 
+      const revokeObjectURL = vi.fn();
       vi.stubGlobal("window", {});
       vi.stubGlobal("FileReader", FakeFileReader);
       vi.stubGlobal("Image", FakeImage);
-      vi.stubGlobal("URL", { ...URL, createObjectURL: () => "blob:fake" });
+      vi.stubGlobal("URL", {
+        ...URL,
+        createObjectURL: () => "blob:fake",
+        revokeObjectURL,
+      });
 
       try {
         const file = new File([new Uint8Array([1, 2, 3])], "a.png", {
@@ -134,6 +139,69 @@ describe("Avatar", () => {
         expect(metadata.width).toBe(32);
         expect(metadata.height).toBe(24);
         expect(metadata.id).toMatch(/^[0-9a-f]{40}$/);
+        expect(revokeObjectURL).toHaveBeenCalledWith("blob:fake");
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("浏览器分支：FileReader 失败时 reject，不再永久挂起", async () => {
+      class FakeFileReader {
+        result = "";
+        error = new Error("read failed");
+        onload?: () => void;
+        onerror?: () => void;
+        readAsDataURL(_file: File) {
+          queueMicrotask(() => this.onerror?.());
+        }
+      }
+
+      vi.stubGlobal("window", {});
+      vi.stubGlobal("FileReader", FakeFileReader);
+
+      try {
+        const file = new File([new Uint8Array([1])], "a.png", {
+          type: "image/png",
+        });
+        await expect(Avatar.imageParser(file)).rejects.toThrow("read failed");
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("浏览器分支：Image 加载失败时 reject 并释放 object URL", async () => {
+      class FakeFileReader {
+        result = "";
+        onload?: () => void;
+        readAsDataURL(file: File) {
+          this.result = `data:${file.type};base64,${Buffer.from("fake").toString("base64")}`;
+          this.onload?.();
+        }
+      }
+      class FakeImage {
+        onload?: () => void;
+        onerror?: () => void;
+        set src(_value: string) {
+          queueMicrotask(() => this.onerror?.());
+        }
+      }
+      const revokeObjectURL = vi.fn();
+
+      vi.stubGlobal("window", {});
+      vi.stubGlobal("FileReader", FakeFileReader);
+      vi.stubGlobal("Image", FakeImage);
+      vi.stubGlobal("URL", {
+        ...URL,
+        createObjectURL: () => "blob:fake",
+        revokeObjectURL,
+      });
+
+      try {
+        const file = new File([new Uint8Array([1])], "a.png", {
+          type: "image/png",
+        });
+        await expect(Avatar.imageParser(file)).rejects.toThrow("加载图片失败");
+        expect(revokeObjectURL).toHaveBeenCalledWith("blob:fake");
       } finally {
         vi.unstubAllGlobals();
       }

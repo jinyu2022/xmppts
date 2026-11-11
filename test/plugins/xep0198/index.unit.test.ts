@@ -191,6 +191,28 @@ describe("XEP0198（单元测试，假连接）", () => {
     expect((await negotiate(fresh)).outgoing).toBe(BIND_REQUEST);
   });
 
+  it("服务器不允许恢复时，断线重连的新流会重新发送 enable 并重置计数", async () => {
+    const connection = createPlugin();
+    // 服务器只回 <enabled/>（无 resume）：断线后无法恢复，旧流状态必须作废
+    await enableSm(connection, `id="sid-1"`);
+    expect(connection.count("<enable")).toBe(1);
+
+    // 旧流已处理 2 条
+    connection.receive('<message from="romeo@montague.lit/orchard"><body>a</body></message>');
+    connection.receive('<message from="romeo@montague.lit/orchard"><body>b</body></message>');
+
+    connection.emit("connection:lost");
+    // 不尝试恢复，走常规绑定
+    expect((await negotiate(connection)).outgoing).toBe(BIND_REQUEST);
+    connection.emit("reconnected");
+    expect(connection.count("<enable")).toBe(2);
+
+    // 新流自 <enabled/> 起重新计数，不沿用旧流的已处理数量
+    connection.receive(`<enabled xmlns="urn:xmpp:sm:3"/>`);
+    connection.receive('<r xmlns="urn:xmpp:sm:3"/>');
+    expect(connection.sent.at(-1)).toContain('h="0"');
+  });
+
   it("距断开超过服务器宣告的 max 后放弃恢复", async () => {
     vi.useFakeTimers();
     const connection = createPlugin();
