@@ -254,5 +254,22 @@ describe("RFC6121 Roster", () => {
       expect(updates).toHaveLength(2);
       expect(transport.sent).toHaveLength(2);
     });
+
+    it("应答 result 不带 to（push 无论有无 from）", () => {
+      const { connection, transport } = setup();
+      new RFC6121(connection).init();
+      const feed = (from?: string) =>
+        transport.sink.onStanza(Parser.parse(push(from)));
+
+      feed();
+      feed("test@example.com");
+
+      // RFC 6120 §8.1.1.1 规则 2：交给服务器直接处理的节不得带 to
+      for (const el of transport.sent as XMPPElement[]) {
+        expect(el.getAttribute("type")).toBe("result");
+        expect(el.getAttribute("id")).toBe("push1");
+        expect(el.getAttribute("to")).toBeNull();
+      }
+    });
   });
 });

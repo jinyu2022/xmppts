@@ -12,6 +12,7 @@ import {
     type MamPage,
     type MamQueryOptions,
     type MamResult,
+    type ParsedMessage,
 } from "./mam";
 
 const log = logger.getLogger("XEP0313");
@@ -40,7 +41,11 @@ export class XEP0313 extends Mam implements Plugin {
     }
 
     init() {
-        // MAM 没有服务端主动推送，结果只在本插件的查询期间到达，不注册 stanza 转换器
+        // 归档结果随普通 message 到达，转换后挂在 message.result 上；该字段只有本插件使用，不扩展 Message 类型
+        // 同命名空间还有 <fin/>、<query/>、<metadata/>，只有 <result/> 需要转换
+        this.connection.registerStanzaPlugin(Mam.NS, (el) =>
+            el.tagName === "result" ? Mam.parseResultEl(el) : {}
+        );
         this.connection.XEP0030!.addFeature(Mam.NS);
     }
 
@@ -163,13 +168,17 @@ export class XEP0313 extends Mam implements Plugin {
         };
         // 监听器必须先于查询发出：结果推送可能早于 sendAsync 的 await 恢复
         const listener = (message: Message) => {
-            // 归档结果只在本查询期间到达；stanza 内不使用前缀，按 xmlns 定位即可。
-            // queryid 一并放进选择器：并发查询各自持有监听器，非本查询的结果在此直接跳过，
-            // 不必先解析 forwarded/delay/message
-            const resultEl = message.xml.querySelector(
-                `:scope > result[xmlns="${Mam.NS}"][queryid="${queryid}"]`,
-            );
-            if (!resultEl) return;
+            // 归档结果由 MAM 转换器挂在 message.result 上，内层 message 已解析为数据。
+            // queryid 一并比对：并发查询各自持有监听器，非本查询的结果在此直接跳过
+            const result = message.result as
+                | {
+                      id: string;
+                      queryid?: string;
+                      message?: ParsedMessage;
+                      stamp?: Date;
+                  }
+                | undefined;
+            if (!result || result.queryid !== queryid) return;
             // §9.2：结果来源必须与查询的归档地址一致，否则可能是伪造
             if (message.from.bare !== archive.bare) {
                 log.warn(
@@ -177,7 +186,6 @@ export class XEP0313 extends Mam implements Plugin {
                 );
                 return;
             }
-            const result = Mam.parseResultEl(resultEl).result;
             if (!result.message) {
                 log.warn(`归档结果缺少 forwarded/message：${result.id}`);
                 return;
@@ -187,7 +195,7 @@ export class XEP0313 extends Mam implements Plugin {
                 item: {
                     id: result.id,
                     stamp: result.stamp,
-                    message: new Message(result.message, this.connection),
+                    message: result.message,
                 },
             });
         };

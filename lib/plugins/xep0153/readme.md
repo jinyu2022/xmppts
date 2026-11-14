@@ -27,13 +27,13 @@
 |------|------|
 | `XEP0153.createSetVCardAvatarIq(to, image?)`（静态） | 构造 vCard 头像设置 IQ；不传 `image` = 删除头像 |
 | `XEP0153.createUpdatePresence(to, hash)`（静态） | 生成含头像哈希的 presence **XML 字符串**；`hash` = **图片数据的十六进制 SHA-1**（非 base64），`to` 必填并强制写入 `to` 属性 |
-| `XEP0153.parseVCardAvatar(stanza)`（静态） | 解析 vCard PHOTO → `VCardPhoto \| undefined`；无 PHOTO 表示没有头像，返回 `undefined`；PHOTO 命名空间不对才抛错 |
+| `XEP0153.parseVCardAvatar(stanza)`（静态） | 解析 vCard PHOTO → `VCardPhoto \| undefined`；无 PHOTO 表示没有头像，返回 `undefined`；PHOTO 命名空间不对才抛错；缺 `<TYPE/>` 时 `type` 为 `undefined` |
 | `XEP0153.NS`（静态） | `"vcard-temp:x:update"` |
 
 ```typescript
 interface VCardPhoto {
-  // 直接取自 <TYPE/>，未做运行时校验，可能是任意 MIME
-  type: "image/gif" | "image/png" | "image/jpeg" | "image/webp" | "image/svg+xml";
+  // 取自 <TYPE/>，未做运行时校验；vCard 未提供或为空元素时为 undefined
+  type?: "image/gif" | "image/png" | "image/jpeg" | "image/webp" | "image/svg+xml";
   binval: string;  // base64 编码的图片数据
 }
 ```

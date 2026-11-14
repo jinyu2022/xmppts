@@ -53,7 +53,8 @@ class RFC6121 implements Plugin {
 
     // 回应roster更新，本地更新另作处理
     this.connection.on("roster:update", (iq) => {
-      const iqEl = Iq.createIq("result", iq.from);
+      // matcher 只放行服务器代账号发出的 push，应答属于交给服务器直接处理的节，不得带 to（RFC 6120 §8.1.1.1 规则 2）
+      const iqEl = Iq.createIq("result");
       iqEl.setAttribute("id", iq.id!);
       this.connection.send(iqEl);
     });

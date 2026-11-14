@@ -1,5 +1,5 @@
 import { XMPPElement } from "@/ltx/Element";
-import { Iq, StanzaBase, type Message } from "@/stanza";
+import { Iq, Message, StanzaBase } from "@/stanza";
 import type { JID } from "@/JID";
 import { Form, type Field } from "../xep0004/form";
 import { RSM, type RsmRequest, type RsmResult } from "../xep0059/rsm";
@@ -27,6 +27,9 @@ export interface MamQueryOptions {
     flip?: boolean;
 }
 
+/** 归档消息的解析结果：与 `Message` 实例同字段，但不含 xml 与实例方法 */
+export type ParsedMessage = ReturnType<typeof Message.parseMessage>["message"];
+
 /** 归档中的一条消息 */
 export interface MamResult {
     /** 归档 UID（`<result/>` 的 id），按不透明字符串对待 */
@@ -34,7 +37,7 @@ export interface MamResult {
     /** 消息入库时间，取自 forwarded 内的 `<delay/>`；服务端未提供时缺省 */
     stamp?: Date;
     /** 被归档的原始消息 */
-    message: Message;// 类型可以更加详细准确
+    message: ParsedMessage;
 }
 
 /** 查询收尾的 `<fin/>`（§4） */
@@ -153,11 +156,23 @@ export class Mam {
     /**
      * 解析归档结果 `<result/>`（§4）
      *
-     * 结果只在查询期间到达，由插件直接传入 `message.xml`，不经 stanza 转换器。
+     * 既作为 `urn:xmpp:mam:2` 的 stanza 转换器（结果挂在 `message.result` 上），
+     * 也可由调用方直接传入元素或包含它的 stanza。
      * @param el `<result/>` 元素，或包含它的 stanza
      * @throws 未找到 `<result/>` 时抛出 Error
      */
-    static parseResultEl(el: XMPPElement) {
+    static parseResultEl(el: XMPPElement): {
+        result: {
+            /** 归档 UID，按不透明字符串对待 */
+            id: string;
+            /** 发起本次查询的 queryid，服务端未回填时缺省 */
+            queryid?: string;
+            /** 被归档的原始消息，已解析为数据 */
+            message?: ParsedMessage;
+            /** 入库时间，服务端未提供 `<delay/>` 时缺省 */
+            stamp?: Date;
+        };
+    } {
         const result =
             el.getAttribute("xmlns") === Mam.NS
                 ? el
@@ -170,16 +185,19 @@ export class Mam {
         const stamp = forwarded
             ?.querySelector(':scope > delay[xmlns="urn:xmpp:delay"]')
             ?.getAttribute("stamp");
+        // §4：forwarded 内是被归档的原始 message，一路解析成数据；
+        // 残留的扩展元素由框架继续按命名空间转换
+        const messageEl = forwarded?.querySelector(
+            `:scope > message[xmlns="${StanzaBase.NS}"]`,
+        );
         return {
             result: {
                 // §4：结果必须带 id 属性
                 id: result.getAttribute("id")!,
                 queryid: result.getAttribute("queryid") ?? undefined,
-                // §4：forwarded 内是被归档的原始 message
-                message:
-                    forwarded?.querySelector(
-                        `:scope > message[xmlns="${StanzaBase.NS}"]`,
-                    ) ?? undefined,
+                message: messageEl
+                    ? Message.parseMessage(messageEl).message
+                    : undefined,
                 stamp: stamp ? XMPPDateTime.parseDateTime(stamp) : undefined,
             },
         };

@@ -172,6 +172,7 @@ export default class XEP0198 extends StreamManagement implements Plugin {
     /**
      * 阶段：会话就绪（session:start / reconnected）。服务器宣告流管理时发出 <enable/> 启用，并等待服务器的响应
      * @returns 服务器的<enabled/>响应；已启用或服务器未宣告时无返回值
+     * @throws 服务器返回 <failed/> 时抛 XMPPError；等待期间断线（<enabled/> 未到）时抛 Error
      */
     private async enable(): Promise<XMPPElement | undefined> {
         // 会话恢复成功同样触发binded，此时流管理已处于启用状态
@@ -229,6 +230,8 @@ export default class XEP0198 extends StreamManagement implements Plugin {
                 cleanup();
                 this.status = StreamStatus.DISABLE;
                 this.outbound = 0;
+                // 启用结果已不可知，必须结束等待，否则调用方永久挂起
+                reject(new Error("连接中断，流管理启用未确认"));
             };
             const cleanup = () => {
                 this.connection.off("others", onResponse);

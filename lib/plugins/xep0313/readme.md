@@ -11,9 +11,9 @@
 
 ## 注册后行为
 
-`init()` 只向 XEP-0030 添加 `urn:xmpp:mam:2` 特性，不发送任何节，也不注册 stanza 转换器——MAM 没有服务端主动推送，结果只在本插件的查询期间到达：
+`init()` 向 XEP-0030 添加 `urn:xmpp:mam:2` 特性，并注册 `urn:xmpp:mam:2` 的 stanza 转换器（`parseResultEl`），让 `<result/>` 在实时接收路径上被解析到 `message.result`。MAM 没有服务端主动推送，结果只在本插件的查询期间到达：
 
-1. **查询期间监听结果** — 每次查询在发出前注册 `message` 监听器，直接解析命名空间为 `urn:xmpp:mam:2` 的 `<result/>`，只处理回显本次 `queryid` 的结果，并在 `fin` 到达或失败后于 `finally` 中解绑。
+1. **查询期间监听结果** — 每次查询在发出前注册 `message` 监听器，读取转换器挂在 `message.result` 上的结果，只处理回显本次 `queryid` 的项，并在 `fin` 到达或失败后于 `finally` 中解绑。
 2. **响应直接解析** — `<fin/>` 与 `<metadata/>` 由对应方法从 IQ 响应中解析，不依赖全局转换器。
 
 ## 可监听事件
@@ -32,7 +32,8 @@
 | `XEP0313.NS_EXTENDED`（静态） | `"urn:xmpp:mam:2#extended"` |
 | `XEP0313.NS_GROUPCHAT_FIELD`（静态） | `"urn:xmpp:mam:2#groupchat-field"` |
 | `XEP0313.createQueryIq(archive, options, queryid)`（静态） | 构造查询 IQ |
-| `XEP0313.parseResultEl(el)` / `parseFinEl(el)` / `parseMetadataEl(el)`（静态） | 解析对应元素 |
+| `XEP0313.parseResultEl(el)`（静态） | 解析 `<result/>` → `{ id, queryid?, message?, stamp? }`，`message` 已解析为数据；同时作为 `urn:xmpp:mam:2` 的 stanza 转换器，结果挂在 `message.result` 上 |
+| `XEP0313.parseFinEl(el)` / `parseMetadataEl(el)`（静态） | 解析对应元素 |
 | `XEP0313.createMetadataIq(archive?)` / `createFormFieldsIq(archive?)`（静态） | 构造元数据 / 字段发现 IQ |
 
 ### 查询参数
@@ -53,9 +54,9 @@ interface MamQueryOptions {
 }
 
 interface MamResult {
-  id: string;        // 归档 UID，按不透明字符串对待
-  stamp?: Date;      // 入库时间
-  message: Message;  // 被归档的原始消息
+  id: string;              // 归档 UID，按不透明字符串对待
+  stamp?: Date;            // 入库时间
+  message: ParsedMessage;  // 被归档的原始消息，已解析为数据
 }
 
 interface MamFin {
@@ -64,6 +65,8 @@ interface MamFin {
   rsm?: RsmResult;   // 分页信息
 }
 ```
+
+`ParsedMessage` 与 `Message.parseMessage()` 的返回结构一致（`type` / `subject(s)` / `body(bodies)` / `thread` / `to` / `from`），但 `to` / `from` / `thread` 可能为 `null`，且不含 `id` / `xml` / `error`。子元素先按 `<tagName>-<index>` 保留为原始元素。通过 `message.result` 拿到时，框架会按命名空间把可识别的元素转换为字段（如 `<replace/>` → `replace`、`<x xmlns='http://jabber.org/protocol/muc#user'/>` → `muc`）；直接调用 `parseResultEl()` 不走这一步，仍得到 `replace-1` 这类原始元素。它不保留 `xml`，也没有 `send()` 等方法——归档消息是只读载体，需要原始元素时请直接从 `<result/>` 上取。
 
 ## 使用示例
 

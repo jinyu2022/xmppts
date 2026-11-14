@@ -36,6 +36,10 @@ describe("XEP0308 插件入口", () => {
       true,
     );
     expect(connection.matchersOf("message:correct")[0]({})).toBe(false);
+    // error 回执会回显原 payload（RFC 6120 §8.3.1），不能当成更正请求
+    expect(
+      connection.matchersOf("message:correct")[0]({ replace: { id: "old" }, type: "error" }),
+    ).toBe(false);
   });
 
   it("correctMessage 发送指向原消息的更正", () => {

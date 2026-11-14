@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Connection } from "../../../lib/connection";
 import { XMPPError } from "../../../lib/errors";
 import { Parser } from "../../../lib/ltx/Parser";
+import type { Iq } from "../../../lib/stanza";
 import {
     createTcpConnection,
     getServer,
@@ -29,17 +30,21 @@ const MAM = "urn:xmpp:mam:2";
 const MAM_EXTENDED = "urn:xmpp:mam:2#extended";
 const MAM_GROUPCHAT_FIELD = "urn:xmpp:mam:2#groupchat-field";
 
+/** 内置插件名，供 createConnection 追加注册 */
+type PluginName = Parameters<Connection["registerPlugin"]>[0];
+
 /** 创建注册了 XEP0313 的连接（依赖在 connect() 时自动补齐） */
-function createConnection(): Connection {
+function createConnection(extraPlugins: PluginName[] = []): Connection {
     const connection = createTcpConnection("juliet@capulet.lit/balcony");
     active.add(connection);
     connection.registerPlugin("XEP0313");
+    for (const name of extraPlugins) connection.registerPlugin(name);
     return connection;
 }
 
 /** 完成「连接 → 认证 → 绑定」 */
-async function connect() {
-    const connection = createConnection();
+async function connect(extraPlugins: PluginName[] = []) {
+    const connection = createConnection(extraPlugins);
     const sessionStart = new Promise<void>((resolve) =>
         connection.once("session:start", () => resolve()),
     );
@@ -145,6 +150,45 @@ describe("XEP0313 插件入口", () => {
         );
         expect(page.fin.complete).toBe(true);
         expect(page.fin.rsm?.last).toBe("uid-2");
+    });
+
+    it("同命名空间的 <fin/> 不会被转换成 result", async () => {
+        const { connection, server } = await connect();
+        const pending = new Promise<Iq>((resolve) =>
+            connection.once("iq", resolve),
+        );
+        // 转换器按命名空间派发，<fin/> 与 <result/> 同属 urn:xmpp:mam:2
+        server.send(`<iq xmlns="jabber:client" type="result" id="fin-only">
+            <fin xmlns="urn:xmpp:mam:2" complete="true"/>
+        </iq>`);
+        const iq = await pending;
+        expect(Reflect.get(iq, "result")).toBeUndefined();
+    });
+
+    it("归档结果的内层 message 补上扩展字段（MAM-001）", async () => {
+        const { connection, server } = await connect(["XEP0308"]);
+        const pending = connection.XEP0313!.queryArchive("juliet@capulet.lit");
+        const { iq, queryid } = await takeQueryIq(server);
+
+        server.send(`<message xmlns="jabber:client" from="juliet@capulet.lit"
+            to="juliet@capulet.lit/balcony">
+            <result xmlns="${MAM}" queryid="${queryid}" id="uid-1">
+                <forwarded xmlns="urn:xmpp:forward:0">
+                    <delay xmlns="urn:xmpp:delay" stamp="2010-07-10T23:08:25Z"/>
+                    <message xmlns="jabber:client"
+                             from="romeo@montague.lit/orchard"
+                             type="chat">
+                        <body>msg uid-1</body>
+                        <replace xmlns="urn:xmpp:message-correct:0" id="orig-1"/>
+                    </message>
+                </forwarded>
+            </result>
+        </message>`);
+        sendFin(server, iq.getAttribute("id")!);
+
+        const page = await pending;
+        // 内层 message 不在实时接收路径上，扩展字段须由插件补转换
+        expect(page.results[0].message.replace).toEqual({ id: "orig-1" });
     });
 
     it("忽略来源与归档地址不符的结果（§9.2）", async () => {

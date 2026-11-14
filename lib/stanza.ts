@@ -27,7 +27,7 @@ export class StanzaBase {
   readonly id: string | null;
   /** 属性缺失（或空串）为 undefined */
   readonly to?: JID;
-  /** 属性缺失时为自身 JID（RFC 6121 §8.1.2.1）；仅限顶层 stanza（走构造函数），转发节等深层 stanza 走静态 parse 方法，缺失时仍为 null */
+  /** 属性缺失时为自身 bare JID（RFC 6120 §8.1.2.1）；仅限顶层 stanza（走构造函数），转发节等深层 stanza 走静态 parse 方法，缺失时仍为 null */
   readonly from: JID;
   /** 直接子元素 `<error/>` 的解析结果，仅 `type="error"` 的节会有（RFC 6120 §8.3） */
   readonly error?: StanzaError;
@@ -44,8 +44,8 @@ export class StanzaBase {
     const toAttr = stanza.getAttribute("to");
     const fromAttr = stanza.getAttribute("from");
     this.to = toAttr ? new JID(toAttr) : void 0;
-    // from 属性缺失时，按 RFC 6121 §2.1.6 视为隐式来自自身 JID（仅顶层 stanza）
-    this.from = fromAttr ? new JID(fromAttr) : connection.jid;
+    // from 属性缺失时按 RFC 6120 §8.1.2.1 视为来自自身 bare JID（仅顶层 stanza）
+    this.from = fromAttr ? new JID(fromAttr) : new JID(connection.jid.bare);
     Object.defineProperty(this, "connection", {
       value: connection,
       writable: false, // 属性不可修改
@@ -186,7 +186,7 @@ export class Message extends StanzaBase {
       body: string | null;
       bodies: Record<string, string>;
       thread: string | null;
-      [key: string]: Element | string | JID | null | Record<string, string>;
+      [key: string]: XMPPElement | string | JID | null | Record<string, string>;
     }
   > {
     // const id = message.getAttribute("id");

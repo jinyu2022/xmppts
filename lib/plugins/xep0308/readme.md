@@ -15,7 +15,7 @@
 
 1. **注册 disco 特性** — 向 XEP-0030 添加 `urn:xmpp:message-correct:0`。
 2. **注册 replace 解析器** — 解析 `<replace id="..."/>` 为 `message.replace`。
-3. **注册 `message:correct` 事件** — 匹配 `replace != null`。
+3. **注册 `message:correct` 事件** — 匹配 `replace != null` 且 `type !== "error"`。
 
 ## 扩展字段
 
@@ -30,6 +30,10 @@ interface Message {
 | 事件 | 触发条件 | 回调参数 |
 |------|---------|----------|
 | `message:correct` | 收到带 `<replace>` 的消息 | `Message & { replace: { id } }` |
+
+事件只表示「消息里带 `<replace/>`」，**不校验来源**。XEP-0308 只允许发送者更正自己发出的消息，而插件拿不到原消息上下文，所以**调用方必须自行比对**原消息的发送者（1:1 用 bare JID，匿名 MUC 用 XEP-0421 occupant-id）后才能替换本地内容。
+
+已排除 `type="error"` 的回执：RFC 6120 §8.3.1 允许错误回执回显原 payload，否则会把退回的 `<replace/>` 当成新更正。
 
 ## 公开 API
 

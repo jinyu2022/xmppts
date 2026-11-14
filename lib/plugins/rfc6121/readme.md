@@ -15,7 +15,7 @@
 
 1. **注册名册解析器** — 为命名空间 `jabber:iq:roster` 注册 `parseRosterEl`，把 IQ 的 `<query>` 子元素转换为 `iq.roster`（见「扩展字段」）。
 2. **注册 `roster:update` 事件** — 匹配 `type='set'` 且含名册数据的 IQ，并校验来源为自身 bare JID（`from` 缺失视为自身），拒绝伪造推送（RFC 6121 §2.1.6）。
-3. **自动应答** — 订阅 `roster:update`，向推送方回复 `type='result'` 的 IQ（RFC 6121 §2.1.6）。
+3. **自动应答** — 订阅 `roster:update`，回复不带 `to` 的 `type='result'` IQ（RFC 6121 §2.1.6、RFC 6120 §8.1.1.1 规则 2）。
 
 ## 扩展字段
 

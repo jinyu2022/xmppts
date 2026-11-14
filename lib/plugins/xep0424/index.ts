@@ -28,7 +28,8 @@ export class XEP0424 extends Retraction implements Plugin {
 
         this.connection.registerEventPlugin("message:retract", {
             tagName: "message",
-            matcher: (message) => message.retract != null,
+            // 排除 error 回执：RFC 6120 §8.3.1 规则 6 允许（MAY）在 error 节回显原始 XML，可能带出 <retract/> 造成假事件
+            matcher: (message) => message.retract != null && message.type !== "error",
         });
     }
 

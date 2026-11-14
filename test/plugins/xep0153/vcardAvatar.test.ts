@@ -44,6 +44,22 @@ describe("XEP0153", () => {
       expect(XEP0153.parseVCardAvatar(xml)?.binval).toBe("");
     });
 
+    it("缺 <TYPE/> 时 type 为 undefined，不伪装成必有值", () => {
+      const xml = Parser.parse(
+        `<vCard xmlns="vcard-temp"><PHOTO><BINVAL>abc</BINVAL></PHOTO></vCard>`
+      );
+      const photo = XEP0153.parseVCardAvatar(xml);
+      expect(photo?.binval).toBe("abc");
+      expect(photo?.type).toBeUndefined();
+    });
+
+    it("空 <TYPE/> 也归一化为 undefined", () => {
+      const xml = Parser.parse(
+        `<vCard xmlns="vcard-temp"><PHOTO><TYPE/><BINVAL>abc</BINVAL></PHOTO></vCard>`
+      );
+      expect(XEP0153.parseVCardAvatar(xml)?.type).toBeUndefined();
+    });
+
     it("没有 PHOTO 元素表示无头像，返回 undefined", () => {
       const xml = Parser.parse(`<vCard xmlns="vcard-temp"><FN>Romeo</FN></vCard>`);
       expect(XEP0153.parseVCardAvatar(xml)).toBeUndefined();

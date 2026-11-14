@@ -33,6 +33,13 @@ describe("XEP0424 插件入口", () => {
       connection.matchersOf("message:retract")[0]({ retract: { id: "wrong-recipient-1" } }),
     ).toBe(true);
     expect(connection.matchersOf("message:retract")[0]({})).toBe(false);
+    // error 回执会回显原 payload（RFC 6120 §8.3.1），不能当成撤回请求
+    expect(
+      connection.matchersOf("message:retract")[0]({
+        retract: { id: "wrong-recipient-1" },
+        type: "error",
+      }),
+    ).toBe(false);
   });
 
   it("retract 发送指向原消息的撤回请求", () => {

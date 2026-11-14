@@ -160,8 +160,11 @@ describe("Mam", () => {
             expect(result.stamp?.getTime()).toBe(
                 Date.UTC(2010, 6, 10, 23, 8, 25),
             );
-            expect(result.message?.tagName).toBe("message");
-            expect(result.message?.textContent).toContain("Call me but love");
+            expect(result.message?.type).toBe("chat");
+            expect(result.message?.from?.toString()).toBe(
+                "romeo@montague.lit/orchard",
+            );
+            expect(result.message?.body).toBe("Call me but love");
         });
 
         it("可传入 result 元素本身", () => {

@@ -4,7 +4,9 @@ import { XMPPElement } from "../lib/ltx/Element";
 import { JID } from "../lib/JID";
 import type { Connection } from "../lib/connection";
 
-const fakeConnection = {} as unknown as Connection;
+/** 自身 full JID：from 缺失时按 RFC 6120 §8.1.2.1 回退为其 bare JID */
+const SELF_JID = "juliet@capulet.lit/balcony";
+const fakeConnection = { jid: new JID(SELF_JID) } as unknown as Connection;
 
 function buildMessageXml(options?: {
   to?: string;
@@ -77,7 +79,8 @@ describe("StanzaBase", () => {
       const p = new StanzaBase(el, fakeConnection);
       expect(p.to).toBeInstanceOf(JID);
       expect(p.to?.bare).toBe("capulet.lit");
-      expect(p.from).toBeUndefined();
+      // from 缺失时回退为自身 bare JID，而不是 full JID
+      expect(p.from.bare).toBe("juliet@capulet.lit");
     });
 
     it("应暴露 id 和 tagName", () => {
@@ -101,7 +104,7 @@ describe("StanzaBase", () => {
   describe("send", () => {
     it("应委托给 connection.send", () => {
       const send = vi.fn();
-      const conn = { send } as unknown as Connection;
+      const conn = { send, jid: new JID(SELF_JID) } as unknown as Connection;
       const el = XMPPElement.createElement("presence");
       const p = new StanzaBase(el, conn);
       p.send(el);

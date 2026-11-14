@@ -15,7 +15,7 @@
 
 1. **注册 disco 特性** — 向 XEP-0030 添加 `urn:xmpp:message-retract:1`。
 2. **注册 retraction 解析器** — 解析 `<retract>` / `<retracted>` 元素。
-3. **注册 `message:retract` 事件** — 匹配 `retract != null`。
+3. **注册 `message:retract` 事件** — 匹配 `retract != null` 且 `type !== "error"`。
 
 （`<retracted/>` 只出现在归档结果（`<forwarded/>` 内层消息）里，不是广播，所以没有对应的事件。）
 
@@ -33,6 +33,10 @@ interface Message {
 | 事件 | 触发条件 | 回调参数 |
 |------|---------|----------|
 | `message:retract` | 收到撤回请求 | `Message & { retract: { id, reason? } }` |
+
+事件只表示「消息里带 `<retract/>`」，**不校验来源**。XEP-0424 §5 要求只有原消息与撤回请求来自同一 bare JID（1:1）或同一 full JID（非匿名 MUC）时才能处理，半匿名 MUC 还要比对 XEP-0421 occupant-id；§5 也排除了 XEP-0425 版主撤回（那种请求来自房间而非原作者）。插件拿不到原消息上下文，所以**调用方必须自行比对**。
+
+已排除 `type="error"` 的回执：RFC 6120 §8.3.1 允许错误回执回显原 payload，否则会把退回的 `<retract/>` 当成新撤回。
 
 ## 公开 API
 

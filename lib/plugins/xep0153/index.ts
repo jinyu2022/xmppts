@@ -58,13 +58,15 @@ export class XEP0153 {
         if (photo.namespaceURI !== VCardTemp.NS)
             throw new Error(`不是vcard-temp命名空间: ${stanza.toXMLString()}`);
         const binval = photo.getElementsByTagName("BINVAL")[0]?.textContent ?? "";
-        const type = photo.getElementsByTagName("TYPE")[0]?.textContent as VCardPhoto["type"];
+        // 缺失或空 <TYPE/> 视为未提供类型；不做白名单校验，服务器可能给出任意 MIME
+        const rawType = photo.getElementsByTagName("TYPE")[0]?.textContent;
+        const type = (rawType || undefined) as VCardPhoto["type"];
         return {binval, type};
     }
 }
 
 export interface VCardPhoto {
-    type: "image/gif" | "image/png" | "image/jpeg"; // 图片类型
+    type?: "image/gif" | "image/png" | "image/jpeg" | "image/webp" | "image/svg+xml"; // 图片类型，取自 <TYPE/>；未提供时为 undefined
     binval: string; // base64 编码的图片数据
 }
 

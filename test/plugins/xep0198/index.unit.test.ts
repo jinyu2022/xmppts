@@ -5,9 +5,11 @@ import type { Connection } from "../../../lib/connection";
 import type { XMPPElement } from "../../../lib/ltx/Element";
 import { Parser } from "../../../lib/ltx/Parser";
 import { StanzaBase } from "../../../lib/stanza";
+import { JID } from "../../../lib/JID";
 import { Pipeline, SyncPipeline } from "../../../lib/transport/pipeline";
 import { Status } from "../../../lib/transport/typing";
 import type { TransportPipelineEvents } from "../../../lib/transport/stream-connection";
+import logger from "../../../lib/log";
 
 /**
  * XEP-0198: Stream Management（单元测试，假连接 + 假传输层，不建立 socket）
@@ -37,6 +39,8 @@ class FakeTransport extends EventEmitter {
 
 /** 假连接：记录报文、保存管线，并模拟 others 事件投递 */
 class FakeConnection extends EventEmitter {
+  /** from 缺失的 stanza 会回退到该 JID 的 bare（RFC 6120 §8.1.2.1） */
+  readonly jid = new JID("juliet@capulet.lit/resource");
   readonly transport = new FakeTransport();
   readonly sent: string[] = [];
   readonly pipeline = new SyncPipeline<{
@@ -115,6 +119,7 @@ async function finishBind(connection: FakeConnection): Promise<void> {
 describe("XEP0198（单元测试，假连接）", () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("资源绑定后向宣告流管理的服务器发送 enable，未宣告时不发送", async () => {
@@ -155,6 +160,24 @@ describe("XEP0198（单元测试，假连接）", () => {
     connection.emit("connection:lost");
     await finishBind(connection);
     expect(connection.count("<enable")).toBe(2);
+  });
+
+  it("未收到 <enabled/> 时断线，启用失败经 onSessionReady 的 catch 记 error", async () => {
+    const error = vi
+      .spyOn(logger.getLogger("XEP0198"), "error")
+      .mockImplementation(() => {});
+    const connection = createPlugin();
+    await finishBind(connection);
+    expect(connection.count("<enable")).toBe(1);
+
+    // 未确认的 <enable/> 以失败收尾，而不是留下永不 settle 的 Promise
+    connection.emit("connection:lost");
+    // enable() 是 async 函数，reject 要多经过一层微任务才到达 catch
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(error).toHaveBeenCalledWith(
+      "启用流管理失败",
+      expect.objectContaining({ message: "连接中断，流管理启用未确认" }),
+    );
   });
 
   it("启用后记录 id/max/location，断线重连时改发 resume", async () => {
