@@ -475,11 +475,14 @@ export abstract class StreamConnection implements TransportSocket {
       // 流重启（RFC 6120 §6.4.5）：服务器会重新发送 features，随后进入绑定
       this.sendStreamOpen();
     } else {
-      // 认证失败：统一包装为可被上层按 scope 判断的协议错误
+      // 认证失败：统一包装为可被上层按 scope 判断的协议错误。
+      // temporary-auth-failure 是服务端内部的临时错误（RFC 6120 §6.5.11），
+      // 重连可能成功，标记为可重试交由会话层重连；其余条件重试无意义，保持终态
       throw new ProtocolError({
         scope: "sasl",
         message: `认证失败: ${result.condition}`,
         condition: result.condition,
+        retryable: result.condition === "temporary-auth-failure",
       });
     }
     await next();

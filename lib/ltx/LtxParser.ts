@@ -34,8 +34,12 @@ const EMPTY_ATTRS = Object.freeze(
  * LtxParser 事件类型映射定义
  */
 interface LtxParserEvents {
-  /** 开始标签事件 */
-  startElement: [tagName: string, attrs: Record<string, string>];
+  /**
+   * 开始标签事件
+   * @param tagName 标签名
+   * @param attrs 属性表；已冻结，监听方只读，需要修改时先自行复制
+   */
+  startElement: [tagName: string, attrs: Readonly<Record<string, string>>];
   /** 结束标签事件 */
   endElement: [tagName: string, selfClosing: boolean];
   /** 文本内容事件 */

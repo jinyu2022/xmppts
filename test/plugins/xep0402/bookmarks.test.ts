@@ -134,6 +134,43 @@ describe("Bookmarks", () => {
       expect(result.conference.nick).toBeUndefined();
     });
 
+    // 空串与缺失同样表示未指定，不保留空串，避免读改写时与生成侧的 `if (x)` 判定不一致
+    it("空字符串字段归一为 undefined", () => {
+      const el = Parser.parse(
+        `<conference xmlns="urn:xmpp:bookmarks:1" name=""><nick></nick><password/></conference>`
+      );
+      const result = Bookmarks.parseConferenceEl(el);
+      expect(result.conference.name).toBeUndefined();
+      expect(result.conference.nick).toBeUndefined();
+      expect(result.conference.password).toBeUndefined();
+    });
+
+    // `<extensions/>` 是独立内容，其中同名的 nick/password 不属于书签字段
+    it("忽略 `<extensions/>` 内的同名 nick 与 password", () => {
+      const el = Parser.parse(`
+        <conference xmlns="urn:xmpp:bookmarks:1" name="The Play">
+          <extensions>
+            <note xmlns="urn:example:note">
+              <nick>NotTheRoomNick</nick>
+              <password>NotTheRoomPassword</password>
+            </note>
+          </extensions>
+        </conference>`);
+      const result = Bookmarks.parseConferenceEl(el);
+      expect(result.conference.nick).toBeUndefined();
+      expect(result.conference.password).toBeUndefined();
+      expect(result.conference.extensions).toHaveLength(1);
+    });
+
+    it("按 localName 识别带命名空间前缀的 conference", () => {
+      const el = Parser.parse(
+        `<b:conference xmlns:b="urn:xmpp:bookmarks:1" name="The Play"><b:nick>Puck</b:nick></b:conference>`
+      );
+      const result = Bookmarks.parseConferenceEl(el);
+      expect(result.conference.name).toBe("The Play");
+      expect(result.conference.nick).toBe("Puck");
+    });
+
     it("非 conference 元素时抛错", () => {
       const el = Parser.parse(`<foo xmlns="urn:xmpp:bookmarks:1"/>`);
       expect(() => Bookmarks.parseConferenceEl(el)).toThrow("不是一个conference元素");

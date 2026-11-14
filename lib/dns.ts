@@ -53,13 +53,18 @@ function orderBySrvPriorityAndWeight(records: SrvRecord[]): SrvRecord[] {
 /**
  * 查询 SRV 记录并生成 RFC 2782 尝试顺序
  * @param hostname 完整的 SRV 主机名，如 `_xmpp-client._tcp.example.com`
- * @returns 按优先级和加权随机排列的端点列表，查询失败或未找到时为空数组
+ * @returns 按优先级和加权随机排列的端点列表，查询失败、未找到或记录声明服务不可用（Target 为 `"."`）时为空数组
  */
 export async function resolveSrv(hostname: string): Promise<EndpointInfo[]> {
     log.debug(`Resolving SRV records: ${hostname}`);
     try {
         const resolver = new dns.Resolver({ timeout: 1000, tries: 2 });
         const records = await resolver.resolveSrv(hostname);
+        // RFC 2782：Target 为 "." 表示该域名下的服务明确不可用，忽略其余记录
+        if (records.some(record => record.name === ".")) {
+            log.debug(`SRV 记录声明服务不可用: ${hostname}`);
+            return [];
+        }
         // 生成尝试顺序，然后转换为 EndpointInfo 数组
         return orderBySrvPriorityAndWeight(records).map(record => ({
             host: record.name,

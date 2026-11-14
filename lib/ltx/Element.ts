@@ -154,17 +154,17 @@ export class XMPPElement {
   /**
    * 仅供解析器使用：接管一张 SAX 层产出、此后不再写入的属性表，省去逐键拷贝。
    *
-   * 接管前冻结该表（已冻结时是空操作），冻结即「不属于本元素」的标记：
+   * 接管前该表已冻结（调用方保证），冻结即「不属于本元素」的标记：
    * 元素之后写属性时会先复制成自己的表，因此通过 `startElement` 事件
    * 拿到同一张表的监听方不会被元素改动影响。
    * @param tagName 元素的标签名
-   * @param attrs SAX 产出的属性表；调用方交出后不得再写入
+   * @param attrs SAX 产出的属性表；类型上只读，调用方交出后不得再写入
    * @returns 新创建的 XMPPElement 实例
    * @private
    */
   public static _createElementAdoptingAttrs(
     tagName: string,
-    attrs: Record<string, string>,
+    attrs: Readonly<Record<string, string>>,
   ): XMPPElement {
     const el = new XMPPElement(tagName);
     el._attrs = attrs;

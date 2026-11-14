@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import XEP0203 from "../../../lib/plugins/xep0203";
 import { Delay } from "../../../lib/plugins/xep0203/delay";
 import type { Connection } from "../../../lib/connection";
+import type { Message, Presence } from "../../../lib/stanza";
 import { Parser } from "../../../lib/ltx/Parser";
 import { FakeConnection } from "../../helpers/fake-connection";
 
@@ -36,5 +37,14 @@ describe("XEP0203 插件入口", () => {
       ),
     );
     expect(transformed).toHaveProperty("delay");
+  });
+
+  it("类型扩充同时覆盖 Message 与 Presence", () => {
+    // 编译期契约：Presence 缺少 delay 时左侧赋值无法通过 tsc
+    const presenceDelay: Presence["delay"] = {
+      stamp: new Date("2002-09-10T23:41:07Z"),
+    };
+    const messageDelay: Message["delay"] = presenceDelay;
+    expect(messageDelay?.stamp.toISOString()).toBe("2002-09-10T23:41:07.000Z");
   });
 });

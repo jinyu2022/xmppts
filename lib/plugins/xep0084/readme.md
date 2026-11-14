@@ -2,7 +2,7 @@
 
 基于 PEP 的个人头像发布与获取。
 
-- **依赖**：XEP-0030（服务发现）、XEP-0163（PEP）；源码 `dependencies` 目前只声明 XEP-0030，单独注册本插件时 `pep:avatar` 不会触发。
+- **依赖**：XEP-0030（服务发现）、XEP-0163（PEP）。
 - **实例访问**：`connection.XEP0084`
 
 ## 可配置项
@@ -16,7 +16,7 @@
 1. **声明能力** — `addFeature("urn:xmpp:avatar:metadata+notify")`。
 2. **注册 disco 子项** — 向 XEP-0030 注册 `urn:xmpp:avatar:data` 与 `urn:xmpp:avatar:metadata`。
 3. **注册 metadata 解析器** — 解析命名空间 `urn:xmpp:avatar:metadata` 的元素。
-4. **注册 `pep:avatar` 事件** — 匹配 `message.event.node === metadata`。
+4. **注册 `pep:avatar` 事件** — 匹配 `message.event.node === metadata`。该事件覆盖自己的其他资源与联系人的头像更新（XEP-0163 §4），来源由监听方按 `message.from.bare` 判断。
 
 ## 扩展字段
 
@@ -39,7 +39,7 @@ interface AvatarMetadata {
 
 | 事件 | 触发条件 | 回调参数 |
 |------|---------|----------|
-| `pep:avatar` | 收到头像元数据更新的 PEP 通知 | `Message`（`event.node === metadata`）；类型上为可选 `Message` |
+| `pep:avatar` | 收到头像元数据更新的 PEP 通知：自己的其他资源（PEP 会通知账号所有者的全部可用资源）或联系人（presence 订阅与节点访问模型允许时） | `Message`（`event.node === metadata`）；类型上为可选 `Message`；来源按 `message.from.bare` 判断 |
 
 ## 公开 API
 
@@ -84,7 +84,9 @@ if (avatar?.data) {
 ```typescript
 client.on("pep:avatar", (message) => {
   const metadata = message.event?.items?.[0]?.metadata;
-  if (metadata) console.log(metadata.id, metadata.type, metadata.bytes);
+  // 通知可能来自自己其他资源或联系人，按 bare JID 归属
+  const owner = message.from?.bare;
+  if (metadata) console.log(owner, metadata.id, metadata.type, metadata.bytes);
 });
 ```
 
@@ -94,5 +96,6 @@ client.on("pep:avatar", (message) => {
 - `getAvatarData()` 不传 `metadata` 时会先检索元数据；返回的 `data` 为 base64。
 - 环境按运行时自动选择图片解析方式；Node 20+ 传 `File` 对象目前会被判失败（需 `window` 存在）。
 - 收通知需在 disco/caps 声明 `urn:xmpp:avatar:metadata+notify`；插件已 `addFeature`。
+- `pep:avatar` 同时覆盖自己与联系人的头像通知，插件不判断归属；只处理自身头像时显式比较 `message.from?.bare === client.jid.bare`。
 - 未实现：§3.5 禁用头像（发布空 `<metadata/>`）、§3.4 `url` 的 HTTP 回退、§4.2.2 `<pointer/>`、多 `<info/>`。
 - 头像变更通过 `pep:avatar` 事件接收，需自行处理 UI 更新。

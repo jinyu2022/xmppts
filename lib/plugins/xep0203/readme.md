@@ -1,6 +1,6 @@
 # XEP-0203 — 延迟投递
 
-解析消息中的 `<delay/>` 元素，用于离线消息等场景还原原始发送时间。
+解析 stanza 中的 `<delay/>` 元素，用于离线消息、延迟的状态通知等场景还原原始发送时间。
 
 - **依赖**：XEP-0082（日期解析）
 - **实例访问**：`connection.XEP0203`
@@ -11,23 +11,28 @@
 
 ## 注册后行为
 
-`init()` 只注册 `urn:xmpp:delay` 命名空间解析器 `parseDelayEl`，把 `<delay>` 解析为 `message.delay`。
+`init()` 只注册 `urn:xmpp:delay` 命名空间解析器 `parseDelayEl`。转换器按命名空间匹配，对所有 stanza 生效，因此 `message.delay` 与 `presence.delay` 都会填充。
 
 ## 扩展字段
 
 ```typescript
 interface Message {
   delay?: {
-    stamp: Date;       // 原始发送时间
-    from?: string;     // 延迟信息添加方（§2 为可选属性，服务器/本地归档可能不填）
-    reason?: string;   // 延迟原因
+    stamp: Date;     // 原始发送时间
+    from?: string;   // 延迟信息添加方（§2 为可选属性，服务器/本地归档可能不填）
+    reason?: string; // 延迟原因
   };
+}
+
+interface Presence {
+  // §2：最后一次 available presence 等场景
+  delay?: { stamp: Date; from?: string; reason?: string };
 }
 ```
 
 ## 可监听事件
 
-无专门事件。在 `message` 事件回调中检查 `message.delay` 字段。
+无专门事件。在 `message` / `presence` 事件回调中检查对应的 `delay` 字段。
 
 ## 公开 API
 
@@ -63,4 +68,4 @@ const delayEl = XEP0203.createDelayEl(new Date(), "example.com", "offline");
 - `delay.from` 是可选属性：缺失时为 `undefined`，表示延迟由服务器或本地归档添加，没有具体实体；用它拼 JID 前先判空。
 - `delay.stamp` 是消息原始发送时间；`message` 本身的时间为当前投递时间。
 - 时间戳由 XEP-0082 解析；非法 `stamp` 会转成带元素上下文的 `Error`（作为 stanza 处理器抛出，会中断该 stanza 的分发）。
-- §2 允许 `<delay/>` 也出现在 presence（离线 presence 补发、MUC 历史），但当前只扩充了 `Message` 类型。
+- §2 允许 `<delay/>` 也出现在 presence（离线 presence 补发、MUC 历史），`Presence.delay` 同样会填充。

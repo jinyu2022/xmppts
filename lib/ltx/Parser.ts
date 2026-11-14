@@ -44,7 +44,7 @@ export class Parser extends Emitter<ParserEvents> {
     this.parser = new LtxParser();
 
     // startElement: 当遇到开始标签时创建一个新的 Element 实例
-    this.parser.on("startElement", (name: string, attrs: Record<string, string>) => {
+    this.parser.on("startElement", (name: string, attrs: Readonly<Record<string, string>>) => {
       // 创建节点：直接接管 LtxParser 产出的属性表（已冻结），省去逐键拷贝
       const child = XMPPElement._createElementAdoptingAttrs(name, attrs);
       // 【XMPP流式处理】流头不进树：后续 Stanza 因此各自成为顶层元素，闭合时触发 'tree'。

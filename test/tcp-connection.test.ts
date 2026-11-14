@@ -360,7 +360,39 @@ describe("XMPPConnection 传输层集成测试", () => {
       message: expect.stringContaining("not-authorized") as string,
       scope: "sasl",
       condition: "not-authorized",
+      // 凭据错误重试无意义，必须保持终态
+      retryable: false,
     });
+  });
+
+  /**
+   * 验证 temporary-auth-failure（RFC 6120 §6.5.11 的服务端临时故障）：
+   * - 错误标记为可重试，供会话层按网络断开处理并重连
+   * - 连接仍会关闭，状态回到 DISCONNECTED
+   */
+  it("服务端报告临时认证故障时标记为可重试", async () => {
+    const server = await connectClient(client);
+    const error = waitForEvent<ProtocolError>(client, "error");
+    const closed = waitForEvent(client, "close");
+
+    server.acceptConnection();
+    server.expectReceived("<stream:stream");
+    server.send(AUTH_FEATURES);
+    await waitForReceived(server, "<auth");
+    server.send(`<failure xmlns="urn:ietf:params:xml:ns:xmpp-sasl">
+      <temporary-auth-failure/>
+    </failure>`);
+
+    const failure = await error;
+    expect(failure).toBeInstanceOf(ProtocolError);
+    expect(failure).toMatchObject({
+      scope: "sasl",
+      condition: "temporary-auth-failure",
+      retryable: true,
+    });
+    // close 通知是会话层调度自动重连的依据
+    await closed;
+    expect(client.status).toBe(Status.DISCONNECTED);
   });
 
   /**

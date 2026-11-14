@@ -69,6 +69,33 @@ describe("MucSelfPing", () => {
   });
 });
 
+describe("XEP0410 定时参数校验", () => {
+  /** 构造只需要 Connection 实例，不解引用其上的插件 */
+  const createConnection = () => new EventEmitter() as unknown as Connection;
+  /** 读取私有配置，用于断言合并结果 */
+  const configOf = (plugin: XEP0410) =>
+    (plugin as unknown as { config: Record<string, number> }).config;
+
+  it("非法值回退默认值，合法值保留", () => {
+    const plugin = new XEP0410(createConnection(), {
+      pingTimeout: 2_500,
+      inactivityTimeout: 0,
+      checkInterval: Number.POSITIVE_INFINITY,
+    });
+    expect(configOf(plugin)).toEqual({
+      pingTimeout: 2_500,
+      inactivityTimeout: 15 * 60_000,
+      checkInterval: 5 * 60_000,
+    });
+  });
+
+  // 定时器接受浮点毫秒数，不必强制整数
+  it("允许浮点延迟", () => {
+    const plugin = new XEP0410(createConnection(), { pingTimeout: 1.5 });
+    expect(configOf(plugin).pingTimeout).toBe(1.5);
+  });
+});
+
 describe("XEP0410 失活检测", () => {
   const roomJid = "characters@chat.shakespeare.lit";
   // 显式传入配置，测试不依赖插件内部默认值

@@ -23,12 +23,17 @@ export default XEP0203;
 
 declare module "../../stanza" {
     interface Message {
-        /** xep0203 */
-        delay?: {
-            stamp: Date;
-            /** 延迟信息添加方；§2 为可选属性，缺失时为 undefined */
-            from?: string;
-            reason?: string;
-        };
+        /**
+         * xep0203 延迟投递信息（`<delay/>`，§2）
+         * - `stamp`：原始发送时间
+         * - `from`：延迟信息添加方，可选，缺失时为 undefined
+         * - `reason`：延迟原因
+         */
+        delay?: { stamp: Date; from?: string; reason?: string };
+    }
+
+    interface Presence {
+        /** xep0203：§2 允许 presence 携带 `<delay/>`，如离线前的最后一次 available */
+        delay?: { stamp: Date; from?: string; reason?: string };
     }
 }

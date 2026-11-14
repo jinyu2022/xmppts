@@ -1,7 +1,21 @@
 {
   "name": "xmppts",
   "version": "0.1.0",
-  "description": "基于 TypeScript 的 XMPP 协议库，支持 Node.js 与浏览器环境，扩展协议以插件形式实现",
+  "description": "TypeScript XMPP client library for Node.js and browsers with plugin-based XEP support",
+  "keywords": [
+    "xmpp",
+    "xmpp-client",
+    "jabber",
+    "typescript"
+  ],
+  "homepage": "https://github.com/jinyu2022/xmppts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jinyu2022/xmppts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jinyu2022/xmppts/issues"
+  },
   "license": "MPL-2.0",
   "type": "module",
   "files": [

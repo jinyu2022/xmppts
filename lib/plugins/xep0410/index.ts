@@ -100,12 +100,44 @@ export class XEP0410 extends MucSelfPing implements Plugin {
   ) {
     super();
     this.connection = connection;
-    this.config = {
-      ...this.config,
-      ...Object.fromEntries(
-        Object.entries(options ?? {}).filter(([, value]) => value != null),
-      ),
-    };
+    // 定时参数必须是有效的正有限数：0/负数/NaN/Infinity 会退化为最快频率或无效
+    const { pingTimeout, inactivityTimeout, checkInterval } = options ?? {};
+    if (pingTimeout != null) {
+      if (
+        Number.isFinite(pingTimeout) &&
+        pingTimeout > 0
+      ) {
+        this.config.pingTimeout = pingTimeout;
+      } else {
+        log.warn(
+          `忽略无效的 pingTimeout（${pingTimeout}），使用默认值 ${this.config.pingTimeout}`,
+        );
+      }
+    }
+    if (inactivityTimeout != null) {
+      if (
+        Number.isFinite(inactivityTimeout) &&
+        inactivityTimeout > 0
+      ) {
+        this.config.inactivityTimeout = inactivityTimeout;
+      } else {
+        log.warn(
+          `忽略无效的 inactivityTimeout（${inactivityTimeout}），使用默认值 ${this.config.inactivityTimeout}`,
+        );
+      }
+    }
+    if (checkInterval != null) {
+      if (
+        Number.isFinite(checkInterval) &&
+        checkInterval > 0
+      ) {
+        this.config.checkInterval = checkInterval;
+      } else {
+        log.warn(
+          `忽略无效的 checkInterval（${checkInterval}），使用默认值 ${this.config.checkInterval}`,
+        );
+      }
+    }
   }
 
   /**

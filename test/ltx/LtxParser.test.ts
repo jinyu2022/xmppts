@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import { LtxParser } from "../../lib/ltx/LtxParser";
 
 /**
@@ -206,5 +206,19 @@ describe("LtxParser", () => {
       { type: "start", tag: "late", attrs: {} },
       { type: "end", tag: "late", selfClosing: true },
     ]);
+  });
+
+  it("startElement 的属性表是只读的冻结表", () => {
+    const parser = new LtxParser();
+    let received: Readonly<Record<string, string>> | undefined;
+    parser.on("startElement", (_tag, attrs) => {
+      // 类型契约：事件载荷只读，监听方写入会被 tsc 拒绝
+      expectTypeOf(attrs).toEqualTypeOf<Readonly<Record<string, string>>>();
+      received = attrs;
+    });
+    parser.write(`<a x="1"/>`);
+
+    expect(Object.isFrozen(received)).toBe(true);
+    expect(received?.x).toBe("1");
   });
 });

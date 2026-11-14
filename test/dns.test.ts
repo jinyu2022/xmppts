@@ -74,6 +74,17 @@ describe("resolveSrv", () => {
     await expect(resolveSrv("_xmpp-client._tcp.bad.example.com")).resolves.toEqual([]);
   });
 
+  it("Target 为 . 表示服务不可用，忽略同批其他记录", async () => {
+    resolveSrvMock.mockResolvedValueOnce([record(0, 0, ".", 0)]);
+    await expect(resolveSrv("_xmpp-client._tcp.off.example.com")).resolves.toEqual([]);
+
+    resolveSrvMock.mockResolvedValueOnce([
+      record(0, 0, "ignored.example.com", 5222),
+      record(10, 0, ".", 0),
+    ]);
+    await expect(resolveSrv("_xmpp-client._tcp.off.example.com")).resolves.toEqual([]);
+  });
+
   it("只保留 host/port，不泄漏 SRV 记录的其他字段", async () => {
     resolveSrvMock.mockResolvedValue([record(0, 0, "only.example.com", 5269)]);
 

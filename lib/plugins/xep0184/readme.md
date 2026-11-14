@@ -7,7 +7,11 @@
 
 ## 可配置项
 
-无可配置项。
+| 选项 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `autoRequest` | `boolean` | `true` | 是否自动为待发送消息附加 `<request/>` |
+
+通过 `connection.registerPlugin("XEP0184", { autoRequest: false })` 传入。
 
 ## 注册后行为
 
@@ -15,7 +19,7 @@
 
 1. **注册 disco 特性** — 向 XEP-0030 添加 `urn:xmpp:receipts`。
 2. **注册 receipts 解析器** — 解析 `urn:xmpp:receipts` 命名空间的 `<request/>` / `<received/>` 为 `message.receipts`。
-3. **发送拦截** — 给**直接子元素**含 `<body>` 的 `message`（排除 `groupchat` / `error` 类型）附加 `<request/>`；`<forwarded><message><body>` 这类内层 body 不算。
+3. **发送拦截** — 给**直接子元素**含 `<body>` 的 `message`（排除 `groupchat` / `error` 类型）附加 `<request/>`；`<forwarded><message><body>` 这类内层 body 不算，已带 `<received/>` 的 ack 也不算；`autoRequest` 为 `false` 时不做这一步。
 4. **自动回复** — 监听 `message`，收到 `receipts.type === 'request'` 且类型非 `groupchat`/`error` 时，回复 `<received id="..."/>`。
 
 ## 扩展字段

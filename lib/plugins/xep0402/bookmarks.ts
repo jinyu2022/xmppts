@@ -7,7 +7,7 @@ import { XMPPElement } from "@/ltx/Element";
  * @see https://xmpp.org/extensions/xep-0402.html#table-1
  */
 export interface Conference {
-    /** 用户指定的群聊名称（备注）。客户端不应尝试从JID自动生成该信息。 */
+    /** 用户指定的群聊名称（备注），空串视为未指定。客户端不应尝试从JID自动生成该信息。 */
     name?: string;
     /** 客户端登录时是否应该自动加入会议室。默认为false */
     autojoin?: boolean;
@@ -80,21 +80,23 @@ export class Bookmarks {
     static parseConferenceEl(
         conferenceEl: XMPPElement
     ): Record<"conference", Omit<Conference, "jid">> {
+        // 只比较 localName：带命名空间前缀的 `<x:conference/>` 同样合法
         if (
             conferenceEl.namespaceURI !== Bookmarks.NS ||
-            conferenceEl.tagName !== "conference"
+            conferenceEl.localName !== "conference"
         )
             throw new Error("不是一个conference元素");
-        const name = conferenceEl.getAttribute("name") ?? void 0;
+        // 空串与属性/元素缺失同样表示“未指定”，归一为 undefined，与生成侧 `if (name)` 等判定一致
+        const name = conferenceEl.getAttribute("name") || void 0;
         const autojoin = ["true", "1"].includes(
             conferenceEl.getAttribute("autojoin") ?? ""
         );
-        const nick =
-            conferenceEl.getElementsByTagName("nick")[0]?.textContent ?? void 0;
+        // 只读 conference 的直接子元素：`<extensions/>` 内可能有同名的 nick/password
+        const nick = conferenceEl.querySelector(":scope > nick")?.textContent || void 0;
         const password =
-            conferenceEl.getElementsByTagName("password")[0]?.textContent ?? void 0;
+            conferenceEl.querySelector(":scope > password")?.textContent || void 0;
         // `<extensions/>` 与 conference 同属书签命名空间，展开为其子元素
-        const extensionsEl = conferenceEl.getElementsByTagName("extensions")[0];
+        const extensionsEl = conferenceEl.querySelector(":scope > extensions");
         const extensions = extensionsEl ? Array.from(extensionsEl.children) : void 0;
         return { conference: { name, autojoin, nick, password, extensions } };
     }

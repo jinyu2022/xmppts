@@ -26,6 +26,8 @@ export class XEP0084 extends Avatar implements Plugin {
             XEP0084.NS.metadata,
             XEP0084.parseMetadataEl
         );
+        // PEP 通知会同时到达自己的其他资源与联系人的资源，matcher 只按节点匹配；
+        // 监听方需按 message.from.bare 判断通知归属
         this.connection.registerEventPlugin("pep:avatar", {
             tagName: "message",
             matcher: (message) => {
@@ -99,6 +101,11 @@ export class XEP0084 extends Avatar implements Plugin {
 
 declare module "../../connection" {
     interface SocketEventMap {
+        /**
+         * 头像元数据更新通知。
+         * 既可能是自己的其他资源（PEP 会向账号所有者的全部可用资源发送通知），
+         * 也可能是联系人的头像变化，监听方需按 `message.from.bare` 判断归属。
+         */
         "pep:avatar"?: Message;
     }
 }
