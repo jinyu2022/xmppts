@@ -1,8 +1,8 @@
 # XMPP 核心登录流程 (RFC 6120)
 
-本文档概述了 XMPP 客户端连接到服务器并建立会话的核心流程，主要基于 RFC 6120 (XMPP Core) 的规范。流程主体位于传输无关的 [StreamConnection](stream-connection.ts) 基类；`XMPPConnection`（TCP）与 `WSConnection`（WebSocket）只提供传输差异，高层 `Connection` 负责会话语义。
+本文档概述了 XMPP 客户端连接到服务器并建立会话的核心流程，主要基于 RFC 6120 (XMPP Core)。流程主体位于传输无关的 [StreamConnection](stream-connection.ts) 基类；`XMPPConnection`（TCP）与 `WSConnection`（WebSocket）只提供传输差异，高层 `Connection` 负责会话语义。
 
-整个流程是一个多阶段的**流协商 (Stream Negotiation)**过程，直到客户端完成认证和资源绑定，才能开始发送消息节（Stanza）。
+整个流程是一个多阶段的**流协商 (Stream Negotiation)**，客户端完成认证和资源绑定后才能发送 stanza。
 
 ## 0. 生命周期事件总览
 
@@ -24,7 +24,7 @@
     │                      │       pipeline: stream:negotiated                │
     │                      │                        ├── <iq set><bind/> ───────►│
     │                      │                        │◄─────── bound JID ────────┤
-    │                      │               sink: onBinded                     │
+    │                      │               sink: onBound                      │
     │◄─ conn: session:start┼──────── 转发 ──────────│                          │
     │                      │                        │                          │
     │    ═════ 活跃会话（循环）═════                  │                          │
@@ -41,7 +41,7 @@
     │                      │       sink: onError（认证失败 / 绑定超时 / WS 错误） │
 ```
 
-> 事件归属速查：**传输层通知**只有 `TransportSink` 的 4 个回调 `onBinded` / `onStanza` / `onClose` / `onError`（单向、单消费者，由 `Connection._createSink()` 创建并随工厂上下文传入构造函数）；`stream:negotiated` 等属管线事件点，见 `TransportPipelineEvents`。**connection 事件**为 `session:start` / `session:end` / `error` / `connection:lost` / `reconnecting` / `reconnected` / `message` / `iq` / `presence` / `others`。对应关系：`onBinded → session:start`（重连成功为 `reconnected`）、`onError → error`（载荷为 `ProtocolError`，用 `scope` 区分来源）、`onClose → session:end`（或调度重连）。
+> 事件归属速查：**传输层通知**只有 `TransportSink` 的 4 个回调 `onBound` / `onStanza` / `onClose` / `onError`（单向、单消费者，由 `Connection._createSink()` 创建并随工厂上下文传入构造函数）；`stream:negotiated` 等属管线事件点，见 `TransportPipelineEvents`。**connection 事件**为 `session:start` / `session:end` / `error` / `connection:lost` / `reconnecting` / `reconnected` / `message` / `iq` / `presence` / `others`。对应关系：`onBound → session:start`（重连成功为 `reconnected`）、`onError → error`（载荷为 `ProtocolError`，用 `scope` 区分来源）、`onClose → session:end`（或调度重连）。
 
 ## 1. 网络连接 (TCP Binding)
 
@@ -86,7 +86,7 @@
 
 ## 3. 流协商：传输层安全 (TLS Negotiation)
 
-客户端和服务器协商是否使用 TLS 来加密连接。
+客户端和服务器协商是否用 TLS 加密连接。
 
 *   **服务器动作 (S:):**
     *   **发送流特性** (包含 `<starttls/>`):
@@ -143,7 +143,7 @@ TLS 握手成功后，必须重启 XML 流以清除旧的流上下文，并在�
 
 ## 5. 流协商：认证 (SASL Negotiation)
 
-在安全通道上，客户端使用 SASL (Simple Authentication and Security Layer) 机制进行身份认证。
+在安全通道上，客户端用 SASL (Simple Authentication and Security Layer) 机制认证身份。
 
 *   **服务器动作 (S:):**
     *   **发送流特性** (包含 `<mechanisms/>`):
@@ -279,15 +279,15 @@ SASL 认证成功后，必须再次重启 XML 流以清除旧的流上下文，�
 
 在资源绑定之后，客户端被认为已登录。RFC 6120 起不再要求独立的会话建立步骤（RFC 3921 的 `<iq type='set'><session/></iq>` 已废弃，个别老服务器仍会宣告 `urn:ietf:params:xml:ns:xmpp-session`）。
 
-*   **客户端动作 (C:):** 无——绑定成功后传输层调用 `sink.onBinded()`，高层在 [Connection._createSink()](../connection.ts#L487) 中触发 `session:start`。
+*   **客户端动作 (C:):** 无——绑定成功后传输层调用 `sink.onBound()`，高层在 [Connection._createSink()](../connection.ts#L487) 中触发 `session:start`。
 *   **对应代码:** 如需向老服务器补发 `<session/>`，可自行用 [sendAsync()](../connection.ts#L812) 实现。
 
-## 9. 节交换 (Stanza Exchange)
+## 9. Stanza 交换
 
-会话建立完成后，客户端可以开始发送和接收 XMPP 节（Stanza）。
+会话建立后，客户端可以开始发送和接收 stanza。
 
 *   **客户端动作 (C:):**
-    *   **发送节** (例如 Message):
+    *   **发送 stanza** (例如 Message):
     ```xml
     <message from='juliet@im.example.com/balcony'
              to='romeo@example.net'
@@ -296,7 +296,7 @@ SASL 认证成功后，必须再次重启 XML 流以清除旧的流上下文，�
     </message>
     ```
 *   **服务器动作 (S:):**
-    *   **接收并路由/投递节。**
+    *   **接收并路由/投递 stanza。**
 *   **对应代码:** 发送 [Connection.send()](../connection.ts#L761)；接收 [route()](stream-connection.ts#L327) 分发 → `TransportSink.onStanza` → [Connection.onMessage()](../connection.ts#L642)
 
 ## 10. 流关闭 (Stream Closure)
@@ -327,11 +327,11 @@ SASL 认证成功后，必须再次重启 XML 流以清除旧的流上下文，�
     *   客户端必须按顺序协商这些特性：**TLS (加密) -> SASL (认证) -> 资源绑定 (地址)**。
 
 3.  **资源绑定 (Resource Binding):**
-    *   这是客户端登录的最后一步，通过 IQ 节完成。
-    *   成功后，客户端获得完整的 JID (`user@domain/resource`)，并被允许发送消息节。
+    *   这是客户端登录的最后一步，通过 IQ stanza 完成。
+    *   成功后，客户端获得完整的 JID (`user@domain/resource`)，并被允许发送 stanza。
 
 4.  **错误处理:**
     *   **流错误 (Stream Error):** 发生在流协商阶段，会导致流关闭和 TCP 连接终止（例如 `<not-authorized/>`, `<host-unknown/>`）。
-    *   **节错误 (Stanza Error):** 发生在节交换阶段，通过 IQ、Message 或 Presence 节的 `type='error'` 属性返回（例如 `<conflict/>`, `<bad-request/>`）。
+    *   **stanza 错误 (Stanza Error):** 发生在 stanza 交换阶段，通过 IQ、Message 或 Presence stanza 的 `type='error'` 属性返回（例如 `<conflict/>`, `<bad-request/>`）。
 
 

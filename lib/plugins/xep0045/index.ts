@@ -35,6 +35,11 @@ export class XEP0045 extends MUC implements Plugin {
         this.connection = connection;
     }
 
+    onSessionBound(): void {
+        // 新会话：服务端已不认为本端在房间内，本地房间表作废
+        this.rooms.clear();
+    }
+
     init() {
         this.connection.XEP0030!.addFeature(XEP0045.NS.BASE);
 

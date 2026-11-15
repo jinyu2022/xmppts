@@ -48,7 +48,7 @@ function setup(options: Options = {}) {
   });
   const transport = new FakeTransport(connection._createSink());
   connection.transport = transport;
-  transport.sink.onBinded();
+  transport.sink.onBound(true);
   return { connection, transport };
 }
 describe("RFC6121 Roster", () => {

@@ -201,6 +201,16 @@ describe("XEP0198（单元测试，假连接）", () => {
     expect(ctx.outgoing).toContain("h='0'");
   });
 
+  it("previd 中的 XML 特殊字符按属性转义后发送", async () => {
+    const connection = createPlugin();
+    // 服务端生成的 SM-ID 可以含任意合法属性字符（XEP-0198 §5），解析后 id 为 a'b&c
+    await enableSm(connection, `id="a&apos;b&amp;c" resume="true"`);
+    connection.emit("connection:lost");
+
+    const ctx = await negotiate(connection);
+    expect(ctx.outgoing).toContain("previd='a&apos;b&amp;c'");
+  });
+
   it("服务器未允许恢复或未经历断线时不改发 resume", async () => {
     // 服务器只回 <enabled/>：不应发 <resume/>
     const refused = createPlugin();
@@ -293,6 +303,22 @@ describe("XEP0198（单元测试，假连接）", () => {
       '<resumed xmlns="urn:xmpp:sm:3" h="0" previd="sid-1"/>',
     );
     expect(ctx.status).toBe(Status.BINDED);
+  });
+
+  it("resumed 的 previd 与请求不一致时回退为常规绑定", async () => {
+    const connection = createPlugin();
+    await enableSm(connection);
+    connection.emit("connection:lost");
+    await negotiate(connection);
+
+    const ctx = await settleBinding(
+      connection,
+      '<resumed xmlns="urn:xmpp:sm:3" h="0" previd="other"/>',
+    );
+    expect(ctx.outgoing).toBe(BIND_REQUEST);
+    expect(ctx.status).toBe(Status.BINDING);
+    // 复位后不再改发 resume
+    expect((await negotiate(connection)).outgoing).toBe(BIND_REQUEST);
   });
 
   it("failed 回退为原始绑定请求并复位恢复状态", async () => {

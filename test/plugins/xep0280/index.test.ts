@@ -169,10 +169,10 @@ describe("XEP0280 会话管理与启用/禁用", () => {
     return { connection, plugin };
   }
 
-  it("session:start 且服务器声明 carbons 时自动启用", async () => {
-    const { connection } = setup();
+  it("绑定成功且服务器声明 carbons 时自动启用", async () => {
+    const { connection, plugin } = setup();
     connection.serverFeatures.add(XEP0280.NS);
-    connection.emit("session:start");
+    plugin.onSessionBound();
 
     await vi.waitFor(() => expect(connection.sentAsync).toHaveLength(1));
     expect(connection.sentAsync[0].getAttribute("type")).toBe("set");
@@ -182,20 +182,20 @@ describe("XEP0280 会话管理与启用/禁用", () => {
   });
 
   it("服务器不支持时不启用", async () => {
-    const { connection } = setup();
-    connection.emit("session:start");
+    const { connection, plugin } = setup();
+    plugin.onSessionBound();
 
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(connection.sentAsync).toHaveLength(0);
   });
 
   it("特性查询失败被吞掉，不抛未处理拒绝", async () => {
-    const { connection } = setup();
+    const { connection, plugin } = setup();
     vi.spyOn(connection.XEP0030, "getServerFeatures").mockRejectedValue(
       new Error("boom"),
     );
 
-    connection.emit("session:start");
+    plugin.onSessionBound();
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(connection.sentAsync).toHaveLength(0);
   });

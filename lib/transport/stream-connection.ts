@@ -537,7 +537,9 @@ export abstract class StreamConnection implements TransportSocket {
     if (this.status === Status.BINDED) {
       // 协商完成：停止看门狗，后续业务数据不再计时
       this.stopNegotiationTimer();
-      this.sink.onBinded();
+      // 只有收到本流的绑定响应才算新绑定；插件直接把状态置为 BINDED
+      // （如 XEP-0198 的 <resumed/>）属会话延续，没有发生资源绑定
+      this.sink.onBound(isBindResponse);
     }
     // XEP0198 需要：会话恢复被拒时写回原绑定请求，由连接层代发
     if (ctx.outgoing) this.send(ctx.outgoing);
@@ -571,7 +573,7 @@ export abstract class StreamConnection implements TransportSocket {
 
   /**
    * 启动流协商看门狗（进入协商时调用）。
-   * 只看「一段时间内有没有数据传来」，不判断该节属于哪个阶段。
+   * 只看「一段时间内有没有数据传来」，不判断该 stanza 属于哪个阶段。
    */
   private startNegotiationTimer(): void {
     this.negotiationTimer = setTimeout(() => {

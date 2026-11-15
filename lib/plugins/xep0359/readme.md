@@ -59,4 +59,4 @@ const originIdEl = XEP0359.createOriginId();
 - **自动解析**：收到的 `<stanza-id>` / `<origin-id>` 会直接映射到 `message` 的同名字段；也可手动调用 `parseStanzaId()`。
 - **不自动生成**：插件不会给发出的消息追加 `<origin-id>`。§2.2 只在"某些需要由发起方生成 ID 的场景"要求使用，需用时由调用方拿 `createOriginId()` 自行附加；`stanza-id` 由服务器或房间等生成方补齐。
 - 三种元素：`<stanza-id>`（服务器分配）、`<origin-id>`（发送者分配）、`<referenced-stanza>`（被引用节）。
-- `by` 为分配该 ID 的实体；规范 §3.7 要求其值为规范化 XMPP 地址、§3.5 规定 `stanza-id` 的 `by` 必填（本库类型暂标为可选）。同一节上同名多元素时后解析者覆盖前者。
+- `by` 为分配该 ID 的实体；规范 §3.7 要求其值为规范化 XMPP 地址、§3.5 规定 `stanza-id` 的 `by` 必填（本库类型暂标为可选）。同一 stanza 上同名多元素时后解析者覆盖前者。

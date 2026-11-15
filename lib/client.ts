@@ -1,7 +1,7 @@
 import Connection from "./connection";
 import { JID } from "./JID";
 import { pluginLoaders } from "./plugins";
-import { Message, type MsgType } from "@/stanza";
+import { Message, Presence, type MsgType, type PresenceContent } from "@/stanza";
 import type { Options } from "./types";
 
 export class Client extends Connection {
@@ -73,11 +73,13 @@ export class Client extends Connection {
     return this.RFC6121!.removeRoster(jid);
   }
 
-  setPresence(){
-    this.send(
-      '<presence>'+
-        '<show>chat</show>'+
-      '</presence>'
-    )
+  /**
+   * 发送在线状态（不带 `to`，由服务器广播给订阅者）
+   *
+   * 不传参数时保持原有行为，发送 `show=chat`；显式传空对象则发送不带 `<show/>` 的 available presence
+   * @param content show/status/priority，省略的字段不写出
+   */
+  setPresence(content?: PresenceContent) {
+    this.send(Presence.createBroadcastPresence(content ?? { show: "chat" }));
   }
 }

@@ -35,7 +35,7 @@ describe("XMPPConnection TCP/TLS 连接测试", () => {
       onFail = reject;
     });
     const sink: TransportSink = {
-      onBinded: () => onReady(),
+      onBound: () => onReady(),
       onError: onFail,
       onClose: () => onFail(new Error("连接意外断开")),
       onStanza: (stanza) => console.log("收到 stanza:", stanza.toXMLString()),

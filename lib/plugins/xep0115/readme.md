@@ -7,7 +7,15 @@
 
 ## 可配置项
 
-无可配置项。`node` 硬编码为 `http://lekexmpp.chat`，哈希算法固定 `sha-1`。
+| 选项 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `node` | `string` | `http://xmppts.chat` | 实体能力节点标识（§4.1）。对端用它拼成 `node#ver` 查询 disco#info，应在各版本间保持稳定且不能包含 `#` |
+
+哈希算法固定 `sha-1`。注册时通过第二个参数传入：
+
+```typescript
+client.registerPlugin("XEP0115", { node: "urn:xmppts:caps" });
+```
 
 ## 注册后行为
 
@@ -56,12 +64,12 @@ const { cap } = XEP0115.parseCaps(cEl);
 const ver = await XEP0115.generateCapsVerification(identities, features);
 
 // 创建 <c/> 元素 → XMPPElement
-const cEl = XEP0115.createCapsElement({ node: "http://lekexmpp.chat", ver, hash: "sha-1" });
+const cEl = XEP0115.createCapsElement({ node: "http://xmppts.chat", ver, hash: "sha-1" });
 ```
 
 ## 注意事项
 
-- 自身能力哈希在 `session:start` 事件时生成（每个插件实例仅一次，自动重连不重算），依赖 XEP-0030 已填充 `identities`/`features`；若之后动态 `addFeature`，已生成的 `ver` 会过期（§6.1：特性变化 MUST 重算、SHOULD 重发 presence）。
+- 自身能力哈希在 `onSessionBound`（每次会话绑定）时生成，每个新会话都按当时的 `identities`/`features` 重算，结果写入 `selfCaps` 后在 presence 发送时附加；若同一会话内又动态 `addFeature`，已生成的 `ver` 会过期（§6.1：特性变化 MUST 重算、SHOULD 重发 presence）。
 - `ver → capabilities` 映射表尚未实现（TODO），无法据他人 `ver` 反查其能力；对方 presence 里的 caps 信息事实上被丢弃。
 - 发送拦截器会在所有 presence 上附加 `<c/>`（含定向与 MUC presence，§6.1/§8.3 允许）。
 - `generateCapsVerification` 会**原地排序**传入的 `features` 数组（`identities` 则先拷贝），调用方复用同一数组时注意。

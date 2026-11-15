@@ -94,7 +94,7 @@ export class Disco {
     const query = XMPPElement.createElementNS(Disco.NS.DISCO_INFO, "query");
     if (queryNode) {
       query.setAttribute("node", queryNode);
-      // TODO: 到底要根据node返回什么？
+      // TODO: 确认 node 参数对应的返回内容
     }
     iq.appendChild(query);
     for (const identity of identities) {

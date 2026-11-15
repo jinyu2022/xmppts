@@ -1,4 +1,4 @@
-# XEP-0297 — 节转发（Stanza Forwarding）
+# XEP-0297 — Stanza 转发
 
 在消息中封装一个已转发的 stanza（message / presence / iq）。
 
@@ -54,11 +54,11 @@ client.on("forward", (message) => {
   const fwd = message.forwarded!;
   // message / presence / iq 三者恰有其一
   const inner = fwd.message ?? fwd.presence ?? fwd.iq;
-  console.log("转发的节", inner);
+  console.log("转发的 stanza", inner);
 });
 ```
 
 ## 注意事项
 
 - 主要被 **XEP-0280（碳副本）** 使用。
-- 被转发节中可能含 `delay` 元素；此处 `delay` 仍是原始元素，未走 XEP-0203 解析。
+- 被转发的 stanza 中可能含 `delay` 元素；此处 `delay` 仍是原始元素，未走 XEP-0203 解析。

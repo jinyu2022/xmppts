@@ -118,7 +118,7 @@ export class Avatar {
             throw new Error("不支持的图片类型");
         }
     }
-    //TODO: 允许使用http上传头像，并在info中包含url
+    // TODO: 允许通过 HTTP 上传头像，并在 info 中包含 url
 
     /** 构建上传头像与元数据iq，只接受png格式，格式转换不是本模块的职责
      * @param img 图片文件或路径

@@ -49,8 +49,31 @@ function setup(options: Options = {}, bind = true) {
   });
   const transport = new FakeTransport(connection._createSink());
   connection.transport = transport;
-  if (bind) transport.sink.onBinded();
+  if (bind) transport.sink.onBound(true);
   return { connection, transport };
+}
+
+/** 只驱动插件装配（不创建传输层），返回装配后的插件顺序 */
+async function assemble(connection: Connection): Promise<string[]> {
+  const lifecycle = connection as unknown as {
+    instantiatePlugins(): Promise<void>;
+  };
+  await lifecycle.instantiatePlugins();
+  const { pendingPlugins } = connection as unknown as {
+    pendingPlugins: Map<string, unknown>;
+  };
+  return [...pendingPlugins.keys()];
+}
+
+/** 构造只记录装配顺序的最小插件 */
+function trackingPlugin(name: string, deps: string[], order: string[]) {
+  return class {
+    static readonly dependencies = deps;
+    constructor() {
+      order.push(name);
+    }
+    init() {}
+  } as never;
 }
 
 describe("Connection（单元测试，假传输层）", () => {
@@ -205,7 +228,7 @@ describe("Connection（单元测试，假传输层）", () => {
     connection.send('<enable xmlns="urn:xmpp:sm:3"/>');
     expect(transport.sent).toHaveLength(1);
     transport.status = Status.BINDED;
-    transport.sink.onBinded();
+    transport.sink.onBound(true);
     connection.send('<presence/>');
     expect(transport.sent).toHaveLength(2);
   });
@@ -529,14 +552,14 @@ describe("Connection（单元测试，假传输层）", () => {
     expect((forwarded.message as XMPPElement).tagName).toBe("message");
   });
 
-  it("会话事件：binded→session:start 并采纳服务端 JID、close→session:end 并清理监听", () => {
+  it("会话事件：onBound→session:start 并采纳服务端 JID、close→session:end 并清理监听", () => {
     const { connection, transport } = setup({}, false);
     const events: string[] = [];
     connection.on("session:start", () => events.push("session:start"));
     connection.on("session:end", () => events.push("session:end"));
 
     transport.jid = new JID("juliet@capulet.lit/from-server");
-    transport.sink.onBinded();
+    transport.sink.onBound(true);
     expect(connection.jid.toString()).toBe("juliet@capulet.lit/from-server");
 
     transport.status = Status.DISCONNECTED;
@@ -545,6 +568,188 @@ describe("Connection（单元测试，假传输层）", () => {
     expect(events).toEqual(["session:start", "session:end"]);
     // 真断开后 _cleanup 清空全部监听器
     expect(connection.listenerCount("session:start")).toBe(0);
+  });
+
+  it("onBound(true) 先调插件 onSessionBound 再派发事件，流恢复跳过钩子", () => {
+    const { connection, transport } = setup({}, false);
+    const events: string[] = [];
+    /** 记录钩子被调用时的会话状态，验证钩子内可直接发 stanza */
+    const plugin = {
+      onSessionBound: () =>
+        events.push(`plugin:active=${connection.isSessionActive}`),
+    };
+    class ProbePlugin {
+      static readonly dependencies = [] as const;
+      init() {}
+    }
+    connection.registerPlugin("Probe", ProbePlugin as never);
+    (connection as unknown as Record<string, unknown>).Probe = plugin;
+
+    connection.on("session:start", () => events.push("session:start"));
+    connection.on("reconnected", () => events.push("reconnected"));
+
+    // 首次绑定走 session:start
+    transport.sink.onBound(true);
+    expect(events).toEqual(["plugin:active=true", "session:start"]);
+
+    // 新会话：钩子先于事件，插件在钩子里已能发送
+    transport.sink.onBound(true);
+    // 流恢复：会话延续，不调钩子，但仍派发 reconnected
+    transport.sink.onBound(false);
+    expect(events).toEqual([
+      "plugin:active=true",
+      "session:start",
+      "plugin:active=true",
+      "reconnected",
+      "reconnected",
+    ]);
+  });
+
+  it("onBound(true) 抛错的插件不影响其余插件与生命周期事件", () => {
+    const { connection, transport } = setup({}, false);
+    const calls: string[] = [];
+    class BadPlugin {
+      static readonly dependencies = [] as const;
+      init() {}
+    }
+    class GoodPlugin {
+      static readonly dependencies = [] as const;
+      init() {}
+    }
+    connection.registerPlugin("Bad", BadPlugin as never);
+    connection.registerPlugin("Good", GoodPlugin as never);
+    Object.assign(connection, {
+      Bad: {
+        onSessionBound() {
+          throw new Error("重建失败");
+        },
+      },
+      Good: { onSessionBound: () => calls.push("good") },
+    });
+    connection.on("session:start", () => calls.push("session:start"));
+
+    expect(() => transport.sink.onBound(true)).not.toThrow();
+    expect(calls).toEqual(["good", "session:start"]);
+    expect(connection.isSessionActive).toBe(true);
+  });
+
+  it("断开后传输层的迟到 onBound 不恢复会话，也不调用插件钩子", () => {
+    const { connection, transport } = setup({}, false);
+    const hook = vi.fn();
+    connection.registerPlugin("Probe", class {
+      static readonly dependencies = [] as const;
+      init() {}
+    } as never);
+    (connection as unknown as Record<string, unknown>).Probe = {
+      onSessionBound: hook,
+    };
+    const events: string[] = [];
+    connection.on("session:start", () => events.push("session:start"));
+
+    connection.transport = null;
+    transport.sink.onBound(true);
+
+    expect(hook).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
+    expect(connection.isSessionActive).toBe(false);
+  });
+
+  it("会话钩子按依赖拓扑排序调用，依赖先于依赖方", async () => {
+    const { connection, transport } = setup({}, false);
+    const order: string[] = [];
+    class DepPlugin {
+      static readonly dependencies = [] as const;
+      init() {
+        order.push("dep:init");
+      }
+      onSessionBound() {
+        order.push("dep:hook");
+      }
+    }
+    class UserPlugin {
+      static readonly dependencies = ["Dep"] as const;
+      init() {
+        order.push("user:init");
+      }
+      onSessionBound() {
+        order.push("user:hook");
+      }
+    }
+    // 依赖方先注册，依赖后注册：排序后依赖仍排在前面
+    connection.registerPlugin("User", UserPlugin as never);
+    connection.registerPlugin("Dep", DepPlugin as never);
+
+    const lifecycle = connection as unknown as {
+      instantiatePlugins(): Promise<void>;
+      initPlugins(): void;
+    };
+    await lifecycle.instantiatePlugins();
+    lifecycle.initPlugins();
+    transport.sink.onBound(true);
+
+    expect(order).toEqual(["dep:init", "user:init", "dep:hook", "user:hook"]);
+  });
+
+  it("插件依赖成环时不会卡死，两个插件都完成装配", async () => {
+    const connection = new Connection("test@example.com/resource", "test123");
+    const order: string[] = [];
+    class A {
+      static readonly dependencies = ["B"] as const;
+      constructor() {
+        order.push("A");
+      }
+      init() {}
+    }
+    class B {
+      static readonly dependencies = ["A"] as const;
+      constructor() {
+        order.push("B");
+      }
+      init() {}
+    }
+    connection.registerPlugin("A", A as never);
+    connection.registerPlugin("B", B as never);
+
+    const names = await assemble(connection);
+
+    // 环上两条依赖无法同时满足，但两个插件都会装配且各只装配一次
+    expect(names.sort()).toEqual(["A", "B"]);
+    expect(order.sort()).toEqual(["A", "B"]);
+  });
+
+  it("多级依赖链倒序注册时按依赖顺序装配", async () => {
+    const connection = new Connection("test@example.com/resource", "test123");
+    const order: string[] = [];
+    connection.registerPlugin("C", trackingPlugin("C", ["B"], order));
+    connection.registerPlugin("B", trackingPlugin("B", ["A"], order));
+    connection.registerPlugin("A", trackingPlugin("A", [], order));
+
+    await assemble(connection);
+
+    expect(order).toEqual(["A", "B", "C"]);
+  });
+
+  it("钻石依赖的共享节点只装配一次且排在最前", async () => {
+    const connection = new Connection("test@example.com/resource", "test123");
+    const order: string[] = [];
+    connection.registerPlugin("A", trackingPlugin("A", ["B", "C"], order));
+    connection.registerPlugin("B", trackingPlugin("B", ["D"], order));
+    connection.registerPlugin("C", trackingPlugin("C", ["D"], order));
+    connection.registerPlugin("D", trackingPlugin("D", [], order));
+
+    await assemble(connection);
+
+    expect(order).toEqual(["D", "B", "C", "A"]);
+  });
+
+  it("自动补注册的内置依赖排在依赖方之前", async () => {
+    const connection = new Connection("test@example.com/resource", "test123");
+    connection.registerPlugin("XEP0410");
+
+    const names = await assemble(connection);
+
+    // 0045/0199 依赖 0030，0410 依赖 0045/0199
+    expect(names).toEqual(["XEP0030", "XEP0045", "XEP0199", "XEP0410"]);
   });
 
   it("session:end 派发前先降级会话状态：监听器内不可再发送业务 stanza", () => {
@@ -576,7 +781,7 @@ describe("Connection（单元测试，假传输层）", () => {
     connection.on("reconnecting", () => events.push("reconnecting"));
     connection.on("reconnected", () => events.push("reconnected"));
 
-    transport.sink.onBinded();
+    transport.sink.onBound(true);
     transport.status = Status.DISCONNECTED;
     transport.sink.onClose();
     expect(events).toEqual(["session:start", "connection:lost"]);
@@ -585,7 +790,7 @@ describe("Connection（单元测试，假传输层）", () => {
     expect(transport.reconnect).toHaveBeenCalledTimes(1);
     expect(events).toEqual(["session:start", "connection:lost", "reconnecting"]);
 
-    transport.sink.onBinded();
+    transport.sink.onBound(true);
     expect(events).toEqual([
       "session:start",
       "connection:lost",
@@ -648,7 +853,7 @@ describe("Connection（单元测试，假传输层）", () => {
     expect(transport.reconnect).toHaveBeenCalledTimes(1);
     expect(events).toEqual(["error:ProtocolError", "reconnecting"]);
 
-    transport.sink.onBinded();
+    transport.sink.onBound(true);
     expect(events).toEqual([
       "error:ProtocolError",
       "reconnecting",
@@ -694,7 +899,7 @@ describe("Connection（单元测试，假传输层）", () => {
     expect(transport.reconnect).toHaveBeenCalledTimes(1);
 
     // 首次绑定成功：从未发过 session:start，重连成功也应发它
-    transport.sink.onBinded();
+    transport.sink.onBound(true);
     expect(events).toEqual(["session:start"]);
   });
 

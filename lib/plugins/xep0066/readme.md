@@ -1,6 +1,6 @@
 # XEP-0066 — Out of Band Data
 
-在消息或出席中携带资源 URL（`<x xmlns="jabber:x:oob"><url/><desc/></x>`），常用于分享文件下载地址。
+在消息或 presence 中携带资源 URL（`<x xmlns="jabber:x:oob"><url/><desc/></x>`），常用于分享文件下载地址。
 
 - **依赖**：XEP-0030（服务发现）
 - **实例访问**：`connection.XEP0066`

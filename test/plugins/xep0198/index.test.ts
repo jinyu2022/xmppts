@@ -38,6 +38,9 @@ const ENABLE_ATTRS = `id="sid-1" resume="true" location="localhost:5222"`;
 /** 服务器在绑定结果中分配的完整 JID */
 const BOUND_JID = "test@example.com/server-resource";
 
+/** 书签里标记 autojoin 的房间：每次新会话都应重新加入 */
+const AUTOJOIN_ROOM = "coven@chat.shakespeare.lit";
+
 /** 取出客户端已发出、包含指定内容的 XML（不存在时返回 undefined）。 */
 function takeReceived(server: MockServer, expected: string): string | undefined {
   const index = server.received.findIndex((item) => item.includes(expected));
@@ -50,6 +53,57 @@ async function answerEnable(server: MockServer, attrs = ENABLE_ATTRS) {
   const enable = Parser.parse(await waitForReceived(server, "<enable"));
   expect(enable.getAttribute("resume")).toBe("true");
   server.send(`<enabled xmlns="urn:xmpp:sm:3" ${attrs}/>`);
+}
+
+/**
+ * 应答一次会话初始化产生的全部请求：服务器 disco（含 Carbons 特性）、Carbons 启用、
+ * 书签检索、autojoin 房间加入与流管理启用。
+ *
+ * 顺序由 onSessionBound 的依赖拓扑决定：disco 先于 Carbons 启用，书签检索与
+ * 流管理启用则各自独立；waitForReceived 按内容匹配，不依赖先后。
+ */
+async function answerSessionInit(server: MockServer) {
+  // XEP0030：服务器 disco，Carbons 靠这份快照判断服务器支持情况
+  const disco = Parser.parse(await waitForReceived(server, "disco#info"));
+  server.send(`<iq xmlns="jabber:client" type="result" from="example.com" id="${disco.getAttribute("id")}">
+    <query xmlns="http://jabber.org/protocol/disco#info">
+      <feature var="urn:xmpp:carbons:2"/>
+    </query>
+  </iq>`);
+
+  // XEP0280：新会话重新启用 Carbons
+  const carbons = Parser.parse(await waitForReceived(server, "urn:xmpp:carbons:2"));
+  expect(carbons.tagName).toBe("iq");
+  server.send(
+    `<iq xmlns="jabber:client" type="result" id="${carbons.getAttribute("id")}"/>`,
+  );
+
+  // XEP0402：检索书签，结果里的 autojoin 房间交给 XEP0045 重新加入
+  const retrieve = Parser.parse(
+    await waitForReceived(server, "urn:xmpp:bookmarks:1"),
+  );
+  server.send(`<iq xmlns="jabber:client" type="result" id="${retrieve.getAttribute("id")}">
+    <pubsub xmlns="http://jabber.org/protocol/pubsub">
+      <items node="urn:xmpp:bookmarks:1">
+        <item id="${AUTOJOIN_ROOM}">
+          <conference xmlns="urn:xmpp:bookmarks:1" autojoin="true"><nick>tester</nick></conference>
+        </item>
+      </items>
+    </pubsub>
+  </iq>`);
+
+  // XEP0045：收到带 110 的 self-presence 才算加入成功
+  const join = Parser.parse(await waitForReceived(server, "<presence"));
+  expect(join.getAttribute("to")).toBe(`${AUTOJOIN_ROOM}/tester`);
+  server.send(`<presence xmlns="jabber:client" from="${AUTOJOIN_ROOM}/tester" to="${BOUND_JID}">
+    <x xmlns="http://jabber.org/protocol/muc#user">
+      <item affiliation="member" role="participant"/>
+      <status code="110"/>
+    </x>
+  </presence>`);
+
+  // XEP0198：会话就绪后启用流管理
+  await answerEnable(server);
 }
 
 /** 创建已注册 XEP0198 的高层连接（非 TLS，直连 localhost） */
@@ -209,6 +263,39 @@ describe("XEP0198 流管理", () => {
     await restored;
     await answerEnable(reconnected);
     expect(active.transport?.status).toBe(Status.BINDED);
+  });
+
+  it("恢复失败后的新会话重新启用 Carbons 并重新加入 autojoin 房间", async () => {
+    const active = createConnection();
+    connection = active;
+    // Carbons 与自动加入房间都依赖新会话重建，恢复失败后必须重跑
+    active.registerPlugin("XEP0280");
+    active.registerPlugin("XEP0045");
+    active.registerPlugin("XEP0402");
+
+    const sessionStart = waitForEvent(active, "session:start");
+    await active.connect();
+    const server = getServer();
+    await negotiateStream(server, BIND_SM_FEATURES);
+    await answerBind(server, BOUND_JID);
+    await sessionStart;
+    await answerSessionInit(server);
+    expect(active.XEP0045!.rooms.has(AUTOJOIN_ROOM)).toBe(true);
+
+    // 服务端拒绝恢复：回退到常规资源绑定，onSessionBound 重建会话期状态
+    const reconnected = await reconnect(active, server);
+    await waitForReceived(reconnected, "<resume");
+    const restored = waitForEvent(active, "reconnected");
+    reconnected.send(`<failed xmlns="urn:xmpp:sm:3">
+      <item-not-found xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>
+    </failed>`);
+    await answerBind(reconnected, BOUND_JID);
+    await restored;
+    await answerSessionInit(reconnected);
+
+    // 新会话重新启用了 Carbons、重新检索书签并重新加入房间
+    expect(active.XEP0045!.rooms.has(AUTOJOIN_ROOM)).toBe(true);
+    expect(active.XEP0402!.bookmarks.map((b) => b.jid)).toEqual([AUTOJOIN_ROOM]);
   });
 
   it("本地主动断开时不进行重连", async () => {

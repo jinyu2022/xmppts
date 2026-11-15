@@ -26,7 +26,7 @@ export interface OOBMessageOptions {
 /**
  * XEP-0066: Out of Band Data（`jabber:x:oob` 部分）
  *
- * 在消息或出席中携带资源 URL。规范中的 `jabber:iq:oob` 是旧式 IQ 文件传输，
+ * 在消息或 presence 中携带资源 URL。规范中的 `jabber:iq:oob` 是旧式 IQ 文件传输，
  * 本实现不涉及。
  * @see https://xmpp.org/extensions/xep-0066.html
  * @version 1.6 (2026-07-08)

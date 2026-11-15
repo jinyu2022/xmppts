@@ -83,7 +83,7 @@ export class HttpUpload {
             size: String(size),
         });
         if (options?.contentType) {
-            // TODO: 应该校验一下是不是合法的 MIME 类型吧，但规范没有要求，暂不处理
+            // TODO: 未校验 MIME 类型；规范未要求，暂不处理
             request.setAttribute("content-type", options.contentType);
         }
 

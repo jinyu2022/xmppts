@@ -7,7 +7,17 @@ import logger from "./log";
 const log = logger.getLogger("stanza");
 
 /**away：离开 chat：在线 dnd：忙碌 xa：离开（长时间）*/
-type presShow = "away" | "chat" | "dnd" | "xa";
+export type PresShow = "away" | "chat" | "dnd" | "xa";
+
+/** available presence 的子元素内容（RFC 6121 §4.7.2），字段省略时不写出对应元素 */
+export interface PresenceContent {
+  /** 在线状态 */
+  show?: PresShow;
+  /** 状态文本，写入 `<status/>` 时由序列化负责转义 */
+  status?: string;
+  /** 优先级，有效范围 -128–127（RFC 6121 §4.7.2.3） */
+  priority?: number;
+}
 
 /** message type 合法取值（RFC 6121 §5.2.2），用于运行时校验 */
 const MSG_TYPES = ["normal", "chat", "groupchat", "headline", "error"] as const;
@@ -298,7 +308,7 @@ export class Message extends StanzaBase {
 export class Presence extends StanzaBase {
   readonly type: string | null;
   readonly tagName = "presence";
-  readonly show?: presShow;
+  readonly show?: PresShow;
   readonly status?: string | null;
   constructor(stanza: XMPPElement, connection: Connection) {
     super(stanza, connection);
@@ -314,7 +324,7 @@ export class Presence extends StanzaBase {
       to: JID | null;
       from: JID | null;
       type: string | null;
-      show: presShow | undefined;
+      show: PresShow | undefined;
       status: string | null | undefined;
       [key: string]: XMPPElement | string | JID | null | undefined;
     }
@@ -325,12 +335,12 @@ export class Presence extends StanzaBase {
     from = from ? new JID(from) : null;
     const type = presence.getAttribute("type");
     // 单次遍历,找到 show/status 后分支短路;其余子节点按唯一键收集
-    let show: presShow | undefined;
+    let show: PresShow | undefined;
     let status: string | null | undefined;
     const children: Record<string, XMPPElement> = {};
     for (const [index, child] of Array.from(presence.children).entries()) {
       if (show === undefined && child.tagName === "show") {
-        show = child.textContent as presShow;
+        show = child.textContent as PresShow;
       } else if (status === undefined && child.tagName === "status") {
         status = child.textContent;
       } else {
@@ -367,6 +377,32 @@ export class Presence extends StanzaBase {
       to: to.toString(),
     });
     if (type) presence.setAttribute("type", type);
+    return presence;
+  }
+
+  /**
+   * 创建广播 presence（不带 `to`，由服务器广播给订阅者）
+   *
+   * 子元素按 RFC 6121 §4.7.2 的顺序写出；字段为 `undefined` 时省略，全部省略即空 presence（available）
+   * @param content show/status/priority
+   */
+  static createBroadcastPresence(content: PresenceContent = {}) {
+    const presence = XMPPElement.createElementNS(StanzaBase.NS, "presence");
+    if (content.show !== undefined) {
+      const show = XMPPElement.createElement("show");
+      show.textContent = content.show;
+      presence.appendChild(show);
+    }
+    if (content.status !== undefined) {
+      const status = XMPPElement.createElement("status");
+      status.textContent = content.status;
+      presence.appendChild(status);
+    }
+    if (content.priority !== undefined) {
+      const priority = XMPPElement.createElement("priority");
+      priority.textContent = String(content.priority);
+      presence.appendChild(priority);
+    }
     return presence;
   }
 }

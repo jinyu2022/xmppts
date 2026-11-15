@@ -21,17 +21,6 @@ export class XEP0280 extends Carbons implements Plugin {
   init() {
     this.connection.XEP0030!.addFeature(XEP0280.NS);
 
-    // 会话建立后才查询服务器特性
-    this.connection.once("session:start", () => {
-      void this.connection
-        .XEP0030!.getServerFeatures()
-        .then((features) => {
-          if (features.has(XEP0280.NS)) return this.enable();
-          log.warn("服务器不支持 XEP-0280");
-        })
-        .catch((error: unknown) => log.warn("获取服务器特性失败", error));
-    });
-
     this.connection.registerStanzaPlugin(XEP0280.NS, XEP0280.parseCarbonEl);
 
     // 碳消息外层的 from 必须为本账号的 bare JID，否则视为伪造并忽略
@@ -64,6 +53,18 @@ export class XEP0280 extends Carbons implements Plugin {
         }
       },
     });
+  }
+
+  onSessionBound(): void {
+    // 新会话需要重新启用副本；恢复成功后不调用，服务器侧状态保持。
+    // 重复 enable 由服务器返回 result，无副作用
+    void this.connection
+      .XEP0030!.getServerFeatures()
+      .then((features) => {
+        if (features.has(XEP0280.NS)) return this.enable();
+        log.warn("服务器不支持 XEP-0280");
+      })
+      .catch((error: unknown) => log.warn("获取服务器特性失败", error));
   }
 
   async enable(): Promise<boolean> {

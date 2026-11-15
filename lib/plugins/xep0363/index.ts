@@ -62,12 +62,20 @@ export class XEP0363 extends HttpUpload implements Plugin {
 
     /** XEP-0363 的特性由上传服务在 disco#info 中宣告，客户端不代其宣告 */
     init() {
-        // init 阶段发 IQ 会因传输未就绪报错，等会话建立后再发现并缓存
-        this.connection.once("session:start", async () => {
-            this.service = this.configuredService
-                ? await this.discoverService(this.configuredService)
-                : await this.findService(this.connection.jid.domain);
-        });
+        // 服务发现依赖会话，见 onSessionBound
+    }
+
+    onSessionBound(): void {
+        // 新会话：上一会话发现的服务作废，清空后重新发现
+        this.service = null;
+        const discovery = this.configuredService
+            ? this.discoverService(this.configuredService)
+            : this.findService(this.connection.jid.domain);
+        void discovery
+            .then((service) => {
+                this.service = service;
+            })
+            .catch((error: unknown) => log.warn("发现上传服务失败", error));
     }
 
     /**

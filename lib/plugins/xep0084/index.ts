@@ -46,7 +46,7 @@ export class XEP0084 extends Avatar implements Plugin {
         jid: JID | string,
         metadata?: AvatarMetadata
     ): Promise<(AvatarMetadata & { data?: string; }) | undefined | null> {
-        // NOTE: 其实不需要metadata ID也可以获取到头像数据，但是规范要求通过id获取
+        // NOTE: 不经 metadata ID 也能取到头像数据，但规范要求通过 ID 获取
         if (!metadata) {
             // 先获取元数据
             const getMetaDataIq = PEP.createRetrieveItemsIq(

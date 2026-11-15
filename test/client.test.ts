@@ -47,7 +47,7 @@ function setup(sessionActive = true) {
   const transport = new FakeTransport(client._createSink());
   client.transport = transport;
   if (sessionActive) {
-    transport.sink.onBinded();
+    transport.sink.onBound(true);
   } else {
     transport.status = Status.DISCONNECTED;
   }
@@ -153,6 +153,32 @@ describe("Client", () => {
     const sent = transport.sent[0] as XMPPElement;
     expect(sent.tagName).toBe("presence");
     expect(sent.getElementsByTagName("show")[0].textContent).toBe("chat");
+  });
+
+  it("setPresence 支持 show/status/priority，且不带 to", () => {
+    const { client, transport } = setup();
+
+    client.setPresence({ show: "away", status: "午休 <3", priority: 5 });
+
+    const sent = transport.sent[0] as XMPPElement;
+    expect(sent.getAttribute("to")).toBeNull();
+    expect(sent.getElementsByTagName("show")[0].textContent).toBe("away");
+    expect(sent.getElementsByTagName("status")[0].textContent).toBe("午休 <3");
+    expect(sent.getElementsByTagName("priority")[0].textContent).toBe("5");
+    // status 中的标记字符由序列化负责转义
+    expect(sent.toXMLString()).toContain("午休 &lt;3");
+  });
+
+  it("setPresence({}) 发送不带 show 的 available presence", () => {
+    const { client, transport } = setup();
+
+    client.setPresence({});
+
+    const sent = transport.sent[0] as XMPPElement;
+    expect(sent.getAttribute("to")).toBeNull();
+    expect(sent.getElementsByTagName("show").length).toBe(0);
+    expect(sent.getElementsByTagName("status").length).toBe(0);
+    expect(sent.getElementsByTagName("priority").length).toBe(0);
   });
 
   it("Client 继承 Connection 并保留构造参数", () => {

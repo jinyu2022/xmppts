@@ -31,15 +31,27 @@ describe("XEP0030 插件入口", () => {
     return { connection, plugin };
   }
 
-  it("初始化不发请求；session:start 自动发现一次", () => {
-    const { connection } = setup();
+  it("初始化不发请求；绑定成功后自动发现", () => {
+    const { connection, plugin } = setup();
     const sendAsync = vi.spyOn(connection, "sendAsync");
     expect(sendAsync).not.toHaveBeenCalled();
 
     connection.sessionActive = true;
     connection.sendAsyncResult = Parser.parse(SERVER_INFO);
-    connection.emit("session:start");
+    plugin.onSessionBound();
     expect(sendAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it("重复绑定重新查询，不复用上一会话的快照", () => {
+    const { connection, plugin } = setup();
+    connection.sessionActive = true;
+    connection.sendAsyncResult = Parser.parse(SERVER_INFO);
+    const sendAsync = vi.spyOn(connection, "sendAsync");
+
+    plugin.onSessionBound();
+    expect(sendAsync).toHaveBeenCalledTimes(1);
+    plugin.onSessionBound();
+    expect(sendAsync).toHaveBeenCalledTimes(2);
   });
 
   it("会话未就绪：getter 直接拒绝且不发送查询", async () => {

@@ -1,6 +1,6 @@
-# XMPPTS 库生命周期说明文档
+# XMPPTS 库生命周期
 
-本文档详细说明了 `xmppts` 库的连接生命周期、状态机转换、插件系统以及数据流转机制。
+本文说明 `xmppts` 库的连接生命周期、状态机转换、插件系统与数据流转。
 
 ## 1. 核心组件架构
 
@@ -15,10 +15,10 @@
 
 | 称呼 | 代码位置 | 职责 |
 | :--- | :--- | :--- |
-| 连接层 / 传输层 | `lib/transport/`（`StreamConnection` 及 `tcp.ts` / `websocket.ts` / `tcp-direct.ts`） | socket、TLS、SASL、资源绑定、流协商；只通过 `TransportSink` 的 `onBinded` / `onStanza` / `onClose` / `onError` 向上汇报 |
+| 连接层 / 传输层 | `lib/transport/`（`StreamConnection` 及 `tcp.ts` / `websocket.ts` / `tcp-direct.ts`） | socket、TLS、SASL、资源绑定、流协商；只通过 `TransportSink` 的 `onBound` / `onStanza` / `onClose` / `onError` 向上汇报 |
 | 会话层 / 高层（conn 层） | `lib/connection.ts` 的 `Connection` | 插件生命周期、stanza 路由、`sendAsync`、`session:*` 事件、自动重连策略 |
 
-> 类名易混：`Connection` 指会话层，`StreamConnection` 才是连接层。本文档中的「conn 事件」「高层事件」均指 `Connection` 上的事件；「传输层通知」指 `TransportSink` 回调。
+> 类名易混：`Connection` 指会话层，`StreamConnection` 才是连接层。本文中的「conn 事件」「高层事件」均指 `Connection` 上的事件；「传输层通知」指 `TransportSink` 回调。
 
 ## 2. 详细生命周期阶段
 
@@ -39,6 +39,7 @@
     *   `registerStanzaPlugin()`: 注册 XML 命名空间到 JS 对象的映射器。
     *   `connection.pipeline.use()`: 插入 `send`/`receive` 拦截管线。
     *   `registerEventPlugin()`: 定义基于 Stanza 内容匹配的自定义事件。
+6.  **会话绑定回调**: 插件可选实现 `onSessionBound()`。每次真正完成资源绑定（首次连接、自动重连后的重新绑定）后、派发 `session:start` / `reconnected` 之前调用；XEP-0198 流恢复属会话延续，不调用。调用时会话已可用，可直接 `sendAsync`；实现须清空旧状态并按当前事实重建，重复执行结果一致（自动重连复用插件实例，不会重新 `init()`）。插件按依赖拓扑排序执行（依赖先于依赖者，无依赖关系的插件保持注册顺序，依赖成环时打破并记 warn），单个插件抛出异常只记日志，不影响其余插件与后续事件。
 
 ### 2.3 底层流协商阶段 (Negotiation)
 底层状态机（`XMPPConnection`）的流转过程：
@@ -48,7 +49,7 @@
 4.  **`Status.STREAM_ESTABLISHED` (4)**: 收到特性列表。
 5.  **SASL 认证 (`Status.AUTHENTICATING` -> `AUTHENTICATED`)**: 自动处理认证往返。认证成功后，底层会自动**重启流**并发送第二次流头。
 6.  **资源绑定 (`Status.BINDING` -> `BINDED`)**: 绑定后分配 Full JID。
-7.  **触发通知**: 底层通过 `TransportSink` 通知高层：`onBinded` -> 高层 `session:start`（重连成功为 `reconnected`）；`onClose` -> 高层按重连策略处理（`session:end` 或重连）；`onError` -> 高层 `error` 事件；`onStanza` -> 业务分发。
+7.  **触发通知**: 底层通过 `TransportSink` 通知高层：`onBound(bound)` -> 高层 `session:start`（重连成功为 `reconnected`）；`onClose` -> 高层按重连策略处理（`session:end` 或重连）；`onError` -> 高层 `error` 事件；`onStanza` -> 业务分发。`bound` 为 `false` 表示插件（如 XEP-0198）恢复了原流，本次流没有发生新的资源绑定。
 
 > `connect()` 在开始拨号后即 resolve；认证/绑定结果通过事件通知（成功 `session:start`，失败 `error`），不会以 reject 表示。只有传输创建/拨号阶段抛出的错误才会同时 `emit("error")` 并 reject。
 
@@ -63,7 +64,7 @@
 1.  **底层**: Parser 解析出完整 XML Tree，传输层调用 `TransportSink.onStanza` 交给高层。
 2.  **拦截器**: 执行 `receive` 拦截器链。
 3.  **转换器 (`transformExtensions`)**: 扫描直接子元素与构造期字段中的元素，将匹配 `StanzaPlugin` 的 XML 节点转换为结构化 JS 对象并合并到实例上。合并规则：数组字段按出现顺序拼接，其余字段整体覆盖——同一命名空间的多个元素写入单值字段时只有最后一个可见，这是预期行为。
-4.  **请求兑现**: 节的 id 命中请求表时，结束对应的 `sendAsync` Promise。
+4.  **请求兑现**: stanza 的 id 命中请求表时，结束对应的 `sendAsync` Promise。
 5.  **分发**: 发出 `message`, `iq`, `presence` 等具体事件。
 
 ### 2.5 终止阶段 (Termination)
@@ -73,7 +74,7 @@
 3.  **错误上报**: 认证失败、协商/流错误等通过 `error` 事件上报，载荷为 `ProtocolError`，用 `scope`（`sasl` / `binding` / `stream` / `protocol`）区分来源；会话从未建立时只发 `error`，不发 `session:end`（与 `session:start` 配对）。
 4.  **高层清理**: 终结会话时（主动断开、不可重试错误、重连耗尽）执行 `_cleanup()`：`removeAllListeners()` 移除所有监听器，并清空拦截器与插件注册表；`pendingPlugins` 保留，再次 `connect()` 时由 `instantiatePlugins()`/`initPlugins()` 重建插件。
 
-**自动重连条件**：启用自动重连且连续失败次数未达上限（绑定成功即清零）。**套接字已建立后**的网络类断开（含首连尚未完成绑定、无错误的 clean close）会重试；`ProtocolError`（SASL/绑定/流/协议错误）在 `onError` 时直接终结会话，不进入重连，以免重复提交无效凭据；例外是 `retryable` 为 `true` 的临时错误（协商/连接超时、`system-shutdown`），交给随后的 `onClose` 判断是否重连。**建套接字前**的失败（DNS/SRV、XEP-0368/0156 发现、传输工厂 `create` 抛错）没有 close 事件，`connect()` 只 reject 并发出 `error`，本次不调度重连。
+**自动重连条件**：启用自动重连且连续失败次数未达上限（绑定成功即清零）。**socket 已建立后**的网络类断开（含首连尚未完成绑定、无错误的 clean close）会重试；`ProtocolError`（SASL/绑定/流/协议错误）在 `onError` 时直接终结会话，不进入重连，以免重复提交无效凭据；例外是 `retryable` 为 `true` 的临时错误（协商/连接超时、`system-shutdown`），交给随后的 `onClose` 判断是否重连。**建 socket 前**的失败（DNS/SRV、XEP-0368/0156 发现、传输工厂 `create` 抛错）没有 close 事件，`connect()` 只 reject 并发出 `error`，本次不调度重连。
 
 ## 3. 核心事件汇总表
 
@@ -83,8 +84,8 @@
 
 | 回调 | 触发时机 | 高层处理 |
 | :--- | :--- | :--- |
-| `onBinded` | 资源绑定成功，分配 Full JID | 每个 `connect()` 周期的首次绑定发 `session:start`，之后（自动重连）发 `reconnected` |
-| `onStanza` | 协商完成后收到完整 XML 节 | 接收管线 → 事件分发 |
+| `onBound(bound)` | 会话可用：本流完成资源绑定（`bound = true`），或插件恢复了原流（`bound = false`） | 置会话为可用（`isSessionActive` 变为 `true`）；`bound = true` 时先调用插件的 `onSessionBound()`；每个 `connect()` 周期的首次绑定发 `session:start`，之后（自动重连）发 `reconnected` |
+| `onStanza` | 协商完成后收到完整 stanza | 接收管线 → 事件分发 |
 | `onClose` | 物理连接关闭（传输层已置 `DISCONNECTED`） | 会话未终结且可重连时调度重连，否则发出 `session:end` |
 | `onError` | 认证失败/协商错误/超时/底层错误 | 立即以 `error` 事件上报；`ProtocolError` 同时终结会话（不重连），`retryable` 的临时错误（超时、`system-shutdown`）例外，交给随后的 `onClose` 判断 |
 

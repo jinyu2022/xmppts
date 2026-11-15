@@ -15,7 +15,6 @@
 
 1. **注册 nick 解析器** — 解析命名空间 `http://jabber.org/protocol/nick` 的元素为 `nick` 字段。
 2. **注册 `pep:nickname` 事件** — 匹配 `message.event.node === nick`。
-3. **监听 `session:start`** — 当前为空实现。
 
 ## 扩展字段
 

@@ -34,8 +34,8 @@ export class XEP0308 extends Correction implements Plugin {
     /**
      * 发送消息更正请求
      *
-     * 创建一个包含更正内容的消息节并发送。该消息包含更正后的正文
-     * 和指向原消息的 <replace/> 元素。
+     * 构造并发送更正消息：正文为更正后的内容，
+     * 并附带指向原消息的 <replace/> 元素。
      *
      * @param to - 消息接收者的 JID（裸 JID 或完整 JID）
      * @param replaceId - 要更正的原消息 ID

@@ -279,6 +279,15 @@ describe("XEP0045 插件入口集成（Mock Socket，仅注册当前插件）", 
       return { connection, plugin };
     }
 
+    it("新会话绑定后清空房间表", () => {
+      const { plugin } = setupRoom();
+      expect(plugin.rooms.size).toBe(1);
+
+      // 服务端不随新流保留房间成员资格，本地表同步作废
+      plugin.onSessionBound();
+      expect(plugin.rooms.size).toBe(0);
+    });
+
     // §7.6 Example 50：改名先收到旧昵称的 unavailable（303 + 110），再收到新昵称的 available（110）
     it("旧昵称的 303 unavailable self-presence 不算成功", async () => {
       const { connection, plugin } = setupRoom();

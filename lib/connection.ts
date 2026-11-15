@@ -452,6 +452,34 @@ export class Connection extends Emitter<SocketEventMap> {
         this.checkAndRegisterDep(name),
       ),
     );
+    // 按依赖拓扑重排：依赖先于依赖者，让实例化、init() 与 onSessionBound() 都按依赖顺序执行；
+    // 无依赖关系的插件保持注册顺序
+    const ordered: string[] = [];
+    /** 在 DFS 栈上：命中说明依赖成环 */
+    const visiting = new Set<string>();
+    /** 已排入 ordered，避免重复 */
+    const placed = new Set<string>();
+    // 深度优先后序：先排依赖再排自身；环上无法满足全部依赖，在原处打破并告警
+    const visit = (name: string) => {
+      if (placed.has(name)) return;
+      if (visiting.has(name)) {
+        log.warn(`插件依赖存在循环：${name}`);
+        return;
+      }
+      visiting.add(name);
+      const deps = this.pendingPlugins.get(name)?.func?.dependencies ?? [];
+      for (const dep of deps) visit(dep);
+      visiting.delete(name);
+      placed.add(name);
+      ordered.push(name);
+    };
+    for (const name of this.pendingPlugins.keys()) visit(name);
+    // 重建 Map 保持拓扑序：值仍是同一批条目，键集合不变
+    const entries = ordered.map(
+      (name) => [name, this.pendingPlugins.get(name)!] as const,
+    );
+    this.pendingPlugins.clear();
+    for (const [name, entry] of entries) this.pendingPlugins.set(name, entry);
     // 先全部实例化，保证 init() 里能访问到依赖实例
     for (const [name, { func, options }] of this.pendingPlugins) {
       // options 的类型已在 registerPlugin 处按具体构造函数校验；
@@ -487,18 +515,31 @@ export class Connection extends Emitter<SocketEventMap> {
   _createSink(): TransportSink {
     return {
       // XMPP 会话可用
-      onBinded: () => {
+      onBound: (bound: boolean) => {
+        // 断开后传输层的迟到回调：此时已无会话可维护
+        if (!this.transport) return;
         // RFC 6120 §4.3.6 / §7.7.1：以服务器返回的 bound JID 为准
-        const boundJid = this.transport?.jid;
+        const boundJid = this.transport.jid;
         if (boundJid && boundJid.full !== this.jid.full) this.jid = boundJid;
         // 绑定成功即视为连接可用，重置连续失败计数
         this.reconnectAttempts = 0;
-        // 先置位再派发，保证监听器内读到新状态（可在回调里直接发 stanza）
-        if (this.sessionActive === undefined) {
-          this.sessionActive = true;
+        // 先置位再派发，保证监听器与插件回调内读到新状态（可在回调里直接发 stanza）
+        const isFirstSession = this.sessionActive === undefined;
+        this.sessionActive = true;
+        // 真正完成绑定（非流恢复）即新会话：先让插件重建自身状态，再由生命周期事件统一初始化
+        if (bound) {
+          for (const name of this.pendingPlugins.keys()) {
+            // 单个插件重建失败只记日志：不能阻断其余插件与后续生命周期事件
+            try {
+              (this[name as keyof PluginRegistry] as Plugin)?.onSessionBound?.();
+            } catch (error) {
+              log.error(`插件 ${name} 的 onSessionBound 执行失败:`, error);
+            }
+          }
+        }
+        if (isFirstSession) {
           this.emit("session:start");
         } else {
-          this.sessionActive = true;
           this.emit("reconnected");
         }
       },
@@ -647,7 +688,7 @@ export class Connection extends Emitter<SocketEventMap> {
       stanza = this.pipeline.run("receive", { stanza }).stanza;
 
       const tagName = isStanzaTag(stanza.tagName) ? stanza.tagName : "others";
-      // 先兑现等待中的请求；命中后仍继续派发，普通监听器仍能看到该节
+      // 先兑现等待中的请求；命中后仍继续派发，普通监听器仍能看到该 stanza
       const requestId = stanza.getAttribute("id");
       if (requestId) {
         // rfc规定了需要保证id不重复，因此仅看id就行

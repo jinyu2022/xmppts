@@ -8,7 +8,7 @@
 
 ## 注册后行为
 
-1. 注册消息与出席上的 `<occupant-id/>` 解析器。
+1. 注册消息与 presence 上的 `<occupant-id/>` 解析器。
 
 不注册专用事件，在 `message` / `presence` 事件中读取 `occupantID` 即可。
 

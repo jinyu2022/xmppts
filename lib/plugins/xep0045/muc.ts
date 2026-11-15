@@ -189,7 +189,7 @@ export class MUC {
 
   static createRequestVoiceMsg(room: string | JID) {
     if (typeof room !== "string") room = room.toString();
-    // XXX: 感觉不如从字符串构建
+    // XXX: 改为从字符串构建更直接
     const form = Form.createFormEl({
       type: "submit",
       fields: [

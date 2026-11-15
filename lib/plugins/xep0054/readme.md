@@ -54,6 +54,6 @@ const el2 = VCardTemp.createVCard({
 
 ## 注意事项
 
-- 个人头像应使用 **XEP-0084**，不要使用此模块。
+- 个人头像应使用 **XEP-0084**，不要使用本模块。
 - 按 §9 DTD，`TEL`/`ADR`/`EMAIL` 的类型是**空元素**（`<WORK/>`、`<VOICE/>`…），`<TYPE>` 只用于 `PHOTO`/`LOGO`/`KEY`（`SOUND` 无 `TYPE`）；解析时非规范的 `<TYPE>` 会 `log.warn`。
 - 本模块仅存在于代码中，供 MUC 相关场景复用 vCard 基础类型。

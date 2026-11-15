@@ -150,9 +150,9 @@ describe("XEP0410 失活检测", () => {
 
   it("房间失活达到一个 inactivityTimeout 后才探测", async () => {
     vi.useFakeTimers();
-    const { connection, ping } = createPlugin();
+    const { connection, plugin, ping } = createPlugin();
 
-    connection.emit("session:start");
+    plugin.onSessionBound();
     expect(ping).not.toHaveBeenCalled();
 
     // 房间中途有活动：基线后移，探测整体推迟
@@ -182,13 +182,13 @@ describe("XEP0410 失活检测", () => {
     vi.useFakeTimers();
     const startedAt = new Date("2026-08-02T00:00:00.000Z");
     vi.setSystemTime(startedAt);
-    const { connection } = createPlugin();
+    const { connection, plugin } = createPlugin();
     const stale = vi.fn();
     const fresh = vi.fn();
     connection.on("muc:stale", stale);
     connection.on("muc:fresh", fresh);
 
-    connection.emit("session:start");
+    plugin.onSessionBound();
     await tick(ticksToStale);
 
     expect(stale).toHaveBeenCalledOnce();
@@ -204,9 +204,9 @@ describe("XEP0410 失活检测", () => {
 
   it("以 XEP0045 的房间表为准", async () => {
     vi.useFakeTimers();
-    const { connection, ping } = createPlugin();
+    const { connection, plugin, ping } = createPlugin();
 
-    connection.emit("session:start");
+    plugin.onSessionBound();
     connection.XEP0045.rooms.delete(roomJid);
     connection.emit("presence", { from: new JID(`${roomJid}/nick`) });
     await Promise.resolve();
@@ -220,7 +220,7 @@ describe("XEP0410 失活检测", () => {
     const { connection, plugin } = createPlugin();
     const lastActivity = lastActivityOf(plugin);
 
-    connection.emit("session:start");
+    plugin.onSessionBound();
     // 普通聊天与联系人 presence 的 bare JID 都不是已加入房间
     connection.emit("message", { from: new JID("romeo@montague.lit") });
     connection.emit("presence", { from: new JID("romeo@montague.lit/orchard") });
@@ -230,9 +230,9 @@ describe("XEP0410 失活检测", () => {
 
   it("会话结束时取消待执行的检测", async () => {
     vi.useFakeTimers();
-    const { connection, ping } = createPlugin();
+    const { connection, plugin, ping } = createPlugin();
 
-    connection.emit("session:start");
+    plugin.onSessionBound();
     connection.emit("session:end");
     await tick(ticksToStale);
 
@@ -242,9 +242,9 @@ describe("XEP0410 失活检测", () => {
   it("self-ping 超时后不重入房间", async () => {
     vi.useFakeTimers();
     const ping = vi.fn().mockRejectedValue(new DOMException("ping timeout", "TimeoutError"));
-    const { connection, join } = createPlugin({ ping });
+    const { plugin, join } = createPlugin({ ping });
 
-    connection.emit("session:start");
+    plugin.onSessionBound();
     await tick(ticksToStale);
     await Promise.resolve();
 
@@ -261,9 +261,9 @@ describe("XEP0410 失活检测", () => {
           rejectPing = reject;
         }),
     );
-    const { connection, join } = createPlugin({ ping });
+    const { connection, plugin, join } = createPlugin({ ping });
 
-    connection.emit("session:start");
+    plugin.onSessionBound();
     await tick(ticksToStale);
     expect(ping).toHaveBeenCalledOnce();
 
@@ -278,9 +278,9 @@ describe("XEP0410 失活检测", () => {
     vi.useFakeTimers();
     const ping = vi.fn().mockRejectedValue(createNotAcceptableError());
     const join = vi.fn(() => new Promise(() => {}));
-    const { connection } = createPlugin({ ping, join });
+    const { plugin } = createPlugin({ ping, join });
 
-    connection.emit("session:start");
+    plugin.onSessionBound();
     await tick(ticksToStale);
     await Promise.resolve();
     await tick(ticksToStale);

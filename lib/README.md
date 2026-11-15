@@ -18,24 +18,11 @@
 
 > 连接生命周期与状态机见 [LIFECYCLE.md](LIFECYCLE.md)。
 
-## 发送时机与失败行为
-
-插件 `init()` 只注册处理器与本地状态；业务请求应在 `session:start` 后发送。
-`send()` 在未连接、已断开时抛出 `Error`，`message` / `iq` / `presence` 在会话未就绪（包括协商与自动重连期间）也抛错。检查在发送管线入口执行，初始化或清理导致管线没有写出终端时也不会静默丢弃。
-流层元素仍可在传输可用的协商阶段发送。会话就绪后的插件拦截器可以通过不调用 `next()` 主动短路。
-`sendAsync()` 通过请求表按 id 匹配响应；发送失败、超时或连接断开都会 reject；结束等待时统一停掉超时计时器并清除表项；它不会等待会话或自动排队。
 
 ## 地址与命名空间
 
 - [JID](JID.ts#L23) 的 `full` 在有 resource 时返回 `bare/resource`，无 resource 时返回 `bare`，不会追加空 `/`。
 - **localpart 一律使用 XEP-0106 转义后的形式**：`JID.parse()` 检测到需转义的字符时自动 `escapeLocal`，库内拿到的都是转义形式——包括 [SASL](auth/sasl.ts#L124) 的 authcid（PLAIN 直接拼 `jid.local`，SCRAM 只在其上再做 RFC 5802 的 `=`/`,` 转义）。未经转义的原始用户名属于 UI 层，不要传进协议代码；需要展示给人时用 `XEP0106.unescapeLocal()`。此约定已与 XSF 确认。
-- [XMPPElement](ltx/Element.ts#L101) 的 `namespaceURI` 在显式 `xmlns=""` 下返回 `null`，后代同样不继承外层默认命名空间；前缀绑定及子元素重新声明的命名空间不受影响。
-
-## XML 属性与字符引用
-
-- [LtxParser](ltx/LtxParser.ts#L38) 的 `startElement` 事件使用无原型属性表，`__proto__`、`constructor` 等名称按普通属性保留，解析与序列化往返不会丢失。
-- [数字字符引用](ltx/escape.ts#L58) 支持十进制 `&#65;` 和十六进制 `&#x41;`，允许前导零及大小写十六进制数字，十六进制前缀必须为小写 `x`。带尾缀、正负号或空白的写法（如 `&#65junk;`、`&#+65;`）会抛出 `Error`；码点范围按 [XML 1.0 §2.2、§4.1](https://www.w3.org/TR/xml/#sec-references) 校验。
-- 这不是完整 XML 校验：裸 `&`、缺少分号、重复属性等仍有缺口；实体错误可能直接从 `write()` / `end()` 同步抛出，不能只依赖 `error` 事件。未解决问题及输入示例。
 
 ## 已实现的协议
 
@@ -60,7 +47,7 @@
 | [XEP-0199](plugins/xep0199/readme.md) | XMPP Ping | XEP-0030 |
 | [XEP-0203](plugins/xep0203/readme.md) | 延迟投递 | — |
 | [XEP-0280](plugins/xep0280/readme.md) | 消息碳副本 | XEP-0030, XEP-0297 |
-| [XEP-0297](plugins/XEP0297/readme.md) | 节转发 | XEP-0030, XEP-0203 |
+| [XEP-0297](plugins/XEP0297/readme.md) | Stanza 转发 | XEP-0030, XEP-0203 |
 | [XEP-0308](plugins/xep0308/readme.md) | 消息更正 | XEP-0030 |
 | [XEP-0313](plugins/xep0313/readme.md) | 消息归档管理（MAM） | XEP-0004, XEP-0030 |
 | [XEP-0333](plugins/xep0333/readme.md) | 已显示标记（Displayed Markers） | XEP-0030 |

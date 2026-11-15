@@ -2,7 +2,6 @@
 
 审阅对象：[Element.ts](Element.ts)、[LtxParser.ts](LtxParser.ts)、[Parser.ts](Parser.ts)、[escape.ts](escape.ts)、[QuerySelector.ts](QuerySelector.ts)、[XMPPElementCollection.ts](XMPPElementCollection.ts)
 
-
 复核日期：2026-10-18。测量语料为 RFC/XEP 规范文档。
 
 ## 基准方法与语料
@@ -11,7 +10,7 @@
 | -------- | ----------------------------------------------- | -----: |
 | `CHAT_MSG`     | RFC 6121 §5.2.2 聊天消息 + XEP-0203 §2 delay    |  341 B |
 | `ROSTER`       | RFC 6121 §2.1.3 roster 结果（4 个 item）        |  566 B |
-| `MUC_PRESENCE` | XEP-0045 §7.2.2 MUC 自身出席                    |  279 B |
+| `MUC_PRESENCE` | XEP-0045 §7.2.2 MUC 自身 presence                    |  279 B |
 | `DISCO_INFO`   | XEP-0030 disco#info 结果（2 identity + 8 feature） |  635 B |
 | `FORM`         | XEP-0004 §3.1 表单（5 个 field）                |  512 B |
 | `LONG_MSG`     | 长正文 groupchat 消息                           | 2 422 B |

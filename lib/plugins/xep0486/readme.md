@@ -43,6 +43,7 @@ const photo = await client.XEP0486!.getAvatar("room@conference.example.com");
 ## 注意事项
 
 - 基于 **vCard PHOTO**（复用 XEP-0054 / XEP-0153）。
+- `setAvatar()` / `getAvatar()` 的 `to` 是房间地址，传入带 resource 的 occupant JID 时自动取房间裸 JID。
 - `getAvatar()` 返回的 `binval` 是 base64 编码的图片数据。
 - 需要用户对房间有相应权限。
 - 规范 §3.1 要求先以 disco#info 确认服务含 `<feature var='vcard-temp'/>`，当前未探测。

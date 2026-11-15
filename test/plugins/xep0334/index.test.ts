@@ -25,12 +25,12 @@ describe("XEP0334 插件入口", () => {
   it("接收 §3 Example 1 的消息，提示合并为数组", () => {
     const connection = new Connection("juliet@capulet.lit/laptop", "secret");
     const sink = connection._createSink();
-    // 接收路径只访问 transport.status，onBinded 另需 transport.jid
+    // 接收路径只访问 transport.status，onBound 另需 transport.jid
     connection.transport = {
       status: Status.BINDED,
       jid: connection.jid,
     } as unknown as TransportSocket;
-    sink.onBinded();
+    sink.onBound(true);
     new XEP0334(connection).init();
 
     const received: Message[] = [];

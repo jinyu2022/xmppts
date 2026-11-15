@@ -56,9 +56,9 @@ describe("XEP0363 插件入口", () => {
     return { connection, plugin };
   }
 
-  /** 触发 session:start 并等待自动发现的服务写入缓存 */
-  async function startSession(connection: FakeConnection, plugin: XEP0363) {
-    connection.emit("session:start");
+  /** 触发会话绑定回调并等待自动发现的服务写入缓存 */
+  async function startSession(plugin: XEP0363) {
+    plugin.onSessionBound();
     await vi.waitFor(() => expect(plugin.uploadService).not.toBeNull());
   }
 
@@ -79,7 +79,7 @@ describe("XEP0363 插件入口", () => {
   it("会话建立后自动发现并缓存上传服务", async () => {
     const { connection, plugin } = setup();
     expect(plugin.uploadService).toBeNull();
-    await startSession(connection, plugin);
+    await startSession(plugin);
     expect(plugin.uploadService?.jid).toBe(SERVICE);
     expect(connection.discoInfoCalls).toContain(SERVICE);
 
@@ -180,15 +180,15 @@ describe("XEP0363 插件入口", () => {
       { jid: "conference.capulet.lit" },
       { jid: SERVICE },
     ]);
-    connection.emit("session:start");
+    plugin.onSessionBound();
 
     await vi.waitFor(() => expect(plugin.uploadService).not.toBeNull());
     expect(connection.discoInfoCalls).not.toContain("conference.capulet.lit");
   });
 
   it("配置了 service 时直接查询该服务", async () => {
-    const { connection } = setup({ service: SERVICE });
-    connection.emit("session:start");
+    const { connection, plugin } = setup({ service: SERVICE });
+    plugin.onSessionBound();
 
     await vi.waitFor(() =>
       expect(connection.discoInfoCalls).toContain(SERVICE),
@@ -227,8 +227,8 @@ describe("XEP0363 插件入口", () => {
   });
 
   it("upload 完成 slot 请求并 PUT 到 put URL", async () => {
-    const { connection, plugin } = setup();
-    await startSession(connection, plugin);
+    const { plugin } = setup();
+    await startSession(plugin);
     const fetchMock = vi.fn(() =>
       Promise.resolve({
         ok: true,
@@ -263,7 +263,7 @@ describe("XEP0363 插件入口", () => {
   it("upload 在超过 max-file-size 时不发起 HTTP 请求", async () => {
     const { connection, plugin } = setup();
     connection.discoInfo.get(SERVICE)!.extensions!.fields[0].values = ["2"];
-    await startSession(connection, plugin);
+    await startSession(plugin);
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
@@ -274,8 +274,8 @@ describe("XEP0363 插件入口", () => {
   });
 
   it("upload 拒绝服务未宣告的用途", async () => {
-    const { connection, plugin } = setup();
-    await startSession(connection, plugin);
+    const { plugin } = setup();
+    await startSession(plugin);
 
     await expect(
       plugin.upload("a.bin", new Uint8Array([1]), { purpose: "permanent" }),
@@ -283,8 +283,8 @@ describe("XEP0363 插件入口", () => {
   });
 
   it("upload 在 HTTP 非 2xx 时抛错", async () => {
-    const { connection, plugin } = setup();
-    await startSession(connection, plugin);
+    const { plugin } = setup();
+    await startSession(plugin);
     vi.stubGlobal(
       "fetch",
       vi.fn(() =>

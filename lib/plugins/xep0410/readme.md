@@ -19,7 +19,7 @@
 
 `init()` 用单一扫描定时器统一维护所有已加入房间的空闲状态：
 
-1. `session:start` 后只启动计时，不立即 ping（`XEP0045.rooms` 中已存在的房间直接建立基线）。
+1. 会话绑定（`onSessionBound`）后只启动计时，不立即 ping（`XEP0045.rooms` 中已存在的房间直接建立基线）。
 2. 已加入房间的 message/presence 重置该房间的计时；普通聊天与联系人 presence 不属于任何房间，不进入活动表。
 3. 本人加入房间（§7.2.3 的 status 110）时建立基线，本人离开（110 且无 §7.6 的 303 改昵称标记）时回收该房间状态。
 4. 连续 `inactivityTimeout` 无活动后，向自己的 `roomJid/nick` 发 self-ping（扫描粒度 `checkInterval`，超阈值后最多再等一个间隔才发出）。
@@ -77,7 +77,7 @@ client.on("muc:fresh", ({ roomJid, rejoined }) => {
 
 ## 注意事项
 
-- 无需手动调用，`session:start` 时自动启动空闲计时。
+- 无需手动调用，会话绑定时自动启动空闲计时。
 - 空闲时间按房间分别统计，仅该房间（`XEP0045.rooms` 中的房间）的 message/presence 会重置计时。
 - 只有确认已离开的房间才会重加入。
 - 自动重连期间 `connection.isSessionActive` 为 `false`，检查自动暂停但不清理状态，重连成功后继续；`session:end` 才彻底停止。

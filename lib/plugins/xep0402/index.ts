@@ -9,12 +9,12 @@ import type { Conference } from "./bookmarks";
 const log = logger.getLogger("XEP0402");
 /**
  * XEP-0402: PEP Native Bookmarks
- * 加载此插件后会自动加入频道
+ * 加载本插件后会自动加入房间
  * @see https://xmpp.org/extensions/xep-0402.html
  * @version 1.2.0 (2024-08-15)
  */
 export default class XEP0402 extends Bookmarks implements Plugin {
-    // 仅在需要加入群聊时需要求 XEP0045，本插件本事不依赖 XEP0045，故不将 XEP0045 列为必选依赖
+    // 仅在加入群聊时要求 XEP0045，本插件本身不依赖 XEP0045，故不将 XEP0045 列为必选依赖
     // XEP0060 只为解析错误里的 pubsub#errors 附加条件，便于调用方识别节点配置问题
     static readonly dependencies = ["XEP0030", "XEP0163", "XEP0060"] as const;
     static readonly NS_NOTIFY = "urn:xmpp:bookmarks:1+notify";
@@ -69,9 +69,12 @@ export default class XEP0402 extends Bookmarks implements Plugin {
             const { retracts } = message.event;
             this.bookmarks = this.bookmarks.filter((b) => !retracts.includes(b.jid));
         });
+    }
 
-        // 首次会话建立后检索书签并装载公开状态；加载了 XEP0045 时才自动加入 autojoin 的房间
-        this.connection.once("session:start", async () => {
+    onSessionBound(): void {
+        // 新会话：服务端房间成员资格不随新流保留，重新检索书签并加入 autojoin 房间。
+        // 书签整体覆盖；XEP0045 在新会话里已清空房间表，因此每个房间都会重新加入
+        void (async () => {
             try {
                 this.bookmarks = await this.retrieveBookmarks();
             } catch (error) {
@@ -103,7 +106,7 @@ export default class XEP0402 extends Bookmarks implements Plugin {
                     log.warn(`加入会议 ${roomJid.jid} 失败`, error);
                 }
             }
-        });
+        })();
     }
 
     /**

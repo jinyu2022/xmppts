@@ -11,7 +11,7 @@
 
 ## 注册后行为
 
-加载此插件后，Connection 会自动：
+加载本插件后，Connection 会自动：
 
 1. **注册 disco 特性** — 向 XEP-0030 注册 `http://jabber.org/protocol/muc`
 2. **注册 `muc#user` 解析器** — 自动把 presence/message 中的 muc 扩展解析到 `muc` 字段
@@ -45,7 +45,7 @@ interface MUCUser {
 }
 ```
 
-`rooms` 以 **bare room JID**（如 `room@conference.example`）为键，由全局 `presence` 监听自动维护：
+`rooms` 以 **bare room JID**（如 `room@conference.example`）为键，由全局 `presence` 监听自动维护。每次会话绑定（`onSessionBound`）时清空：房间成员资格属于会话内容，新流上需要重新加入房间（这也让依赖 `rooms` 重建状态的 XEP0402/XEP0410 在新会话里从头开始）。
 
 | 时机 | 行为 |
 |------|------|
@@ -207,4 +207,4 @@ client.on("muc:join", (presence) => {
 - 101 = 不在房间期间成员身份发生变化（由房间以 message 下发）
 - `rooms` 的增删由全局 presence 监听完成：自身离开删除整个房间条目；他人离开、被踢/被禁移除对应 occupant
 - 发送群聊消息需自行构造 `type='groupchat'` 的 message 发往房间 bare JID（无便捷发送方法）
-- 目前主流服务器实现中会对message消息回传，且id保持一致，因此可以用 `sendAsync` 发送群聊消息并等待回传的 message 来确认发送成功（不保证所有服务器都这样）
+- 目前主流服务器会对 message 回传，且 id 保持一致，因此可以用 `sendAsync` 发送群聊消息并等待回传的 message 来确认发送成功（不保证所有服务器都这样）

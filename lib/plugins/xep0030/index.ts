@@ -59,13 +59,6 @@ export class XEP0030 implements Plugin {
     this.addFeature(Disco.NS.DISCO_INFO);
     this.addFeature(Disco.NS.DISCO_ITEMS);
 
-    // 会话建立后才能查询；结果填充到快照字段，调用方等待 discover() 即可
-    this.connection.once("session:start", () => {
-      void this.discover().catch(() => {
-        // 失败已在 discover 内 log.warn，这里只吞掉无人 await 时的 rejection
-      });
-    });
-
     this.connection.on("iq", (iq) => {
       if (iq.type !== "get") return;
       const stanza = iq.xml;
@@ -91,6 +84,16 @@ export class XEP0030 implements Plugin {
       } else {
         log.debug("无关disco查询", query);
       }
+    });
+  }
+
+  onSessionBound(): void {
+    // 新会话：上一会话的查询结果作废，清空快照后重新发现；调用方等待 discover() 即可
+    this.discovery = undefined;
+    this.serverFeatures.clear();
+    this.serverIdentities.length = 0;
+    void this.discover().catch(() => {
+      // 失败已在 discover 内 log.warn，这里只吞掉无人 await 时的 rejection
     });
   }
 

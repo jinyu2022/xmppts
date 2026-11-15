@@ -30,12 +30,12 @@ describe("XEP0428 插件入口", () => {
     // XEP0428 依赖 XEP0030 宣告特性，先挂上依赖实例（插件属性由 as const 表推导为只读）
     Object.assign(connection, { XEP0030: new XEP0030(connection) });
     const sink = connection._createSink();
-    // 接收路径只访问 transport.status，onBinded 另需 transport.jid
+    // 接收路径只访问 transport.status，onBound 另需 transport.jid
     connection.transport = {
       status: Status.BINDED,
       jid: connection.jid,
     } as unknown as TransportSocket;
-    sink.onBinded();
+    sink.onBound(true);
     new XEP0428(connection).init();
 
     const received: Message[] = [];

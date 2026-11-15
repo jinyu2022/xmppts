@@ -151,7 +151,7 @@ describe("XEP0402 插件入口", () => {
   });
 
   it("自动加入房间时把书签密码传给 MUC.join", async () => {
-    const { connection } = setup();
+    const { connection, plugin } = setup();
     /** MUC.join 收到的参数 */
     const joins: Array<[string, string, unknown]> = [];
     (connection as unknown as { XEP0045?: unknown }).XEP0045 = {
@@ -174,7 +174,7 @@ describe("XEP0402 插件入口", () => {
       </iq>`,
     );
 
-    connection.emit("session:start");
+    plugin.onSessionBound();
 
     await vi.waitFor(() => expect(joins).toHaveLength(1));
     expect(joins[0]).toEqual([
@@ -185,7 +185,7 @@ describe("XEP0402 插件入口", () => {
   });
 
   it("书签没有密码时 join 不带 password 选项", async () => {
-    const { connection } = setup();
+    const { connection, plugin } = setup();
     /** MUC.join 收到的参数 */
     const joins: Array<[string, string, unknown]> = [];
     (connection as unknown as { XEP0045?: unknown }).XEP0045 = {
@@ -206,7 +206,7 @@ describe("XEP0402 插件入口", () => {
       </iq>`,
     );
 
-    connection.emit("session:start");
+    plugin.onSessionBound();
 
     await vi.waitFor(() => expect(joins).toHaveLength(1));
     expect(joins[0][2]).toBeUndefined();

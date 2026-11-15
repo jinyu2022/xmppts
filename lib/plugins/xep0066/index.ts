@@ -6,7 +6,7 @@ import { OOB, type OOBMessageOptions, type OOBData } from "./oob";
 /**
  * XEP-0066: Out of Band Data
  *
- * 解析消息与出席中的 `jabber:x:oob` 元素，并提供发送方法。
+ * 解析消息与 presence 中的 `jabber:x:oob` 元素，并提供发送方法。
  * @see https://xmpp.org/extensions/xep-0066.html
  * @version 1.6 (2026-07-08)
  */
@@ -47,7 +47,7 @@ declare module "../../stanza" {
     }
 
     interface Presence {
-        /** XEP0066: 本次出席携带的带外数据 */
+        /** XEP0066: 本次 presence 携带的带外数据 */
         oob?: OOBData;
     }
 }

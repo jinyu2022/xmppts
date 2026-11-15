@@ -51,15 +51,15 @@ export class Correction {
     }
 
     /**
-     * 创建包含更正内容的完整消息节
+     * 构造一条包含更正内容的消息
      *
-     * 创建一个新的消息节，包含更正后的消息体以及指向原消息的 <replace/> 元素。
+     * 消息体为更正后的正文，并附带指向原消息的 <replace/> 元素。
      *
      * @param to - 消息接收者的 JID
      * @param replaceId - 要更正的原消息 ID
      * @param newBody - 更正后的消息正文
      * @param type - 消息类型，应与原始消息一致
-     * @returns 返回包含更正内容的可发送的消息节
+     * @returns 可直接发送的消息
      */
     static createCorrectionMessageEl(
         to: string | JID,

@@ -70,16 +70,19 @@ export default class XEP0199 extends Ping implements Plugin {
         });
 
         this.connection.XEP0030!.addFeature(Ping.NS);
-        // 会话建立后才查询服务器特性；未就绪时 getter 直接拒绝，不会发出请求
-        this.connection.once("session:start", () => {
-            void this.connection
-                .XEP0030!.getServerFeatures()
-                .then((features) => {
-                    if (!features.has(Ping.NS)) return log.info("服务器不支持XEP-0199");
-                    if (this.config.keepalive) this.keepAlivePing();
-                })
-                .catch((error: unknown) => log.warn("获取服务器特性失败", error));
-        });
+    }
+
+    onSessionBound(): void {
+        // 新会话：先停掉上一会话的 timer，再按服务器支持情况重新启动；
+        // 未就绪时 getter 直接拒绝，不会发出请求
+        this.stopKeepAlive();
+        void this.connection
+            .XEP0030!.getServerFeatures()
+            .then((features) => {
+                if (!features.has(Ping.NS)) return log.info("服务器不支持XEP-0199");
+                if (this.config.keepalive) this.keepAlivePing();
+            })
+            .catch((error: unknown) => log.warn("获取服务器特性失败", error));
     }
 
     /**
@@ -109,7 +112,7 @@ export default class XEP0199 extends Ping implements Plugin {
     /**
      * 立即启动或重排 keepalive ping 的定时器。若已存在定时器，则先清除旧的。
      * 该方法在服务器宣告 ping 特性后自动调用，通常不需要手动调用。
-     * 定时器只在 session:start 后的异步查询中创建，会话终结后由 session:end 停表。
+     * 定时器只在会话绑定后的异步查询中创建，会话终结后由 session:end 停表。
      */
     keepAlivePing() {
         this.stopKeepAlive();

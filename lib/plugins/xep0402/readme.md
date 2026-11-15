@@ -16,14 +16,14 @@
 3. **注册事件**（均为 `tagName = "message"`，且来源必须是本账号的 bare JID）：
    - `bookmark:update` — 匹配 `event.node === "urn:xmpp:bookmarks:1"` 且每项都带 `id` 与 `conference`（任一项不合规则整条通知丢弃），命中后逐个按 item id 新增或替换 `bookmarks` 中的对应项
    - `bookmark:delete` — 匹配 `event.node === "urn:xmpp:bookmarks:1" && event.retracts != null`，命中后按 item id 从 `bookmarks` 中移除
-4. **装载书签并自动加入房间** — 首次 `session:start` 时触发（`once`）：
+4. **装载书签并自动加入房间** — 每次会话绑定（`onSessionBound`）时触发：
    1. `retrieveBookmarks()` 拉取全部书签并写入 `this.bookmarks`，失败仅 `log.error` 并中止（与是否加载 XEP-0045 无关）；
    2. 未加载 XEP-0045 则到此为止；
    3. 筛选 `autojoin === true` 的书签，逐个 `XEP0045.join(room, nick, options)`，书签含 `password` 时以 `{ password }` 传入（XEP-0045 §7.2 进入密码房间所需的 `<password/>`）；
    4. 昵称回退：书签 `nick` → `XEP0172.getSelfNick()` → `connection.jid.local`；
    5. 单个房间加入失败仅 `log.error`，不中断其余房间。
 
-   首次检索只在首次 `session:start` 执行；自动重连发出的 `reconnected` 不会重新触发（重连期间书签变更由 PEP 通知同步）。
+   自动重连未恢复旧会话（新绑定）时会重新检索并重新加入房间；流恢复成功不触发（重连期间书签变更由 PEP 通知同步）。
 
 ## 发布选项与节点隐私
 
@@ -49,7 +49,7 @@
 
 ### `bookmarks`
 
-类型 `Conference[]`，默认 `[]`，只读使用（改动它不会同步到服务端）。首次 `session:start` 时由检索结果填充；之后由 `bookmark:update` / `bookmark:delete` 通知按 item id 增量同步，本地 `addBookmark` / `editBookmark` / `deleteBookmark` 成功后同步更新。`retrieveBookmarks()` 只返回结果，不写入该属性。
+类型 `Conference[]`，默认 `[]`，只读使用（改动它不会同步到服务端）。首次会话绑定时由检索结果填充；之后由 `bookmark:update` / `bookmark:delete` 通知按 item id 增量同步，本地 `addBookmark` / `editBookmark` / `deleteBookmark` 成功后同步更新。`retrieveBookmarks()` 只返回结果，不写入该属性。
 
 ## 扩展字段
 
@@ -117,7 +117,7 @@ interface Conference {
 | `deleteBookmark` | `(jid: string) => Promise<void>` | 撤回由 `jid` 标识的项目；失败抛 `XMPPError`。成功后从 `this.bookmarks` 中移除 |
 | `configureBookmarkNode` | `() => Promise<void>` | 向自己的 bare JID 提交 `#node_config` 表单，把书签节点配置为白名单访问且持久化；失败抛 `XMPPError`。不自动重发书签 |
 
-以上方法经 `connection.sendAsync()` 发送 IQ，须在会话建立后调用；`session:start` 之前调用会 reject（`send()` 抛 `Error`，`sendAsync` 随之 reject）。
+以上方法经 `connection.sendAsync()` 发送 IQ，须在会话建立后调用；会话绑定之前调用会 reject（`send()` 抛 `Error`，`sendAsync` 随之 reject）。
 
 ## 使用示例
 
@@ -186,6 +186,6 @@ await client.XEP0402!.editBookmark({ ...existing, name: "新名称" });
 - `autojoin` 缺省为 false，只有 `<conference autojoin="true">` 才会触发自动加入。
 - 自动加入会把书签中的 `password` 作为 `XEP0045` 的 `JoinOptions.password` 传入；书签没有密码时不传该选项。
 - `extensions` 是 `<extensions/>` 的子元素数组；解析结果里不含 `<extensions/>` 本身，`editBookmark` 重新发布时会补回这层包装。
-- `bookmarks` 首次由 `session:start` 的检索填充，之后随通知与本地增删改保持同步；自动重连不重新检索（重连期间的变化由通知补齐）。
+- `bookmarks` 首次由会话绑定时的检索填充，之后随通知与本地增删改保持同步；新会话（恢复失败后的重新绑定）会重新检索，流恢复成功不重复检索（重连期间的变化由通知补齐）。
 - 自动加入失败仅打印 error，不阻断连接。
 - 「编辑」的语义是以相同 JID 重新发布项目，「删除」的语义是撤回项目（XEP-0402 §3.2）。

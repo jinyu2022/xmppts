@@ -22,7 +22,7 @@ client.registerPlugin("XEP0030", { cacheTTLMs: 60_000 }); // 缓存 1 分钟
 `init()` 执行以下动作：
 
 1. **注册自身特性** — 在 `features` 中添加 `disco#info` 与 `disco#items`。
-2. **自动发现服务器** — `session:start` 时向自身服务器域名发起一次 disco#info，结果填充服务器特性/身份快照；失败仅 `log.warn`（并发调用复用同一次查询，失败后下次调用重试）。
+2. **自动发现服务器** — 每次会话绑定（`onSessionBound`）时清空上一会话的服务器快照，再向自身服务器域名发起一次 disco#info，结果填充服务器特性/身份快照；失败仅 `log.warn`（并发调用复用同一次查询，失败后下次调用重试）。这一步只作废服务器快照，不影响下方的自身能力字段。
 3. **响应 disco 查询** — 监听 `iq`，对 `type='get'` 且含 `disco#info` / `disco#items` query 的请求，自动回复对应的 result IQ。
 
 ## 扩展字段
@@ -36,6 +36,8 @@ client.registerPlugin("XEP0030", { cacheTTLMs: 60_000 }); // 缓存 1 分钟
 | `identities` | `Identity[]` | 自身身份列表（供响应 query） |
 | `features` | `Set<string>` | 自身特性集合（供响应 query） |
 | `items` | `Item[]` | 自身 disco 子项（供响应 query） |
+
+上表三个字段是**自身**能力，由插件和应用通过 `addFeature()` / `addIdentity()` / `addItem()` 注册，跨会话有效。`onSessionBound()`（每次真正完成资源绑定）只清空 `getServerFeatures()` / `getServerIdentities()` 背后的**服务器**快照并重新查询，不会动这三个字段。自动重连复用插件实例、不会重新 `init()`，所以插件重连后无需重新注册自身能力；只有真正断开会话后的重新 `connect()` 才会重建插件实例并重新执行 `init()`。
 
 ## 可监听事件
 

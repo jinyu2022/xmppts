@@ -2,7 +2,7 @@
  * lib/ltx 真实语料性能基准。
  *
  * 语料全部取自 RFC/XEP 示例（见各常量注释），不使用合成的畸形 XML：真实对端只会发规范
- * 不是性能场景。
+ * 文档，畸形输入的处理不属于性能场景。
  *
  * 运行：$env:XMPPTS_PERF="1"; npx vitest run test/ltx/perf.test.ts --disable-console-intercept
  * 未设置 XMPPTS_PERF 时整组跳过：基准无断言、耗时随机器变化，不应计入默认测试集。

@@ -124,7 +124,7 @@ export async function awaitServer(): Promise<MockServer> {
 export function createSinkEvents(): { sink: TransportSink; events: EventEmitter } {
   const events = new EventEmitter();
   const sink: TransportSink = {
-    onBinded: () => events.emit("binded"),
+    onBound: () => events.emit("binded"),
     onStanza: (stanza) => events.emit("stanza", stanza),
     onClose: (closeEvent) => events.emit("close", closeEvent),
     onError: (error) => events.emit("error", error),

@@ -55,11 +55,11 @@ const ok = await reg.register("newuser", "secret");
 
 ## 注意事项
 
-- 此插件**不与 Connection 交互**，自行管理独立的 TLS socket。
+- 本插件**不与 Connection 交互**，自行管理独立的 TLS socket。
 - **WebSocket 注册通道当前不可用**：`connectSocket(domain, "ws")` 会抛错（shims 已移除，`WSconnection` 保留待重构）。
 - 表单查询在收到 `stream:features` 后自动触发（§3.1、§8）；服务器也可回固定 username/password 字段而不下发 data form，此时返回 `null`；固定字段场景仍按 data form 提交。
 - §5 重定向（`<instructions/>` + `x:oob`）不解析：无 data form 时一律以 `null` 结束，不区分场景；结果含 `<registered/>` 时也只看 `type='result'`。
 - 提交只带 username/password（+ 可选 captcha/challenge）：服务器表单中的其他必填字段（§3.1 示例含 `first`/`last`/`email`）会被丢弃，可能被服务器拒绝。
 - 插件不含 SASL：注册成功后需另行建立 `Connection` 登录（§3.1.1）。
 - `register()` 在服务器应答 `type='result'` 时返回 `true`，否则抛 `XMPPError`。
-- 适用于账户注册场景，日常聊天不应使用此插件。
+- 适用于账户注册场景，日常聊天不应使用本插件。

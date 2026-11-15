@@ -141,28 +141,31 @@ export class XEP0410 extends MucSelfPing implements Plugin {
   }
 
   /**
-   * 插件初始化：挂接会话生命周期与房间活动监听。
+   * 新会话：清空上一会话的基线，为已加入房间重建并启动定时器。
+   * 恢复成功的流不会调用本方法，旧会话的房间与基线保持有效。
+   */
+  onSessionBound(): void {
+    this.stop();
+
+    // 为所有已加入房间设置活动基线，避免新会话首轮扫描就把房间判为失活。
+    // 只认 selfNick：join 在途或残留条目的昵称尚未确认，不纳入监控。
+    // TODO: 应改为监听加入事件
+    for (const [roomJid, info] of this.connection.XEP0045?.rooms ?? []) {
+      if (info.selfNick) this.lastActivity.set(roomJid, Date.now());
+    }
+    // 定时器已被上方 stop() 清除，直接重建。
+    this.tickTimer = setInterval(
+      () => this.onTick(),
+      this.config.checkInterval,
+    );
+    this.tickTimer?.unref?.();
+  }
+
+  /**
+   * 插件初始化：挂接房间活动监听。
    * 房间活动与 ping 结果只更新本插件的状态，不读写 XEP0045 的数据。
    */
   init() {
-    // 会话建立：清空旧会话残留、为已加入房间重建活动基线、启动定时器。
-    this.connection.on("session:start", () => {
-      this.stop();
-
-      // 为所有已加入房间设置活动基线，避免会话恢复时立即触发 ping。
-      // 只认 selfNick：join 在途或残留条目的昵称尚未确认，不纳入监控。
-      // todo 应该改为监听加入事件
-      for (const [roomJid, info] of this.connection.XEP0045?.rooms ?? []) {
-        if (info.selfNick) this.lastActivity.set(roomJid, Date.now());
-      }
-      // 定时器已被上方 stop() 清除，直接重建。
-      this.tickTimer = setInterval(
-        () => this.onTick(),
-        this.config.checkInterval,
-      );
-      this.tickTimer?.unref?.();
-    });
-
     /**
      * 房间活动处理器：任何来自 MUC 的 message/presence 都算作房间活动，
      * 刷新本插件的活动基线。只处理本插件已跟踪的房间；
@@ -238,7 +241,7 @@ export class XEP0410 extends MucSelfPing implements Plugin {
 
   /**
    * 停止定时器并清空全部状态。
-   * 在 session:start（重建前）、session:end 时调用。
+   * 在 onSessionBound（重建前）、session:end 时调用。
    */
   private stop(): void {
     if (this.tickTimer) {

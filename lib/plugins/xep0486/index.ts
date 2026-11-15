@@ -22,8 +22,8 @@ export class XEP0486 extends MUCAvatars implements Plugin {
         // 忽略
     }
     /**
-     * 
-     * @param to muc jid
+     *
+     * @param to muc 房间 JID，传入带 resource 的地址时取裸 JID
      * @param image 绝对路径或者File对象，空表示删除头像
      */
     async setAvatar(to: string | JID, image?: File | string) {
@@ -39,7 +39,7 @@ export class XEP0486 extends MUCAvatars implements Plugin {
      * 获取muc头像
      *
      * 房间没有头像（返回空 vCard，或 vCard 内没有 `<PHOTO/>`）时返回 `undefined`；
-     * @param to muc jid
+     * @param to muc 房间 JID，传入带 resource 的地址时取裸 JID
      */
     async getAvatar(to: string | JID): Promise<VCardPhoto | undefined> {
         const iq = XEP0486.createGetAvatarIq(to);

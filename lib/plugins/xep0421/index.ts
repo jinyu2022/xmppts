@@ -6,7 +6,7 @@ import { OccupantId, type OccupantID } from "./occupantId";
 /**
  * XEP-0421: Anonymous unique occupant identifiers for MUCs
  *
- * 解析房间附加在消息与出席上的 `<occupant-id/>`。规范要求仅在房间
+ * 解析房间附加在消息与 presence 上的 `<occupant-id/>`。规范要求仅在房间
  * 通过 disco#info 宣告 `urn:xmpp:occupant-id:0` 时才信任该字段，
  * 使用 {@link XEP0421.hasOccupantIdFeature} 校验。
  * @see https://xmpp.org/extensions/xep-0421.html

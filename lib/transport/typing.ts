@@ -22,8 +22,12 @@ export interface TransportEndpoint {
  * 协商决策仍由 {@link TransportPipelineEvents} 描述的管线驱动，不在此接口内。
  */
 export interface TransportSink {
-    /** 资源绑定完成（含 XEP-0198 会话恢复成功） */
-    onBinded(): void;
+    /**
+     * 会话绑定完成。
+     * @param bound 本次流是否真正完成了资源绑定；`false` 表示插件延续了原会话
+     *   （如 XEP-0198 流恢复），本次流没有发生新的绑定
+     */
+    onBound(bound: boolean): void;
     /** 协商完成后的业务 stanza */
     onStanza(stanza: XMPPElement): void;
     /** 底层连接关闭；WS 携带关闭事件，TCP 未定义 */

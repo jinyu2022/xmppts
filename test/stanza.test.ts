@@ -494,4 +494,27 @@ describe("Presence", () => {
       expect(el.getAttribute("type")).toBeNull();
     });
   });
+
+  describe("createBroadcastPresence", () => {
+    it("无参数时应为空 presence", () => {
+      const el = Presence.createBroadcastPresence();
+      expect(el.tagName).toBe("presence");
+      expect(el.getAttribute("to")).toBeNull();
+      expect(el.getElementsByTagName("show").length).toBe(0);
+      expect(el.getElementsByTagName("status").length).toBe(0);
+      expect(el.getElementsByTagName("priority").length).toBe(0);
+    });
+
+    it("应写出 show/status/priority 并转义文本", () => {
+      const el = Presence.createBroadcastPresence({
+        show: "dnd",
+        status: "a < b",
+        priority: -1,
+      });
+      expect(el.getElementsByTagName("show")[0].textContent).toBe("dnd");
+      expect(el.getElementsByTagName("status")[0].textContent).toBe("a < b");
+      expect(el.getElementsByTagName("priority")[0].textContent).toBe("-1");
+      expect(el.toXMLString()).toContain("a &lt; b");
+    });
+  });
 });

@@ -94,11 +94,29 @@ describe("XEP0199 插件入口", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect((plugin as unknown as { timer?: unknown }).timer).toBeUndefined();
 
-    // 真实连接在派发 session:start 时会话已置为活跃
+    // 真实连接在调用 onSessionBound 时会话已置为活跃
     connection.sessionActive = true;
-    connection.emit("session:start");
+    plugin.onSessionBound();
     await vi.advanceTimersByTimeAsync(0);
     expect((plugin as unknown as { timer?: unknown }).timer).toBeDefined();
+  });
+
+  it("重复绑定不叠加 keepalive 定时器", async () => {
+    vi.useFakeTimers();
+    const { connection, plugin } = setup({ interval: 60_000, timeout: 10_000 });
+    connection.serverFeatures.add(Ping.NS);
+    connection.sessionActive = true;
+    const pingSpy = vi.spyOn(plugin, "ping");
+
+    plugin.onSessionBound();
+    await vi.advanceTimersByTimeAsync(0);
+    plugin.onSessionBound();
+    await vi.advanceTimersByTimeAsync(0);
+    expect((plugin as unknown as { timer?: unknown }).timer).toBeDefined();
+
+    // 重建前先停表，因此一个周期只 ping 一次
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(pingSpy).toHaveBeenCalledTimes(1);
   });
 
   it("keepalive 按 interval 发送 ping 且尊重 keepalive=false", async () => {
@@ -141,7 +159,7 @@ describe("XEP0199 插件入口", () => {
     vi.useFakeTimers();
     const { connection, plugin } = setup({ interval: 60_000 });
 
-    connection.emit("session:start");
+    plugin.onSessionBound();
     await vi.advanceTimersByTimeAsync(0);
     expect((plugin as unknown as { timer?: unknown }).timer).toBeUndefined();
     expect(vi.spyOn(connection, "sendAsync")).not.toHaveBeenCalled();
@@ -177,7 +195,7 @@ describe("XEP0199 插件入口", () => {
       }),
     );
 
-    connection.emit("session:start");
+    plugin.onSessionBound();
     // 查询在途时断开：session:end 先于特性结果到达
     connection.sessionActive = false;
     connection.emit("session:end");

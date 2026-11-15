@@ -6,6 +6,7 @@ import { XMPPError } from "@/errors";
 import { Status } from "@/transport/typing";
 import type { BindingContext, SendContext } from "@/transport/stream-connection";
 import logger from "@/log";
+import { escapeXML } from "@/ltx";
 import type { XMPPElement } from "@/ltx/Element";
 const log = logger.getLogger("XEP0198");
 
@@ -138,7 +139,8 @@ export default class XEP0198 extends StreamManagement implements Plugin {
         // 暂存原始绑定请求，恢复被拒后回退
         this.bindRequest = ctx.outgoing;
         // 直接替换为恢复请求，响应由 applyResumeResponse 处理器接收
-        ctx.outgoing = `<resume xmlns='${XEP0198.NS}' h='${this.inbound}' previd='${this.previd}'/>`;
+        // SM-ID 是服务端生成的不透明值，合法取值可含 & 与引号（XEP-0198 §5），作为属性值必须转义
+        ctx.outgoing = `<resume xmlns='${XEP0198.NS}' h='${this.inbound}' previd='${escapeXML(this.previd)}'/>`;
         return next();
     }
 
@@ -149,13 +151,20 @@ export default class XEP0198 extends StreamManagement implements Plugin {
         const stanza = ctx.stanza;
         if (stanza.namespaceURI !== XEP0198.NS) return next();
         if (stanza.tagName === "resumed") {
+            // XEP-0198 §5：resumed 必须回带请求中的 SM-ID，不一致说明恢复的不是这条流
+            if (stanza.getAttribute("previd") !== this.previd) {
+                log.warn('服务器返回的恢复 ID 与请求不一致，改为常规绑定');
+                ctx.outgoing = this.bindRequest;
+                this.reset();
+                return next();
+            }
             const h = Number.parseInt(stanza.getAttribute("h") ?? "0");
             if (h !== this.outbound) {
                 log.warn(
                     `服务器汇报的已处理数量与本地不一致，local:${this.outbound}, server:${h}`
                 );
                 this.outbound = h;
-                //TODO: 重新发送未确认的消息
+                // TODO: 重发未确认的消息
             }
             log.info('会话恢复成功');
             ctx.status = Status.BINDED;

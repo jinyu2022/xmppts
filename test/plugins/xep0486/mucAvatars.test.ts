@@ -67,5 +67,21 @@ describe("MUCAvatars", () => {
         vCardNs: "vcard-temp",
       });
     });
+
+    it("传入 occupant JID 时目标取房间裸 JID", async () => {
+      const getIq = MUCAvatars.createGetAvatarIq(
+        "garden@chat.shakespeare.example.org/romeo"
+      );
+      const setIq = await MUCAvatars.createSetAvatarIq(
+        "garden@chat.shakespeare.example.org/romeo"
+      );
+      expect({
+        get: getIq.getAttribute("to"),
+        set: setIq.getAttribute("to"),
+      }).toEqual({
+        get: "garden@chat.shakespeare.example.org",
+        set: "garden@chat.shakespeare.example.org",
+      });
+    });
   });
 });
