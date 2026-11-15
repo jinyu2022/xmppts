@@ -1,6 +1,6 @@
 {
   "name": "xmppts",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "TypeScript XMPP client library for Node.js and browsers with plugin-based XEP support",
   "keywords": [
     "xmpp",
