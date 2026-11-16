@@ -958,4 +958,145 @@ describe("Connection（单元测试，假传输层）", () => {
 
     await expect(connection.connect()).rejects.toThrow("安全上下文");
   });
+
+  it("connect：建连同步失败后重试不重复初始化插件，用户监听器保留", async () => {
+    const connection = new Connection("user@example.com/resource", "pass", {
+      ...TCP_TEST_ENDPOINT,
+      protocol: "mock",
+    });
+    let attempt = 0;
+    connection.registerTransport("mock", ({ sink }) => {
+      attempt++;
+      const transport = new FakeTransport(sink);
+      // 首次模拟 openTransport 同步失败：connect() reject，传输层状态复位
+      if (attempt === 1) {
+        transport.connect.mockRejectedValueOnce(new Error("建连失败"));
+      }
+      return transport;
+    });
+
+    let constructed = 0;
+    let initialized = 0;
+    connection.registerPlugin(
+      "TestPlugin",
+      class {
+        static readonly dependencies = [] as string[];
+        constructor() {
+          constructed++;
+        }
+        init() {
+          initialized++;
+          // 插件在 init 中注册的监听器：重试时不能重复
+          connection.on("message", () => {});
+        }
+      } as never,
+    );
+    const userHandler = vi.fn();
+    connection.on("message", userHandler);
+
+    await expect(connection.connect()).rejects.toThrow("建连失败");
+    expect(constructed).toBe(1);
+    expect(initialized).toBe(1);
+
+    await connection.connect();
+    expect(constructed).toBe(1);
+    expect(initialized).toBe(1);
+    // 用户监听器与插件监听器各一条，没有叠加
+    expect(connection.listenerCount("message")).toBe(2);
+  });
+
+  it("registerPlugin：插件初始化后拒绝注册，disconnect() 后可重新注册", async () => {
+    const connection = new Connection("user@example.com/resource", "pass", {
+      ...TCP_TEST_ENDPOINT,
+      protocol: "mock",
+    });
+    connection.registerTransport("mock", ({ sink }) => new FakeTransport(sink));
+    connection.registerPlugin(
+      "TestPlugin",
+      class {
+        static readonly dependencies = [] as string[];
+        init() {}
+      } as never,
+    );
+
+    await connection.connect();
+    expect(() =>
+      connection.registerPlugin(
+        "LatePlugin",
+        class {
+          static readonly dependencies = [] as string[];
+          init() {}
+        } as never,
+      ),
+    ).toThrow("插件已初始化");
+
+    // 断开后注册禁制解除，下一次 connect() 会连同新插件一起重建
+    connection.disconnect();
+    expect(() =>
+      connection.registerPlugin(
+        "LatePlugin",
+        class {
+          static readonly dependencies = [] as string[];
+          init() {}
+        } as never,
+      ),
+    ).not.toThrow();
+  });
+
+  it("connect：单个插件 init() 抛错不阻断建连，其余插件照常初始化", async () => {
+    const connection = new Connection("user@example.com/resource", "pass", {
+      ...TCP_TEST_ENDPOINT,
+      protocol: "mock",
+    });
+    connection.registerTransport("mock", ({ sink }) => new FakeTransport(sink));
+    const initialized: string[] = [];
+    connection.registerPlugin(
+      "BadPlugin",
+      class {
+        static readonly dependencies = [] as string[];
+        init() {
+          throw new Error("init 失败");
+        }
+      } as never,
+    );
+    connection.registerPlugin(
+      "GoodPlugin",
+      class {
+        static readonly dependencies = [] as string[];
+        init() {
+          initialized.push("GoodPlugin");
+        }
+      } as never,
+    );
+    const onError = vi.fn();
+    connection.on("error", onError);
+
+    await connection.connect();
+    expect(initialized).toEqual(["GoodPlugin"]);
+    // 插件初始化失败只记日志，不升级为连接错误
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("connect：插件实例化失败经 reportError 上报并拒绝本次连接", async () => {
+    const connection = new Connection("user@example.com/resource", "pass", {
+      ...TCP_TEST_ENDPOINT,
+      protocol: "mock",
+    });
+    connection.registerTransport("mock", ({ sink }) => new FakeTransport(sink));
+    connection.registerPlugin(
+      "BrokenPlugin",
+      class {
+        static readonly dependencies = [] as string[];
+        constructor() {
+          throw new Error("构造失败");
+        }
+        init() {}
+      } as never,
+    );
+    const onError = vi.fn();
+    connection.on("error", onError);
+
+    await expect(connection.connect()).rejects.toThrow("构造失败");
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
 });

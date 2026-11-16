@@ -166,6 +166,9 @@ export class Connection extends Emitter<SocketEventMap> {
     return this.sessionActive === true;
   }
 
+  /** 插件是否已实例化并执行过 init()；由 initPlugins() 置位，_cleanup() 清空注册后复位，下次 connect() 重建 */
+  private pluginsReady = false;
+
   /** 插件列表，键是插件名 */
   private readonly pendingPlugins = new Map<
     string,
@@ -278,6 +281,10 @@ export class Connection extends Emitter<SocketEventMap> {
     funcOrOptions?: PluginFactory | object,
     options?: unknown,
   ): void {
+    // 插件已初始化后再注册不会生效：新插件不会被实例化，旧插件也不会重新 init
+    if (this.pluginsReady) {
+      throw new Error("插件已初始化，需先 disconnect() 再注册插件");
+    }
     // 第二参数可能是自定义构造函数，也可能是内置插件的配置
     if (typeof funcOrOptions === "function") {
       this.pendingPlugins.set(name, {
@@ -332,12 +339,18 @@ export class Connection extends Emitter<SocketEventMap> {
     );
   }
 
-  /** 调用插件 init()：此时 transport 已创建，可注册管线与事件处理器 */
+  /** 调用插件 init()：此时 transport 已创建，可注册管线与事件处理器；单个插件失败只记日志，不阻断装配 */
   private initPlugins() {
     for (const name of this.pendingPlugins.keys()) {
       // pendingPlugins 的键即插件属性名，实例已在 instantiatePlugins 中挂到 this 上
-      this[name as keyof PluginRegistry]?.init();
+      try {
+        this[name as keyof PluginRegistry]?.init();
+      } catch (error) {
+        // 单个插件初始化失败不应阻断其余插件与建连，与 onSessionBound 的处理一致
+        log.error(`插件 ${name} 的 init 执行失败:`, error);
+      }
     }
+    this.pluginsReady = true;
   }
 
   /**
@@ -398,19 +411,22 @@ export class Connection extends Emitter<SocketEventMap> {
     this.reconnectAttempts = 0;
     // 新连接从「未绑定」开始：首次绑定发 session:start 而非 reconnected
     this.sessionActive = undefined;
-    // 清掉上一次插件注册的中间件，避免重复调用时叠加（终端由管线自身保留）
-    this.pipeline.clear();
-    // 插件实例化先于传输创建：构造函数可注册传输或补全连接配置
-    await this.instantiatePlugins();
-    const create = this.transports[this.protocol];
-    if (!create) {
-      throw new Error(
-        `未知的协议: ${this.protocol}（可用：${Object.keys(this.transports).join("、")}）`,
-      );
-    }
-    let transport: TransportSocket;
+    // 插件注册随首次连接建立；连接失败重试不重复初始化，_cleanup() 复位后才重建
     try {
-      transport = await create({
+      if (!this.pluginsReady) {
+        // 清掉上一次插件注册的中间件，避免重复调用时叠加（终端由管线自身保留）
+        this.pipeline.clear();
+        // 插件实例化先于传输创建：构造函数可注册传输或补全连接配置
+        await this.instantiatePlugins();
+      }
+      // 传输表在插件实例化之后查找：插件构造函数可注册或覆盖传输实现
+      const create = this.transports[this.protocol];
+      if (!create) {
+        throw new Error(
+          `未知的协议: ${this.protocol}（可用：${Object.keys(this.transports).join("、")}）`,
+        );
+      }
+      const transport = await create({
         jid: this.jid,
         password: this.password,
         tls: this.tls,
@@ -419,14 +435,12 @@ export class Connection extends Emitter<SocketEventMap> {
         path: this.path,
         sink: this._createSink(),
       });
-    } catch (error) {
-      throw this.reportError(error);
-    }
-    this.transport = transport;
-    this.initPlugins();
-    try {
+      this.transport = transport;
+      if (!this.pluginsReady) this.initPlugins();
       await transport.connect();
     } catch (error) {
+      // 失败时丢弃本次传输实例；插件注册留给下一次尝试复用
+      this.transport = null;
       throw this.reportError(error);
     }
   }
@@ -642,6 +656,8 @@ export class Connection extends Emitter<SocketEventMap> {
       plugins.length = 0;
     }
     this.stanzaPlugins.clear();
+    // 注册已清空，下次 connect() 重建插件
+    this.pluginsReady = false;
   }
 
   /**
