@@ -36,13 +36,13 @@ function setupMatchers(selfJid = "romeo@montague.example/home") {
   return matchers;
 }
 
-/** 仅含 matcher 所需字段的消息；from 缺失时与真实实例一致回退为自身 full JID */
+/** 仅含 matcher 所需字段的消息 */
 function fakeMessage(
-  from: string | undefined,
+  from: string,
   type?: "received" | "sent",
 ): Message {
   return {
-    from: new JID(from ?? "romeo@montague.example/home"),
+    from: new JID(from),
     carbon: type ? { type } : undefined,
   } as Message;
 }
@@ -58,11 +58,15 @@ describe("XEP0280 碳拷贝来源校验", () => {
     ).toBe(true);
   });
 
-  it("from 为本账号其它资源的 full JID 时触发", () => {
+  it("from 为本账号其它资源的 full JID 时不触发", () => {
     const matchers = setupMatchers();
+    // §7：外层 from MUST 是账号 bare JID，带 resource 的副本不合规
     expect(
       matchers["carbon:received"](fakeMessage("romeo@montague.example/home", "received")),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      matchers["carbon:sent"](fakeMessage("romeo@montague.example/home", "sent")),
+    ).toBe(false);
   });
 
   it("from 为其它 JID（伪造）时不触发", () => {
@@ -73,11 +77,6 @@ describe("XEP0280 碳拷贝来源校验", () => {
     expect(
       matchers["carbon:sent"](fakeMessage("tybalt@capulet.example/home", "sent")),
     ).toBe(false);
-  });
-
-  it("缺失 from 时视为隐式来自自身，触发", () => {
-    const matchers = setupMatchers();
-    expect(matchers["carbon:sent"](fakeMessage(undefined, "sent"))).toBe(true);
   });
 
   it("碳类型与事件不符时不触发", () => {

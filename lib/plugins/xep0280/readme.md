@@ -38,7 +38,7 @@ interface Message {
 | `carbon:received` | 其他客户端收到的消息 | `Message & { carbon: { type: "received" } }` |
 | `carbon:sent` | 其他客户端发出的消息 | `Message & { carbon: { type: "sent" } }` |
 
-两个事件均校验来源（XEP-0280 §11）：仅当包装消息 `from` 的 bare JID 等于本账号 bare JID 时触发，不符则忽略并 warn。
+两个事件均校验来源（XEP-0280 §11）：包装消息 `from` 必须与本账号 bare JID 完全相等（不带 resource），不符则忽略并 warn。
 
 ## 公开 API
 
@@ -77,5 +77,5 @@ client.on("carbon:sent", (message) => {
 - 服务器支持时自动启用，通常无需手动调用 `enable()`。
 - 碳副本消息中同时存在 XEP-0297 解析出的 `message.forwarded`。
 - 服务器不支持时打印 warn，不影响正常通信。
-- §11 要求 carbon 必须来自本人 bare JID：两个 matcher 均已校验包装消息的 `from`，不符或缺失时忽略并 warn。
+- §11 要求 carbon 必须来自本人 bare JID：两个 matcher 均已校验包装消息的 `from`，不带 resource 时才放行，不符则忽略并 warn。
 - §9 的 `<private/>` 在接收侧解析为 `message.carbonPrivate`，不影响消息派发；发送侧暂不自动追加该元素。

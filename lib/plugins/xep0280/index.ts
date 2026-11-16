@@ -23,12 +23,13 @@ export class XEP0280 extends Carbons implements Plugin {
 
     this.connection.registerStanzaPlugin(XEP0280.NS, XEP0280.parseCarbonEl);
 
-    // 碳消息外层的 from 必须为本账号的 bare JID，否则视为伪造并忽略
+    // 碳消息外层的 from 必须为本账号的 bare JID，否则视为伪造并忽略。
+    // 比较完整 from：带 resource 的值不合规，不能先截成 bare 再比（§7）
     this.connection.registerEventPlugin("carbon:received", {
       tagName: "message",
       matcher: (message) => {
         if (message.carbon?.type !== "received") return false;
-        if (message.from.bare === this.connection.jid.bare) {
+        if (message.from.full === this.connection.jid.bare) {
           return true;
         } else {
           log.warn(
@@ -43,7 +44,7 @@ export class XEP0280 extends Carbons implements Plugin {
       tagName: "message",
       matcher: (message) => {
         if (message.carbon?.type !== "sent") return false;
-        if (message.from.bare === this.connection.jid.bare) {
+        if (message.from.full === this.connection.jid.bare) {
           return true;
         } else {
           log.warn(
