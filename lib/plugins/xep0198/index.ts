@@ -97,14 +97,16 @@ export default class XEP0198 extends StreamManagement implements Plugin {
         if (this.tracking) return;
         this.tracking = true;
         this.connection.pipeline.use("send", (ctx, next) => {
+            // 先写出：写出失败会抛错中断整条链，此时本条 stanza 并未发出，不应计数
+            next();
+            // 以最终写出形态计数，下游中间件可能改写 stanza
             const stanza = ctx.stanza;
             if (this.status >= StreamStatus.ENABLE_SENT && ["iq", "message", "presence"].includes(stanza.tagName)) {
                 this.outbound++;
                 log.debug(`当前发送数量：${this.outbound}`);
-                // 延后到本条stanza写出后再请求确认，避免<r/>先于计数对象发出
+                // 延后到管线退出后再请求确认，避免在 send 管线栈内重入发送 <r/>
                 void Promise.resolve().then(() => this.requestAckAndCheck());
             }
-            return next();
         });
 
         this.connection.pipeline.use("receive", (ctx, next) => {
