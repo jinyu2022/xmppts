@@ -187,6 +187,31 @@ describe("Connection（单元测试，假传输层）", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("sendAsync：同 id 请求未结束时不覆盖旧等待项，新请求立即拒绝", async () => {
+    vi.useFakeTimers();
+    const { connection, transport } = setup();
+
+    const first = connection.sendAsync(
+      Parser.parse('<iq type="get" id="dup-1"/>'),
+    );
+    const second = connection.sendAsync(
+      Parser.parse('<iq type="get" id="dup-1"/>'),
+    );
+    let state: "pending" | "resolved" | "rejected" = "pending";
+    second.then(
+      () => (state = "resolved"),
+      () => (state = "rejected"),
+    );
+    await Promise.resolve();
+
+    // 覆盖等待项会让旧 Promise 永远等不到响应，新请求也不应发出
+    expect(state).toBe("rejected");
+    // 旧请求不受影响，仍能被同 id 响应兑现
+    transport.sink.onStanza(Parser.parse('<iq type="result" id="dup-1"/>'));
+    await expect(first).resolves.toBeInstanceOf(XMPPElement);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("send/sendAsync：初始化清空管线期间也拒绝发送，不残留等待资源", async () => {
     vi.useFakeTimers();
     const { connection, transport } = setup();

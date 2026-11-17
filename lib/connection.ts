@@ -931,7 +931,7 @@ export class Connection extends Emitter<SocketEventMap> {
    * 发送一个stanza，返回一个Promise对象
    * @param stanza 要发送的stanza
    * @param timeout 超时时间，默认30秒
-   * @returns 同 id 的响应；会话未就绪、发送失败或超时均 reject
+   * @returns 同 id 的响应；会话未就绪、同 id 请求已在进行中、发送失败或超时均 reject
    * @throws 超时时抛出 name 为 "TimeoutError" 的 DOMException
    */
   sendAsync(stanza: XMPPElement, timeout = 30000) {
@@ -940,6 +940,10 @@ export class Connection extends Emitter<SocketEventMap> {
       stanza.setAttribute("id", crypto.randomUUID());
     }
     const id = stanza.getAttribute("id")!;
+    // 同 id 请求未结束时拒绝新请求：覆盖等待项会让旧 Promise 永远等不到响应
+    if (this.pendingRequests.has(id)) {
+      return Promise.reject(new Error(`请求 id 已在使用: ${id}`));
+    }
     return new Promise<XMPPElement>((resolve, reject) => {
       /** 结束等待：停计时器、删表项，再 settle */
       const finish = (action: () => void) => {
