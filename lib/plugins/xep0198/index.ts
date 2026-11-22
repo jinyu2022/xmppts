@@ -28,12 +28,14 @@ export default class XEP0198 extends StreamManagement implements Plugin {
 
     /** XMPP连接实例 */
     private readonly connection: Connection;
-    /** 发送的stanza数量，也是服务端接收处理的stanza数量 */
+    /** 已发送的 stanza 数量，按 uint32 回绕；恒等于 `lastAck + unacked.length`（模 2^32） */
     private outbound: number = 0;
-    /** 已处理的stanza数量，即应答确认请求时的h值 */
+    /** 已处理的 stanza 数量，即应答确认请求时的 h 值；按 uint32 回绕 */
     private inbound: number = 0;
-    /** 请求确认的消息间隔数 */ 
+    /** 请求确认的消息间隔数 */
     static readonly interval = 5;
+    /** h 为 xs:unsignedInt，取值 0..2^32-1，越过 2^32-1 回到 0；计数模数即 2^32（XEP-0198 §4） */
+    private static readonly COUNTER_MODULO = 4_294_967_296;
     /** 流管理状态 */
     private status: typeof StreamStatus[keyof typeof StreamStatus] = StreamStatus.DISABLE;
     /** 会话恢复ID */
@@ -48,8 +50,14 @@ export default class XEP0198 extends StreamManagement implements Plugin {
     private disconnectedAt = 0;
     /** 被<resume/>顶替的原始绑定请求，恢复失败时由 applyResumeResponse 写回 outgoing */
     private bindRequest?: XMPPElement | string;
-    /** 计数与确认处理器是否已注册 */
-    private tracking = false;
+    /** 服务端已确认的最后一条出站 stanza 序号，按 uint32 回绕（XEP-0198 §4） */
+    private lastAck = 0;
+    /**
+     * 未确认队列：已发出但未获服务端确认的 stanza，按发送顺序排列。
+     * 第 i 项对应的发送序号为 `lastAck + i + 1`（模 2^32），长度恒等于 `outbound - lastAck`（模 2^32）。
+     * 持有的是调用方的元素引用；发送后不得再修改该元素，否则重发内容会随之变化。
+     */
+    private unacked: XMPPElement[] = [];
 
     constructor(connection: Connection) {
         super();
@@ -73,6 +81,10 @@ export default class XEP0198 extends StreamManagement implements Plugin {
             void this.enable().catch((error: unknown) => log.error('启用流管理失败', error));
         this.connection.on("session:start", onSessionReady);
         this.connection.on("reconnected", onSessionReady);
+        // 主动关闭流前报告已处理数量（XEP-0198 §4）：此刻会话与发送管线仍可用，需同步写出
+        this.connection.on("session:beforeclose", () => {
+            if (this.status === StreamStatus.ENABLE) this.sendAnswerAck();
+        });
         // 断线 → 可恢复时只记录时刻供恢复判定；不可恢复时旧流的计数与状态一并作废，新流需重新 <enable/>
         // 服务器建议的端点只用于下一次连接（XEP-0198 §3），写入后立即清空
         this.connection.on("connection:lost", () => {
@@ -90,37 +102,45 @@ export default class XEP0198 extends StreamManagement implements Plugin {
             if (endpoint.port) target.port = endpoint.port;
             log.debug(`下次连接使用服务器位置: ${endpoint.host}:${target.port}`);
         });
+        this.registerTracking();
     }
 
-    /** 启用成功后注册计数与确认处理器，重复启用时只注册一次 */
+    /** 注册计数与确认处理器；由 init 调用一次，是否生效由流管理状态决定 */
     private registerTracking() {
-        if (this.tracking) return;
-        this.tracking = true;
         this.connection.pipeline.use("send", (ctx, next) => {
             // 先写出：写出失败会抛错中断整条链，此时本条 stanza 并未发出，不应计数
             next();
             // 以最终写出形态计数，下游中间件可能改写 stanza
             const stanza = ctx.stanza;
             if (this.status >= StreamStatus.ENABLE_SENT && ["iq", "message", "presence"].includes(stanza.tagName)) {
-                this.outbound++;
+                this.outbound = (this.outbound + 1) % XEP0198.COUNTER_MODULO;
+                this.unacked.push(stanza);
                 log.debug(`当前发送数量：${this.outbound}`);
-                // 延后到管线退出后再请求确认，避免在 send 管线栈内重入发送 <r/>
-                void Promise.resolve().then(() => this.requestAckAndCheck());
+                // 延后到管线退出后再请求确认，避免在 send 管线栈内重入发送 <r/>；
+                // 判断必须同步执行，否则同批发送的微任务会看到同一个序号
+                if (this.outbound % XEP0198.interval === 0) {
+                    void Promise.resolve().then(() => this.requestAck());
+                }
             }
         });
 
         this.connection.pipeline.use("receive", (ctx, next) => {
             const stanza = ctx.stanza;
             if (this.status >= StreamStatus.ENABLE && ["iq", "message", "presence"].includes(stanza.tagName)) {
-                this.inbound++;
+                this.inbound = (this.inbound + 1) % XEP0198.COUNTER_MODULO;
             }
             return next();
         });
 
         this.connection.on("others", (stanza) => {
-            if (stanza.tagName === "r" && stanza.xml.namespaceURI === XEP0198.NS) {
+            // 流管理启用前不处理确认元素
+            if (this.status < StreamStatus.ENABLE || stanza.xml.namespaceURI !== XEP0198.NS) return;
+            if (stanza.tagName === "r") {
                 log.debug("收到确认请求");
                 this.sendAnswerAck();
+            } else if (stanza.tagName === "a") {
+                // <a/> 是累积确认，任一条都表示 h 之前的出站节已处理（XEP-0198 §4）
+                this.advanceAck(stanza.xml.getAttribute("h")!);
             }
         });
     }
@@ -155,37 +175,74 @@ export default class XEP0198 extends StreamManagement implements Plugin {
         if (stanza.tagName === "resumed") {
             // XEP-0198 §5：resumed 必须回带请求中的 SM-ID，不一致说明恢复的不是这条流
             if (stanza.getAttribute("previd") !== this.previd) {
-                log.warn('服务器返回的恢复 ID 与请求不一致，改为常规绑定');
+                // 与 <failed/> 一致：旧流终结，未确认项不会在新流重发
+                const pending = this.unacked.length;
+                log.warn(pending > 0
+                    ? `服务器返回的恢复 ID 与请求不一致，改为常规绑定；${pending} 条未确认的 stanza 不会重发`
+                    : '服务器返回的恢复 ID 与请求不一致，改为常规绑定');
                 ctx.outgoing = this.bindRequest;
                 this.reset();
                 return next();
             }
-            const h = Number.parseInt(stanza.getAttribute("h") ?? "0");
-            if (h !== this.outbound) {
-                log.warn(
-                    `服务器汇报的已处理数量与本地不一致，local:${this.outbound}, server:${h}`
-                );
-                this.outbound = h;
-                // TODO: 重发未确认的消息
+            // 规范要求 <resumed/> 必须带 h（XEP-0198 §5），与 <a/> 同样按确认游标处理
+            if (!this.advanceAck(stanza.getAttribute("h")!)) {
+                // h 超过已发送数量：已按 §6 关流，不把本次恢复当作成功
+                return next();
             }
             log.info('会话恢复成功');
             ctx.status = Status.BINDED;
+            this.resendUnacked();
         } else if (stanza.tagName === "failed") {
-            log.warn('服务器拒绝恢复会话，改为常规绑定');
-            // 回退为原始绑定请求，由连接层发送
+            // XEP-0198 §5：服务器认出 previd 但会话已超时时可带 h，值为超时前收到的条数，按确认游标结算
+            const handled = stanza.getAttribute("h");
+            if (handled !== null && !this.advanceAck(handled)) return next();
+            // 旧流已终结：未确认的 stanza 不能在新流重发（资源与 presence 均已重建），按 §4 应由应用决定后续
+            const pending = this.unacked.length;
+            log.warn(pending > 0
+                ? `服务器拒绝恢复会话，改为常规绑定；${pending} 条未确认的 stanza 不会重发`
+                : '服务器拒绝恢复会话，改为常规绑定');
+            // 回退为原始绑定请求，由连接层发送；reset 会清掉 bindRequest
             ctx.outgoing = this.bindRequest;
             this.reset();
-            this.bindRequest = undefined;
         }
         return next();
     }
 
     /**
+     * 恢复成功后按序重发仍未确认的 stanza（XEP-0198 §5）。
+     *
+     * 直接交给传输层写出，绕过发送管线：这些 stanza 已占用原序号，不能再计数或入队，
+     * 重发内容也必须与首次写出保持一致，不能被其他插件的发送拦截器改写。
+     *
+     * 队列中的 presence 同样重发：§5 的「SHOULD NOT resend presence」限定于
+     * 「重播在线状态以恢复旧状态」（服务器已保留该状态），而未确认队列属于同节
+     * 「MUST re-send any stanzas that are still marked as unhandled」；跳过这一条
+     * 会让服务端计数与本地队列永久错位，后续确认将删错队列项。
+     */
+    private resendUnacked() {
+        if (this.unacked.length === 0) return;
+        const transport = this.connection.transport;
+        if (!transport) {
+            log.warn(`无法重发 ${this.unacked.length} 条未确认的 stanza：传输层不可用`);
+            return;
+        }
+        log.info(`会话恢复，重发 ${this.unacked.length} 条未确认的 stanza`);
+        for (const stanza of this.unacked) {
+            try {
+                transport.send(stanza);
+            } catch (error) {
+                // 写出失败说明连接再次中断，剩余项随下次断线交给恢复流程处理
+                log.error(() => `重发未确认 stanza 失败: ${String(error)}`);
+                return;
+            }
+        }
+    }
+
+    /**
      * 阶段：会话就绪（session:start / reconnected）。服务器宣告流管理时发出 <enable/> 启用，并等待服务器的响应
-     * @returns 服务器的<enabled/>响应；已启用或服务器未宣告时无返回值
      * @throws 服务器返回 <failed/> 时抛 XMPPError；等待期间断线（<enabled/> 未到）时抛 Error
      */
-    private async enable(): Promise<XMPPElement | undefined> {
+    private async enable(): Promise<void> {
         // 会话恢复成功同样触发binded，此时流管理已处于启用状态
         if (this.status !== StreamStatus.DISABLE) return;
         if (!this.connection.transport?.streamFeatures.has(XEP0198.NS)) {
@@ -193,7 +250,7 @@ export default class XEP0198 extends StreamManagement implements Plugin {
             return;
         }
         log.info('正在启用流管理...');
-        return new Promise<XMPPElement>((resolve, reject) => {
+        return new Promise<void>((resolve, reject) => {
             const onResponse = (response: StanzaBase) => {
                 if (response.xml.namespaceURI !== XEP0198.NS) return;
                 const xml = response.xml;
@@ -215,14 +272,14 @@ export default class XEP0198 extends StreamManagement implements Plugin {
                 // 不支持恢复时 id/max/location 都无意义，直接结束
                 if (!this.resumable) {
                     log.info("服务器不支持会话恢复，断线后将走全量绑定");
-                    resolve(xml);
+                    resolve();
                     return;
                 }
                 this.previd = xml.getAttribute("id") ?? "";
-                const max = xml.getAttribute("max");
-                if (max) {
+                const max = Number.parseInt(xml.getAttribute("max") ?? "300"); // 默认 5 分钟
+                if (Number.isSafeInteger(max)) {
                     // 服务端发来的是秒
-                    this.max = Number.parseInt(max) * 1000;
+                    this.max = max * 1000;
                     log.debug(`设置最大恢复时间: ${this.max}ms`);
                 }
 
@@ -233,14 +290,13 @@ export default class XEP0198 extends StreamManagement implements Plugin {
                         log.debug(`服务器建议的重连位置: ${location}`);
                     }
                 }
-                resolve(xml);
+                resolve();
             };
 
             // 未确认的 <enable/> 随本流作废：断线时摘掉本次监听并复位，由下次会话就绪后重发
             const onLost = () => {
                 cleanup();
                 this.status = StreamStatus.DISABLE;
-                this.outbound = 0;
                 // 启用结果已不可知，必须结束等待，否则调用方永久挂起
                 reject(new Error("连接中断，流管理启用未确认"));
             };
@@ -254,8 +310,9 @@ export default class XEP0198 extends StreamManagement implements Plugin {
             this.connection.on("connection:lost", onLost);
             // 只有发送计数自写出 <enable/> 起开窗（XEP-0198 §4）；接收计数在收到 <enabled/> 时才开窗
             this.outbound = 0;
+            this.lastAck = 0;
+            this.unacked.length = 0;
             this.status = StreamStatus.ENABLE_SENT;
-            this.registerTracking();
             try {
                 this.connection.send(`<enable xmlns='${XEP0198.NS}' resume='true'/>`);
             } catch (error) {
@@ -276,8 +333,10 @@ export default class XEP0198 extends StreamManagement implements Plugin {
         this.resumable = false;
         this.max = 5 * 60 * 1000;
         this.disconnectedAt = 0;
-        this.outbound = 0;
         this.inbound = 0;
+        this.outbound = 0;
+        this.lastAck = 0;
+        this.unacked.length = 0;
         this.bindRequest = undefined;
     }
 
@@ -299,24 +358,62 @@ export default class XEP0198 extends StreamManagement implements Plugin {
     }
 
     /**
-     * 发送数量达到interval整数倍时请求确认并核对服务器进度
+     * 按服务端确认的 h 推进确认游标并裁剪未确认队列。
+     *
+     * `<a/>` 与 `<resumed/>` 的 h 语义相同：该序号之前的出站节都已处理（XEP-0198 §4、§5）。
+     * 确认允许重复、滞后与部分到达，游标只会前进。
+     * @param raw h 属性值；规范保证这两个元素必带 h（XEP-0198 §4、§5），按 xs:unsignedInt 读取
+     * @returns 可以继续处理时为 true；h 超过已发送数量时已按 §6 关闭流并返回 false
      */
-    private requestAckAndCheck() {
-        if (this.status < StreamStatus.ENABLE) return;
-        if (this.outbound === 0 || this.outbound % XEP0198.interval !== 0) return;
-        this.requestAck()
-            .then((h) => {
-                if (h !== this.outbound) {
-                    log.warn(
-                        `服务器汇报的已处理数量与本地不一致，local:${this.outbound}, server:${h}`
-                    );
-                } else {
-                    log.info("请求确认成功");
-                }
-            })
-            .catch((error: unknown) => {
-                log.error(() => `请求确认失败: ${String(error)}`);
-            });
+    private advanceAck(raw: string): boolean {
+        const h = Number.parseInt(raw);
+        if (!Number.isInteger(h) || h >= XEP0198.COUNTER_MODULO) {
+            log.warn(`忽略无法解析的确认数量: ${raw}`);
+            return true;
+        }
+        // 本次确认相对游标推进的条数：先加模数再取余，避免 h 回绕小于游标时得到负数
+        const delta = (h - this.lastAck + XEP0198.COUNTER_MODULO) % XEP0198.COUNTER_MODULO;
+        // 重复确认：h 与当前游标相同
+        if (delta === 0) return true;
+        // 序号到 2^32 就归零，因此旧确认算出来是个巨大的数：
+        // 已确认 10 条时收到 12 表示前进 2 条；收到 8 会算得 4294967294 条，是乱序迟到的旧确认，
+        // 超过半个范围（2^31）就判定为迟到并丢弃
+        if (delta >= XEP0198.COUNTER_MODULO / 2) {
+            log.debug(`忽略迟到的确认: ${h}，当前游标: ${this.lastAck}`);
+            return true;
+        }
+        if (delta > this.unacked.length) {
+            this.failAck(h);
+            return false;
+        }
+        this.lastAck = h;
+        this.unacked.splice(0, delta);
+        log.debug(`确认进度更新: ${this.lastAck}，未确认 ${this.unacked.length} 条`);
+        return true;
+    }
+
+    /**
+     * 确认数量超过已发送数量时终止流（XEP-0198 §6）：发送 `undefined-condition` 流错误并关闭。
+     * 直接写传输层，避免流错误被发送管线当作业务 stanza 加工；随后 `disconnect()` 写出 `</stream:stream>`。
+     * @param h 对端上报的确认数量
+     */
+    private failAck(h: number) {
+        const transport = this.connection.transport;
+        if (!transport) return;
+        log.error(`对端确认数量 ${h} 超过已发送数量 ${this.outbound}，关闭流`);
+        const xml =
+            `<stream:error xmlns:stream='http://etherx.jabber.org/streams'>` +
+            `<undefined-condition xmlns='urn:ietf:params:xml:ns:xmpp-streams'/>` +
+            `<handled-count-too-high xmlns='${XEP0198.NS}' h='${h}' send-count='${this.outbound}'/>` +
+            `</stream:error>`;
+        try {
+            transport.send(xml);
+        } catch (error) {
+            log.error(() => `发送流错误失败: ${String(error)}`);
+        }
+        // 先复位：beforeclose 监听器据此不再补发 <a/>，§6 流错误之后不应再有流管理元素
+        this.reset();
+        this.connection.disconnect();
     }
 
     /**
@@ -328,43 +425,17 @@ export default class XEP0198 extends StreamManagement implements Plugin {
     }
 
     /**
-     * 手动请求确认：发送 `<r/>` 并等待服务器回 `<a/>`
+     * 发送 `<r/>` 请求服务器确认。
      *
-     * @returns 服务器已处理的 stanza 数量（`<a/>` 的 h 值）
-     * @throws 30 秒内未收到 `<a/>` 时抛出 name 为 "TimeoutError" 的 DOMException
+     * 响应不需要与本次请求关联：任何 `<a/>` 都携带当前累积确认进度，由常驻处理器推进游标。
      */
-    private requestAck(): Promise<number> {
+    private requestAck() {
+        if (this.status < StreamStatus.ENABLE) return;
         log.debug(`请求服务器确认，当前发送消息数: ${this.outbound}`);
-        return new Promise<number>((resolve, reject) => {
-            const onResponse = (response: StanzaBase) => {
-                if (
-                    response.tagName !== "a" ||
-                    response.xml.namespaceURI !== XEP0198.NS
-                ) return;
-                cleanup();
-                log.debug("收到确认", () => response.toString());
-                resolve(Number.parseInt(response.xml.getAttribute("h") ?? "0"));
-            };
-
-            const timer = setTimeout(() => {
-                cleanup();
-                log.error('请求确认超时');
-                reject(new DOMException("请求确认超时", "TimeoutError"));
-            }, 30_000);
-            timer.unref?.();
-            const cleanup = () => {
-                this.connection.off("others", onResponse);
-                clearTimeout(timer);
-            };
-
-            // 先监听后发送，避免漏掉立即返回的响应
-            this.connection.on("others", onResponse);
-            try {
-                this.connection.send(`<r xmlns='${XEP0198.NS}'/>`);
-            } catch (error) {
-                cleanup();
-                reject(error instanceof Error ? error : new Error(String(error)));
-            }
-        });
+        try {
+            this.connection.send(`<r xmlns='${XEP0198.NS}'/>`);
+        } catch (error) {
+            log.error(() => `请求确认失败: ${String(error)}`);
+        }
     }
 }

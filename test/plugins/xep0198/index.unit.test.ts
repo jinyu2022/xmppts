@@ -29,12 +29,18 @@ const BIND_REQUEST =
 const BIND_RESULT =
   "<iq type='result' id='bind-1'><bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'><jid>juliet@capulet.lit/resource</jid></bind></iq>";
 
-/** 假传输层：只提供插件用到的管线、流特性与端点字段 */
+/** 假传输层：只提供插件用到的管线、流特性、端点字段与直发通道 */
 class FakeTransport extends EventEmitter {
   readonly pipeline = new Pipeline<TransportPipelineEvents>();
+  /** 绕过连接层管线、直接写出的报文（插件重发未确认项、发送流错误时使用） */
+  readonly sent: string[] = [];
   streamFeatures = new Set<string>([XEP0198.NS]);
   host = "localhost";
   port = "5222";
+
+  send(data: string | XMPPElement): void {
+    this.sent.push(typeof data === "string" ? data : data.toXMLString());
+  }
 }
 
 /** 假连接：记录报文、保存管线，并模拟 others 事件投递 */
@@ -43,10 +49,18 @@ class FakeConnection extends EventEmitter {
   readonly jid = new JID("juliet@capulet.lit/resource");
   readonly transport = new FakeTransport();
   readonly sent: string[] = [];
+  /** 主动断开调用次数（发送流错误后应关闭流） */
+  disconnected = 0;
   readonly pipeline = new SyncPipeline<{
     send: { stanza: XMPPElement };
     receive: { stanza: XMPPElement };
   }>();
+
+  /** 模拟 Connection.disconnect：先同步派发 beforeclose，再计数 */
+  disconnect(): void {
+    this.emit("session:beforeclose");
+    this.disconnected++;
+  }
 
   /** 模拟 Connection.send：先过发送管线，再记录最终报文 */
   send(stanza: string | XMPPElement): void {
@@ -256,6 +270,24 @@ describe("XEP0198（单元测试，假连接）", () => {
     expect((await negotiate(connection)).outgoing).toBe(BIND_REQUEST);
   });
 
+  it("服务器给出的 max 不是正整数时保留默认恢复窗口", async () => {
+    const connection = new FakeConnection();
+    const plugin = new XEP0198(connection as unknown as Connection);
+    plugin.init();
+    await enableSm(connection, `id="sid-1" resume="true" max="soon"`);
+
+    expect((plugin as unknown as { max: number }).max).toBe(5 * 60 * 1000);
+  });
+
+  it("流管理启用前不响应服务器的确认请求", async () => {
+    const connection = createPlugin();
+    await finishBind(connection);
+
+    // 已发送 <enable/>、未收到 <enabled/>：此时不应回答 <r/>
+    connection.receive('<r xmlns="urn:xmpp:sm:3"/>');
+    expect(connection.count("<a ")).toBe(0);
+  });
+
   it("启用后按发送间隔请求确认，并按已处理数量应答服务器的确认请求", async () => {
     const connection = createPlugin();
     await enableSm(connection);
@@ -292,6 +324,47 @@ describe("XEP0198（单元测试，假连接）", () => {
     expect(connection.sent.at(-1)).toContain('h="2"');
   });
 
+  it("同一批连发达到间隔时只请求一次确认", async () => {
+    const connection = createPlugin();
+    await enableSm(connection);
+
+    // 同一宏任务内连发 5 条：请求确认按发送条数递减，不应每个 stanza 各发一次 <r/>
+    for (let i = 0; i < 5; i++) {
+      connection.send(`<message to="romeo@montague.lit/orchard"><body>${i}</body></message>`);
+    }
+    await Promise.resolve();
+    expect(connection.count("<r xmlns")).toBe(1);
+  });
+
+  it("确认按累积游标前进，重复与迟到的 h 不会回退", async () => {
+    const connection = new FakeConnection();
+    const plugin = new XEP0198(connection as unknown as Connection);
+    plugin.init();
+    await enableSm(connection);
+    const state = plugin as unknown as { lastAck: number; unacked: unknown[] };
+
+    for (let i = 0; i < 5; i++) {
+      connection.send(`<message to="romeo@montague.lit/orchard"><body>${i}</body></message>`);
+    }
+    await Promise.resolve();
+
+    // 部分确认：只裁掉 h 之前的项
+    connection.receive('<a xmlns="urn:xmpp:sm:3" h="2"/>');
+    expect(state.lastAck).toBe(2);
+    expect(state.unacked).toHaveLength(3);
+
+    // 重复与迟到的确认都不改变游标
+    connection.receive('<a xmlns="urn:xmpp:sm:3" h="2"/>');
+    connection.receive('<a xmlns="urn:xmpp:sm:3" h="1"/>');
+    expect(state.lastAck).toBe(2);
+    expect(state.unacked).toHaveLength(3);
+
+    // 后续确认正常前进并清空队列
+    connection.receive('<a xmlns="urn:xmpp:sm:3" h="5"/>');
+    expect(state.lastAck).toBe(5);
+    expect(state.unacked).toHaveLength(0);
+  });
+
   it("resumed 沿用原绑定并把连接置为已绑定", async () => {
     const connection = createPlugin();
     await enableSm(connection);
@@ -305,9 +378,11 @@ describe("XEP0198（单元测试，假连接）", () => {
     expect(ctx.status).toBe(Status.BINDED);
   });
 
-  it("resumed 的 previd 与请求不一致时回退为常规绑定", async () => {
+  it("resumed 的 previd 与请求不一致时回退为常规绑定，并报告未确认条数", async () => {
+    const warn = vi.spyOn(logger.getLogger("XEP0198"), "warn").mockImplementation(() => {});
     const connection = createPlugin();
     await enableSm(connection);
+    connection.send('<message to="romeo@montague.lit/orchard"><body>a</body></message>');
     connection.emit("connection:lost");
     await negotiate(connection);
 
@@ -317,6 +392,8 @@ describe("XEP0198（单元测试，假连接）", () => {
     );
     expect(ctx.outgoing).toBe(BIND_REQUEST);
     expect(ctx.status).toBe(Status.BINDING);
+    // 未确认项不会在新流重发，与 <failed/> 一致地报告条数
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("1 条未确认"));
     // 复位后不再改发 resume
     expect((await negotiate(connection)).outgoing).toBe(BIND_REQUEST);
   });
@@ -335,5 +412,153 @@ describe("XEP0198（单元测试，假连接）", () => {
 
     // 复位后不再改发 resume
     expect((await negotiate(connection)).outgoing).toBe(BIND_REQUEST);
+  });
+
+  it("resumed 按 h 结算后重发剩余未确认项，且不重复计数", async () => {
+    const connection = new FakeConnection();
+    const plugin = new XEP0198(connection as unknown as Connection);
+    plugin.init();
+    await enableSm(connection);
+    const state = plugin as unknown as { outbound: number; unacked: unknown[] };
+
+    // 断线前发出两条未获确认的消息
+    connection.send('<message to="romeo@montague.lit/orchard"><body>a</body></message>');
+    connection.send('<message to="romeo@montague.lit/orchard"><body>b</body></message>');
+    expect(state.unacked).toHaveLength(2);
+
+    connection.emit("connection:lost");
+    await negotiate(connection);
+    await settleBinding(
+      connection,
+      '<resumed xmlns="urn:xmpp:sm:3" h="1" previd="sid-1"/>',
+    );
+
+    // 服务器已处理第一条：只重发第二条，且沿用原序号、不重新计数
+    expect(connection.transport.sent).toHaveLength(1);
+    expect(connection.transport.sent[0]).toContain("<body>b</body>");
+    expect(state.outbound).toBe(2);
+    expect(state.unacked).toHaveLength(1);
+  });
+
+  it("确认数量超过已发送数量时按 §6 发送流错误并关闭流", async () => {
+    const connection = createPlugin();
+    await enableSm(connection);
+
+    connection.send('<message to="romeo@montague.lit/orchard"><body>a</body></message>');
+    // 只发出 1 条，服务器却确认了 2 条
+    connection.receive('<a xmlns="urn:xmpp:sm:3" h="2"/>');
+
+    const error = connection.transport.sent.at(-1)!;
+    expect(error).toContain("<stream:error");
+    expect(error).toContain("undefined-condition");
+    expect(error).toContain("<handled-count-too-high");
+    expect(error).toContain("h='2'");
+    expect(error).toContain("send-count='1'");
+    expect(connection.disconnected).toBe(1);
+    // 流错误已终止流：关闭前的 beforeclose 不应再补发 <a/>
+    expect(connection.count("<a ")).toBe(0);
+  });
+
+  it("resumed 的 h 超过已发送数量时按 §6 关流，不当作恢复成功", async () => {
+    const connection = createPlugin();
+    await enableSm(connection);
+    connection.send('<message to="romeo@montague.lit/orchard"><body>a</body></message>');
+    connection.emit("connection:lost");
+    await negotiate(connection);
+
+    const ctx = await settleBinding(
+      connection,
+      '<resumed xmlns="urn:xmpp:sm:3" h="2" previd="sid-1"/>',
+    );
+
+    expect(ctx.status).toBe(Status.BINDING);
+    expect(connection.transport.sent.at(-1)).toContain("<handled-count-too-high");
+    expect(connection.transport.sent).toHaveLength(1);
+    expect(connection.disconnected).toBe(1);
+  });
+
+  it("failed 的 h 超过已发送数量时按 §6 关流，不回退绑定", async () => {
+    const connection = createPlugin();
+    await enableSm(connection);
+    connection.send('<message to="romeo@montague.lit/orchard"><body>a</body></message>');
+    connection.emit("connection:lost");
+    await negotiate(connection);
+
+    const failed = await settleBinding(
+      connection,
+      `<failed xmlns="urn:xmpp:sm:3" h="9"><item-not-found xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/></failed>`,
+    );
+
+    expect(failed.outgoing).toBeUndefined();
+    expect(connection.transport.sent.at(-1)).toContain("<handled-count-too-high");
+    expect(connection.disconnected).toBe(1);
+  });
+
+  it("failed 带 h 时按已处理数量结算，剩余项不重发", async () => {
+    const warn = vi.spyOn(logger.getLogger("XEP0198"), "warn").mockImplementation(() => {});
+    const connection = createPlugin();
+    await enableSm(connection);
+
+    connection.send('<message to="romeo@montague.lit/orchard"><body>a</body></message>');
+    connection.send('<message to="romeo@montague.lit/orchard"><body>b</body></message>');
+
+    connection.emit("connection:lost");
+    await negotiate(connection);
+    // 超时前服务器已收到第一条（XEP-0198 §5 Example 14），旧流终结后不再重发
+    const failed = await settleBinding(
+      connection,
+      `<failed xmlns="urn:xmpp:sm:3" h="1"><item-not-found xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/></failed>`,
+    );
+
+    expect(failed.outgoing).toBe(BIND_REQUEST);
+    expect(connection.transport.sent).toHaveLength(0);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("1 条未确认"));
+  });
+
+  it("主动关闭流前同步发出 <a/>，h 为已处理数量", async () => {
+    const connection = createPlugin();
+    await enableSm(connection);
+    connection.receive('<message from="romeo@montague.lit/orchard"><body>a</body></message>');
+    connection.receive('<message from="romeo@montague.lit/orchard"><body>b</body></message>');
+
+    // 派发时尚未关流：记录监听器读到的断开计数
+    const observed: number[] = [];
+    connection.on("session:beforeclose", () => observed.push(connection.disconnected));
+    connection.disconnect();
+
+    // emit 同步完成：返回时 <a/> 已写出，随后才关流
+    expect(observed).toEqual([0]);
+    expect(connection.sent.at(-1)).toContain('<a xmlns="urn:xmpp:sm:3"');
+    expect(connection.sent.at(-1)).toContain('h="2"');
+    expect(connection.disconnected).toBe(1);
+  });
+
+  it("流管理未启用时主动断开不发送 <a/>", () => {
+    const connection = createPlugin();
+
+    connection.disconnect();
+
+    expect(connection.count("<a ")).toBe(0);
+    expect(connection.disconnected).toBe(1);
+  });
+
+  it("发送与接收计数按 uint32 回绕", async () => {
+    // 直接操纵计数，避免真的发送 42 亿条 stanza
+    const connection = new FakeConnection();
+    const plugin = new XEP0198(connection as unknown as Connection);
+    plugin.init();
+    await enableSm(connection);
+    const counters = plugin as unknown as { outbound: number; inbound: number };
+
+    // 2^32-1 之前正常递增，再加一回到 0（XEP-0198 §4）
+    counters.outbound = 0xffff_fffe;
+    connection.send('<message to="romeo@montague.lit/orchard"><body>a</body></message>');
+    expect(counters.outbound).toBe(0xffff_ffff);
+    connection.send('<message to="romeo@montague.lit/orchard"><body>b</body></message>');
+    expect(counters.outbound).toBe(0);
+
+    counters.inbound = 0xffff_ffff;
+    connection.receive('<message from="romeo@montague.lit/orchard"><body>c</body></message>');
+    expect(counters.inbound).toBe(0);
   });
 });
