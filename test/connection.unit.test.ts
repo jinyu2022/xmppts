@@ -794,6 +794,38 @@ describe("Connection（单元测试，假传输层）", () => {
     expect(transport.disconnect).toHaveBeenCalledTimes(1);
   });
 
+  it("session:beforeclose 在 session:end 之前同步派发，此时会话与传输层仍可用", () => {
+    const { connection, transport } = setup();
+    const events: string[] = [];
+
+    connection.on("session:beforeclose", () => {
+      events.push("beforeclose");
+      // 会话仍可用、transport 未释放：可写出最后的流层元素
+      expect(connection.isSessionActive).toBe(true);
+      connection.send(`<a xmlns='urn:xmpp:sm:3' h='1'/>`);
+    });
+    connection.on("session:end", () => events.push("session:end"));
+
+    connection.disconnect();
+
+    expect(events).toEqual(["beforeclose", "session:end"]);
+    // 同步写出：disconnect() 返回时已到达传输层
+    expect(transport.sent).toHaveLength(1);
+    expect(transport.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("非主动断开不派发 session:beforeclose", () => {
+    const { connection, transport } = setup({ reconnect: false });
+    const events: string[] = [];
+    connection.on("session:beforeclose", () => events.push("beforeclose"));
+    connection.on("session:end", () => events.push("session:end"));
+
+    transport.status = Status.DISCONNECTED;
+    transport.sink.onClose();
+
+    expect(events).toEqual(["session:end"]);
+  });
+
   it("自动重连：断线只发一次 connection:lost，重连成功后 reconnected 且不再发 session:start", async () => {
     vi.useFakeTimers();
     const { connection, transport } = setup(

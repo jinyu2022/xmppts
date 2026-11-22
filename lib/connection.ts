@@ -50,6 +50,14 @@ export interface SocketEventMap {
   /** 每次 connect() 后的首次绑定成功 */
   "session:start": void;
   /**
+   * 主动关闭流之前（`disconnect()` 内、`session:end` 之前），同步派发。
+   *
+   * 此时会话与发送管线仍可用，监听器可写出最后的流层元素（如 XEP-0198 的 `<a/>`）。
+   * 必须同步完成写出：派发返回后立即执行 `finishSession()`，`transport` 随即被置空。
+   * 自动重连、对端关闭等非主动路径不触发。
+   */
+  "session:beforeclose": void;
+  /**
    * 会话正式结束：连接关闭且不再重连（主动断开、对端关闭、协商失败或重连耗尽）；
    * 自动重连期间不发。派发前 `isSessionActive` 已降为 `false`，监听器内不能继续发送业务 stanza。
    */
@@ -609,6 +617,8 @@ export class Connection extends Emitter<SocketEventMap> {
       this.finishSession();
       return;
     }
+    // 主动关闭：先同步派发 beforeclose，让插件在会话与发送管线仍可用时写出最后的流层元素
+    this.emit("session:beforeclose");
     // 先终结会话（transport 置空，后续 close 不再调度重连），再关闭流
     this.finishSession();
     transport.disconnect();

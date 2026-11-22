@@ -69,10 +69,11 @@
 
 ### 2.5 终止阶段 (Termination)
 调用 `connection.disconnect()` 时：
-1.  **终结会话**: `finishSession()` 先把 `isSessionActive` 降为 `false`、再派发 `session:end`（监听器内不能继续发送业务 stanza），最后 `_cleanup()` 清理并把 `transport` 置空——后续 `close` 据此判断本次连接已终结，不再调度重连。
-2.  **断开连接**: `transport.disconnect()` 向服务器发送 `</stream:stream>`，状态置为 `SESSIONEND`，随后关闭底层连接；此时 `close` 不再产生高层事件。
-3.  **错误上报**: 认证失败、协商/流错误等通过 `error` 事件上报，载荷为 `ProtocolError`，用 `scope`（`sasl` / `binding` / `stream` / `protocol`）区分来源；会话从未建立时只发 `error`，不发 `session:end`（与 `session:start` 配对）。
-4.  **高层清理**: 终结会话时（主动断开、不可重试错误、重连耗尽）执行 `_cleanup()`：`removeAllListeners()` 移除所有监听器，并清空拦截器与插件注册表；`pendingPlugins` 保留，再次 `connect()` 时由 `instantiatePlugins()`/`initPlugins()` 重建插件。
+1.  **关闭前通知**: 同步派发 `session:beforeclose`。此时会话与发送管线仍可用，插件可写出最后的流层元素（XEP-0198 的 `<a/>` 在此发出，XEP-0198 §4）；自动重连、对端关闭等非主动路径不触发。
+2.  **终结会话**: `finishSession()` 先把 `isSessionActive` 降为 `false`、再派发 `session:end`（监听器内不能继续发送业务 stanza），最后 `_cleanup()` 清理并把 `transport` 置空——后续 `close` 据此判断本次连接已终结，不再调度重连。
+3.  **断开连接**: `transport.disconnect()` 向服务器发送 `</stream:stream>`，状态置为 `SESSIONEND`，随后关闭底层连接；此时 `close` 不再产生高层事件。
+4.  **错误上报**: 认证失败、协商/流错误等通过 `error` 事件上报，载荷为 `ProtocolError`，用 `scope`（`sasl` / `binding` / `stream` / `protocol`）区分来源；会话从未建立时只发 `error`，不发 `session:end`（与 `session:start` 配对）。
+5.  **高层清理**: 终结会话时（主动断开、不可重试错误、重连耗尽）执行 `_cleanup()`：`removeAllListeners()` 移除所有监听器，并清空拦截器与插件注册表；`pendingPlugins` 保留，再次 `connect()` 时由 `instantiatePlugins()`/`initPlugins()` 重建插件。
 
 **自动重连条件**：启用自动重连且连续失败次数未达上限（绑定成功即清零）。**socket 已建立后**的网络类断开（含首连尚未完成绑定、无错误的 clean close）会重试；`ProtocolError`（SASL/绑定/流/协议错误）在 `onError` 时直接终结会话，不进入重连，以免重复提交无效凭据；例外是 `retryable` 为 `true` 的临时错误（协商/连接超时、`system-shutdown`），交给随后的 `onClose` 判断是否重连。**建 socket 前**的失败（DNS/SRV、XEP-0368/0156 发现、传输工厂 `create` 抛错）没有 close 事件，`connect()` 只 reject 并发出 `error`，本次不调度重连。
 
@@ -96,6 +97,7 @@
 | 事件名称 | 触发时机 | 典型用途 |
 | :--- | :--- | :--- |
 | `session:start` | 每个 `connect()` 周期的首次资源绑定成功，会话完全就绪 | **业务入口**，在此发送在线状态 |
+| `session:beforeclose` | 主动关闭流之前（`disconnect()` 内、`session:end` 之前），同步派发；自动重连、对端关闭不触发 | 写出最后的流层元素（如 XEP-0198 的 `<a/>`） |
 | `session:end` | 会话结束且不再重连（主动断开、对端关闭、协商失败或重连耗尽） | 清理会话资源 |
 | `error` | 连接错误（网络失败、`ProtocolError` 等；后者用 `scope` 区分为 `sasl` / `binding` / `stream` / `protocol`） | 提示失败原因；会话可能尚未建立 |
 | `connection:lost` | 已建立会话的网络断线，进入自动重连（同一次断线只发一次） | 提示不可用的断线 |

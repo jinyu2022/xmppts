@@ -41,7 +41,7 @@
     │                      │       sink: onError（认证失败 / 绑定超时 / WS 错误） │
 ```
 
-> 事件归属速查：**传输层通知**只有 `TransportSink` 的 4 个回调 `onBound` / `onStanza` / `onClose` / `onError`（单向、单消费者，由 `Connection._createSink()` 创建并随工厂上下文传入构造函数）；`stream:negotiated` 等属管线事件点，见 `TransportPipelineEvents`。**connection 事件**为 `session:start` / `session:end` / `error` / `connection:lost` / `reconnecting` / `reconnected` / `message` / `iq` / `presence` / `others`。对应关系：`onBound → session:start`（重连成功为 `reconnected`）、`onError → error`（载荷为 `ProtocolError`，用 `scope` 区分来源）、`onClose → session:end`（或调度重连）。
+> 事件归属速查：**传输层通知**只有 `TransportSink` 的 4 个回调 `onBound` / `onStanza` / `onClose` / `onError`（单向、单消费者，由 `Connection._createSink()` 创建并随工厂上下文传入构造函数）；`stream:negotiated` 等属管线事件点，见 `TransportPipelineEvents`。**connection 事件**为 `session:start` / `session:beforeclose` / `session:end` / `error` / `connection:lost` / `reconnecting` / `reconnected` / `message` / `iq` / `presence` / `others`。对应关系：`onBound → session:start`（重连成功为 `reconnected`）、`onError → error`（载荷为 `ProtocolError`，用 `scope` 区分来源）、`onClose → session:end`（或调度重连）。
 
 ## 1. 网络连接 (TCP Binding)
 
